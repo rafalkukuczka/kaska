@@ -34,11 +34,11 @@ def get(db,project_id=None):
         if project_id is None:project_id=c.execute('SELECT project_id FROM seller_project_selection WHERE id=1').fetchone()[0]
         row=c.execute('SELECT * FROM seller_projects WHERE id=? AND deleted=0',(int(project_id),)).fetchone()
     if not row:raise ValueError('Nie znaleziono projektu.')
-    return {'search_languages':[],'search_areas':[],**json.loads(row['data']),'id':row['id'],'name':row['name'],'revision':row['revision'],'updated':row['updated']}
+    return {'search_languages':[],'search_areas':[],**json.loads(row['data']),'id':row['id'],'name':row['name'],'revision':row['revision'],'updated':row['updated'],'share_contacts':bool(row['share_contacts'])}
 
 
 def projects(db):
-    with db() as c:return [dict(row) for row in c.execute("SELECT id,name,json_extract(data,'$.website') AS website FROM seller_projects WHERE deleted=0 ORDER BY id")]
+    with db() as c:return [dict(row) for row in c.execute("SELECT id,name,share_contacts,json_extract(data,'$.website') AS website FROM seller_projects WHERE deleted=0 ORDER BY id")]
 
 
 def project_name(value):
@@ -48,10 +48,12 @@ def project_name(value):
 
 def create(db,item):
     name=project_name(item.get('name'))
+    share_contacts=item.get('share_contacts',False)
+    if type(share_contacts) is not bool:raise ValueError('share_contacts must be a boolean')
     with db() as c:
         c.execute('PRAGMA busy_timeout=3000');c.execute('BEGIN IMMEDIATE')
-        project_id=c.execute('INSERT INTO seller_projects(name,data,updated) VALUES(?,?,?)',
-                             (name,json.dumps(blank_project()),time.time())).lastrowid
+        project_id=c.execute('INSERT INTO seller_projects(name,data,updated,share_contacts) VALUES(?,?,?,?)',
+                             (name,json.dumps(blank_project()),time.time(),int(share_contacts))).lastrowid
         c.execute('UPDATE seller_project_selection SET project_id=? WHERE id=1',(project_id,))
     return get(db,project_id)
 
@@ -73,6 +75,8 @@ def delete(db,item):
         if c.execute("SELECT 1 FROM prospect_runs WHERE project_id=? AND status IN ('searching','verifying','drafting')",(project_id,)).fetchone():
             raise ValueError('Poczekaj na zakończenie wyszukiwania lub tworzenia szkiców w tym projekcie.')
         c.execute('UPDATE seller_projects SET deleted=1 WHERE id=?',(project_id,))
+        c.execute("UPDATE campaigns SET status='paused' WHERE project_id=? AND status='active'",(project_id,))
+        c.execute('UPDATE signal_rules SET enabled=0 WHERE campaign_id IN (SELECT id FROM campaigns WHERE project_id=?)',(project_id,))
         # Pause sources owned only by this project. Shared sources keep working elsewhere.
         c.execute("""UPDATE signal_sources SET enabled=0 WHERE id IN (
           SELECT s.source_id FROM signal_monitor_sources s JOIN signal_monitors m ON m.id=s.monitor_id WHERE m.project_id=?)
@@ -86,6 +90,7 @@ def delete(db,item):
             else:
                 active=c.execute('INSERT INTO seller_projects(name,data,updated) VALUES(?,?,?)',
                     ('Nowy projekt',json.dumps(blank_project()),time.time())).lastrowid
+                c.execute('UPDATE seller_projects SET share_contacts=0 WHERE id=?',(active,))
             c.execute('UPDATE seller_project_selection SET project_id=? WHERE id=1',(active,))
     return get(db,active)
 
@@ -109,7 +114,7 @@ def save(db,item):
         project=json.loads(row['data']);project.update(patch);updated=time.time()
         name=name or row['name']
         c.execute('UPDATE seller_projects SET name=?,data=?,revision=revision+1,updated=? WHERE id=?',(name,json.dumps(project,ensure_ascii=False),updated,row['id']))
-    return {'search_languages':[],'search_areas':[],**project,'id':row['id'],'name':name,'revision':row['revision']+1,'updated':updated}
+    return {'search_languages':[],'search_areas':[],**project,'id':row['id'],'name':name,'revision':row['revision']+1,'updated':updated,'share_contacts':bool(row['share_contacts'])}
 
 
 def resolve(db,item):

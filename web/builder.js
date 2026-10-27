@@ -1,4 +1,4 @@
-const builderDraftKey=()=>'campaign-builder-draft';
+const builderDraftKey=()=>'campaign-builder-draft:'+state.seller_project.id;
 let builderStep=0;
 const builderStages=['Odbiorcy','Oferta','Sekwencja','Ustawienia'];
 function campaignAudience(c){if(state.signals.rules.some(r=>r.campaign_id===c.id)||c.audience_mode==='signals')return 'Odbiorcy z sygnałów sprzedażowych';if(c.audience_mode==='tags')return translateUiText('Tagi')+': '+contactTags(c.audience_tags).join('; ');if(c.audience_mode==='group')return translateUiText('Tagi')+': '+c.target_group;if(c.audience_mode==='selected')return `Wybrane kontakty (${JSON.parse(c.contact_ids).length})`;return 'Wszystkie aktywne kontakty'}
@@ -21,7 +21,7 @@ function openCampaignBuilder(){
     <section data-stage="3" hidden><span class="section-label">04 / USTAWIENIA</span><h1>Sprawdź, zanim ruszysz.</h1><p class="muted">Zapisz kampanię jako szkic, przygotuj wiadomości i sprawdź je przed uruchomieniem wysyłki.</p><div id="builder-summary"></div><div class="builder-checks"><p>✓ Zatrzymanie sekwencji po odpowiedzi i rezygnacji</p><p>✓ Limity i odstępy wysyłki w istniejącej kolejce</p><p>${state.integrations.smtp?'✓ Poczta wychodząca jest skonfigurowana':'○ Poczta wymaga podłączenia w Integracjach'}</p></div><button class="primary" type="submit">Zapisz szkic kampanii</button></section>
     <div class="builder-footer"><button type="button" class="secondary" data-builder="prev">Wstecz</button><span id="builder-stage-count">Krok 1 z 4</span><button type="button" class="primary" data-builder="next">Zapisz i przejdź dalej →</button></div>
   </form><section class="builder-preview"><div class="builder-pitch-visual" aria-hidden="true"><div class="cradle"><i></i><i></i><i></i><i></i><i></i></div></div><div class="preview-heading"><span class="section-label">PODGLĄD DLA ODBIORCY</span><span class="badge gray">Szkic</span></div><label for="preview-contact">Kontakt</label><select id="preview-contact">${contacts.map(c=>`<option value="${c.id}">${esc(c.name)} · ${esc(c.company)}</option>`).join('')||'<option value="">Brak aktywnych kontaktów</option>'}</select><label for="preview-step">Krok sekwencji</label><select id="preview-step"><option value="0">Pierwsza wiadomość</option></select><button class="secondary" data-builder="preview">↻ Odśwież podgląd</button><div id="builder-preview-content"><div class="preview-art"><span>✉</span></div><h2>Dobry kontekst.<br>Lepsza rozmowa.</h2><p>Uzupełnij ofertę i sekwencję, aby zobaczyć wiadomość dla konkretnej osoby.</p></div><p class="hint">Podgląd personalizuje szablon. Generowanie przez AI, jeśli podłączone, następuje podczas przygotowania wiadomości.</p></section></div>`;
-  bindSellingPoints($('#campaign-form'));
+  bindSellingPoints($('#campaign-form'));bindWebsiteActions($('#campaign-form'));
   addStep();decorateBuilderSteps();
   try{const draft=JSON.parse(localStorage.getItem(builderDraftKey())||'null');if(draft)restoreBuilder(draft)}catch{}
   $('#campaign-form').oninput=()=>{persistBuilder();updateRecipientHint();renderSequenceMap();$('#builder-campaign-title').textContent=$('#build-name').value||'Nowa kampania'};
@@ -95,7 +95,7 @@ function builderData(){
  data.steps=[...f.querySelectorAll('.step')].map(s=>({delay_days:Number(s.querySelector('[name=delay]').value),subject:s.querySelector('[name=subject]').value,body:s.querySelector('[name=body]').value}));
  return data;
 }
-function persistBuilder(){try{localStorage.setItem(builderDraftKey(),JSON.stringify(builderData()))}catch{}}
+function persistBuilder(){syncWebsiteActions($('#campaign-form'));try{localStorage.setItem(builderDraftKey(),JSON.stringify(builderData()))}catch{}}
 function restoreBuilder(draft){
  if(Array.isArray(draft.conditions))builderConditions=draft.conditions;
  const f=$('#campaign-form');if(draft.audience_mode==='group')draft={...draft,audience_mode:'tags',audience_tags:contactTags(draft.target_group)};for(const [key,value] of Object.entries(draft)){const el=f.elements[key];if(el&&typeof value==='string'&&'value'in el)el.value=value}

@@ -45,6 +45,8 @@ class SharedProjectTests(unittest.TestCase):
 
     def test_one_time_migration_prefers_latest_search_to_library(self):
         with app.db() as c:
+            c.execute('DELETE FROM steps')
+            c.execute('DELETE FROM campaigns')
             c.execute('DELETE FROM seller_project_selection')
             c.execute('DELETE FROM seller_projects')
             c.execute('DELETE FROM seller_project')

@@ -41,6 +41,9 @@ import source_discovery
 import signal_monitoring
 import shared_project
 import project_migration
+import project_scope
+import dashboard_activity
+import reports
 
 ROOT = Path(__file__).resolve().parent
 for line in (ROOT / '.env').read_text(encoding='utf-8-sig').splitlines() if (ROOT / '.env').exists() else []:
@@ -96,6 +99,7 @@ def init():
         discover_contacts.init_schema(c)
         contact_tags.init_schema(c)
         campaign_messages.init_schema(c)
+        project_scope.migrate(c)
         # A process interrupted during SMTP may already have delivered a message.
         c.execute("UPDATE messages SET status='uncertain',error='Przerwano proces podczas wysyłki. Sprawdź skrzynkę przed ponowieniem.' WHERE status='sending'")
 
@@ -514,7 +518,7 @@ def prepare(campaign_id):
             raise ValueError('Wiadomości można przygotować tylko dla szkicu')
         if campaign['audience_mode']=='signals':
             raise ValueError('Dodaj regułę w zakładce Sygnały przed przygotowaniem wiadomości')
-        contacts = c.execute("SELECT * FROM contacts WHERE status='active' AND simulated=0").fetchall()
+        contacts = c.execute("SELECT * FROM contacts WHERE status='active' AND simulated=0 AND contact_pool=?",(project_scope.contact_pool(c,campaign['project_id']),)).fetchall()
         if campaign['audience_mode']=='selected':
             selected = json.loads(campaign['contact_ids'])
             contacts = [contact for contact in contacts if contact['id'] in selected]
@@ -621,16 +625,14 @@ def sync_replies():
             message = BytesParser(policy=policy.default).parsebytes(raw)
             sender = parseaddr(str(message.get('From', '')))[1].lower()
             with MAIL_LOCK, db() as c:
-                contact = c.execute('SELECT * FROM contacts WHERE email=?', (sender,)).fetchone()
-                if not contact:
-                    continue
                 references = str(message.get('In-Reply-To', '')) + ' ' + str(message.get('References', ''))
-                outbound = c.execute("SELECT message_id FROM messages WHERE contact_id=? AND status IN ('sent','uncertain')", (contact['id'],)).fetchall()
-                if not any(row['message_id'] and row['message_id'] in references for row in outbound):
-                    continue
+                outbound=c.execute("SELECT m.contact_id,m.message_id,p.project_id FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id WHERE t.email=? AND m.status IN ('sent','uncertain')",(sender,)).fetchall()
+                matched=next((row for row in outbound if row['message_id'] and row['message_id'] in references),None)
+                if not matched:continue
+                contact=c.execute('SELECT * FROM contacts WHERE id=?',(matched['contact_id'],)).fetchone()
                 part = message.get_body(preferencelist=('plain',))
                 body = part.get_content()[:20000] if part else '[Wiadomość bez wersji tekstowej]'
-                c.execute('INSERT OR IGNORE INTO replies(contact_id,subject,body,received,uid) VALUES(?,?,?,?,?)', (contact['id'], str(message.get('Subject', '')), body, time.time(), identity))
+                c.execute('INSERT OR IGNORE INTO replies(contact_id,subject,body,received,uid,project_id) VALUES(?,?,?,?,?,?)', (contact['id'], str(message.get('Subject', '')), body, time.time(), identity,matched['project_id']))
                 c.execute("UPDATE contacts SET status='replied' WHERE id=? AND status!='unsubscribed'", (contact['id'],))
                 c.execute("UPDATE messages SET status='cancelled' WHERE contact_id=? AND status='queued'", (contact['id'],))
     event('Zsynchronizowano odpowiedzi z poczty')
@@ -654,10 +656,10 @@ def add_contact(c, item):
     if not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+', email) or len(email) > 254:
         raise ValueError('Nieprawidłowy email: ' + email[:100])
     group=contact_groups.normalize(c,item.get('target_group',''))
-    tags=contact_tags.normalize(c,item.get('tags',group))
-    contact_tags.register(c,tags)
-    c.execute('INSERT OR IGNORE INTO contacts(name,email,company,role,notes,target_group,tags) VALUES(?,?,?,?,?,?,?)',
-              (str(item.get('name', '')).strip() or email.split('@')[0], email, str(item.get('company', '')), str(item.get('role', '')), str(item.get('notes', '')),'; '.join(tags),json.dumps(tags,ensure_ascii=False)))
+    tags=contact_tags.normalize(c,item.get('tags',group),item.get('project_id'))
+    contact_tags.register(c,tags,project_scope.contact_pool(c,item.get('project_id')))
+    c.execute('INSERT OR IGNORE INTO contacts(name,email,company,role,notes,target_group,tags,contact_pool) VALUES(?,?,?,?,?,?,?,?)',
+              (str(item.get('name', '')).strip() or email.split('@')[0], email, str(item.get('company', '')), str(item.get('role', '')), str(item.get('notes', '')),'; '.join(tags),json.dumps(tags,ensure_ascii=False),project_scope.contact_pool(c,item.get('project_id'))))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -684,11 +686,17 @@ class Handler(BaseHTTPRequestHandler):
         if path.path == '/api/campaign/messages':
             params=parse_qs(path.query)
             try:
+                with db() as c:project_scope.require_campaign(c,params.get('campaign_id',['0'])[0])
                 result=campaign_messages.page(db,params.get('campaign_id',['0'])[0],params.get('page',['1'])[0],params.get('page_size',['25'])[0])
                 for message in result['messages']:
                     if message['status']=='queued':message['body']=sender_placeholders(message['body'])
                 return self.respond(result)
             except (ValueError,TypeError):return self.respond({'error':'Nie można odczytać strony wiadomości.'},400)
+        if path.path == '/api/reports':
+            try:
+                with db() as c:result=reports.read(c,parse_qs(path.query).get('days',['7'])[0])
+                return self.respond(result)
+            except (ValueError,TypeError):return self.respond({'error':'Invalid report period'},400)
         if path.path == '/api/background':
             with db() as c:
                 jobs=[dict(r) for r in c.execute("""SELECT 'prospect-'||r.id AS id,'prospecting' AS kind,r.status,r.stage,p.name AS project_name,
@@ -701,13 +709,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond({'jobs':jobs})
         if path.path == '/api/state':
             with db() as c:
-                result = {table: [dict(row) for row in c.execute('SELECT * FROM ' + table + ' ORDER BY id DESC LIMIT 2000')] for table in ('contacts', 'replies', 'events')}
-                result['replies'] = [dict(row) for row in c.execute('SELECT r.*,t.email,t.name AS contact_name FROM replies r LEFT JOIN contacts t ON t.id=r.contact_id ORDER BY r.id DESC LIMIT 2000')]
-                result['campaigns'] = [dict(row) for row in c.execute("SELECT * FROM campaigns WHERE status!='deleted' ORDER BY id DESC LIMIT 2000")]
-                result['messages'] = [dict(row) for row in c.execute("SELECT m.* FROM messages m JOIN campaigns p ON p.id=m.campaign_id WHERE p.status!='deleted' AND m.deleted=0 ORDER BY m.id DESC LIMIT 2000")]
-                result['steps'] = [dict(row) for row in c.execute("SELECT s.* FROM steps s JOIN campaigns p ON p.id=s.campaign_id WHERE p.status!='deleted' ORDER BY s.position")]
-                result['totals'] = {'contacts': c.execute('SELECT COUNT(*) FROM contacts').fetchone()[0]}
-                result['totals']['campaigns'] = c.execute("SELECT COUNT(*) FROM campaigns WHERE status!='deleted'").fetchone()[0]
+                project_id=project_scope.active(c);pool=project_scope.contact_pool(c,project_id)
+                activity=dashboard_activity.read(c,project_id)
+                result={'dashboard_activity':activity,'dashboard_flow':dashboard_activity.flow(c,project_id),'events':[dict(row) for row in c.execute('SELECT * FROM events ORDER BY id DESC LIMIT 2000')]}
+                result['contacts']=[dict(row) for row in c.execute('SELECT * FROM contacts WHERE contact_pool=? ORDER BY id DESC LIMIT 2000',(pool,))]
+                result['replies']=[dict(row) for row in c.execute('SELECT r.*,t.email,t.name AS contact_name FROM replies r JOIN contacts t ON t.id=r.contact_id WHERE t.contact_pool=? AND COALESCE(r.project_id,(SELECT MIN(id) FROM seller_projects WHERE deleted=0))=? ORDER BY r.id DESC LIMIT 2000',(pool,project_id))]
+                result['campaigns']=[dict(row) for row in c.execute("SELECT * FROM campaigns WHERE project_id=? AND status!='deleted' ORDER BY id DESC LIMIT 2000",(project_id,))]
+                result['messages']=[dict(row) for row in c.execute("SELECT m.* FROM messages m JOIN campaigns p ON p.id=m.campaign_id WHERE p.project_id=? AND p.status!='deleted' AND m.deleted=0 ORDER BY m.id DESC LIMIT 2000",(project_id,))]
+                result['steps']=[dict(row) for row in c.execute("SELECT s.* FROM steps s JOIN campaigns p ON p.id=s.campaign_id WHERE p.project_id=? AND p.status!='deleted' ORDER BY s.position",(project_id,))]
+                result['totals']={'contacts':c.execute('SELECT COUNT(*) FROM contacts WHERE contact_pool=?',(pool,)).fetchone()[0], 'campaigns':c.execute("SELECT COUNT(*) FROM campaigns WHERE project_id=? AND status!='deleted'",(project_id,)).fetchone()[0]}
             for message in result['messages']:
                 if message['status']=='queued':message['body']=sender_placeholders(message['body'])
             result.update(csrf=CSRF, integrations={'smtp': smtp_ready(), 'imap': bool(os.getenv('IMAP_HOST')), 'ai': ai_service.ready(), 'ai_model': ai_service.model_name(), 'ai_provider': 'openai', 'sender': os.getenv('SMTP_FROM', ''), 'sender_name':sender_identity()['name']})
@@ -726,7 +736,7 @@ class Handler(BaseHTTPRequestHandler):
             result['contact_groups'] = contact_groups.names(db)
             result['contact_tags'] = contact_tags.names(db)
             result['tag_catalog'] = contact_tags.state(db)
-            with db() as c:result['contact_company_counts']=[dict(row) for row in c.execute("SELECT company,COUNT(*) AS total FROM contacts WHERE trim(company)!='' GROUP BY company")]
+            with db() as c:result['contact_company_counts']=[dict(row) for row in c.execute("SELECT company,COUNT(*) AS total FROM contacts WHERE contact_pool=? AND trim(company)!='' GROUP BY company",(project_scope.contact_pool(c),))]
             for contact in result['contacts']:contact['tags']=json.loads(contact['tags'])
             return self.respond(result)
         if path.path == '/unsubscribe':
@@ -737,7 +747,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond('<html lang="pl"><meta charset="utf-8"><title>Rezygnacja</title><h1>Rezygnacja z wiadomości</h1><form method="post" action="/unsubscribe"><input type="hidden" name="id" value="'+html.escape(contact_id, quote=True)+'"><input type="hidden" name="token" value="'+sign(contact_id)+'"><button>Potwierdzam rezygnację</button></form></html>', content_type='text/html; charset=utf-8')
         if path.path == '/assets/kaska.png':
             return self.respond((ROOT / 'web' / 'assets' / 'kaska.png').read_bytes(), content_type='image/png')
-        files = {'/project-migration.js': ('project-migration.js', 'text/javascript'), '/icons.js': ('icons.js', 'text/javascript'), '/delivery-simulation.js': ('delivery-simulation.js', 'text/javascript'), '/campaign-messages.js': ('campaign-messages.js', 'text/javascript'), '/search-map.js': ('search-map.js', 'text/javascript'), '/vendor/leaflet/leaflet.js': ('vendor/leaflet/leaflet.js', 'text/javascript'), '/vendor/leaflet/leaflet.css': ('vendor/leaflet/leaflet.css', 'text/css'), '/background-progress.js': ('background-progress.js', 'text/javascript'), '/simulation.js': ('simulation.js', 'text/javascript'), '/seller-project.js': ('seller-project.js', 'text/javascript'), '/monitoring.js': ('monitoring.js', 'text/javascript'), '/sequence.js': ('sequence.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'), '/ai-settings.js': ('ai-settings.js', 'text/javascript'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/signals.js': ('signals.js', 'text/javascript'), '/builder.js': ('builder.js', 'text/javascript'), '/builder.css': ('builder.css', 'text/css'), '/theme.css': ('theme.css', 'text/css'), '/style.css': ('style.css', 'text/css')}
+        files = {'/reports.js': ('reports.js', 'text/javascript'), '/dashboard-chart.js': ('dashboard-chart.js', 'text/javascript'), '/project-migration.js': ('project-migration.js', 'text/javascript'), '/icons.js': ('icons.js', 'text/javascript'), '/delivery-simulation.js': ('delivery-simulation.js', 'text/javascript'), '/campaign-messages.js': ('campaign-messages.js', 'text/javascript'), '/search-map.js': ('search-map.js', 'text/javascript'), '/vendor/leaflet/leaflet.js': ('vendor/leaflet/leaflet.js', 'text/javascript'), '/vendor/leaflet/leaflet.css': ('vendor/leaflet/leaflet.css', 'text/css'), '/background-progress.js': ('background-progress.js', 'text/javascript'), '/simulation.js': ('simulation.js', 'text/javascript'), '/seller-project.js': ('seller-project.js', 'text/javascript'), '/monitoring.js': ('monitoring.js', 'text/javascript'), '/sequence.js': ('sequence.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'), '/ai-settings.js': ('ai-settings.js', 'text/javascript'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/signals.js': ('signals.js', 'text/javascript'), '/builder.js': ('builder.js', 'text/javascript'), '/builder.css': ('builder.css', 'text/css'), '/theme.css': ('theme.css', 'text/css'), '/style.css': ('style.css', 'text/css')}
         if path.path in files:
             name, mime = files[path.path]
             return self.respond((ROOT / 'web' / name).read_text(encoding='utf-8'), content_type=mime+'; charset=utf-8')
@@ -762,6 +772,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond({'error': 'Odśwież stronę aplikacji'}, 403)
         try:
             item = json.loads(self.rfile.read(size))
+            with db() as c:project_scope.guard_request(c,self.path,item)
             if self.path == '/api/admin/tags':
                 with MAIL_LOCK:return self.respond(contact_tags.manage(db,item))
             if self.path == '/api/data-simulation':
@@ -773,7 +784,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/seller-projects/select':
                 return self.respond(shared_project.select(db,item))
             if self.path == '/api/seller-projects/delete':
-                return self.respond(shared_project.delete(db,item))
+                with MAIL_LOCK:return self.respond(shared_project.delete(db,item))
             if self.path == '/api/discover/contacts/search':
                 return self.respond(discover_contact_finder.search(item))
             if self.path == '/api/discover/contacts/add':
@@ -862,7 +873,7 @@ class Handler(BaseHTTPRequestHandler):
                     extra=library.validate_campaign(c,item)
                     target_group=contact_groups.campaign_group(c,item)
                     audience_tags,tag_match=contact_tags.validate_campaign(c,item)
-                    campaign_id = c.execute('INSERT INTO campaigns(name,offer,audience,created) VALUES(?,?,?,?)', (item['name'], item['offer'], item.get('audience', ''), time.time())).lastrowid
+                    campaign_id = c.execute('INSERT INTO campaigns(name,offer,audience,created,project_id) VALUES(?,?,?,?,?)', (item['name'], item['offer'], item.get('audience', ''), time.time(),project_scope.active(c))).lastrowid
                     c.execute('UPDATE campaigns SET website=?,audience_mode=?,contact_ids=?,material_mode=?,material_ids=?,language=?,cta=?,cta_url=?,pain_points=?,value_props=?,proof_points=? WHERE id=?',extra+(campaign_id,))
                     c.execute('UPDATE campaigns SET conditions=? WHERE id=?', (json.dumps(conditions), campaign_id))
                     c.execute('UPDATE campaigns SET target_group=? WHERE id=?',(target_group,campaign_id))

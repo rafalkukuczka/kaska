@@ -13,15 +13,15 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto('http://localhost:8801');await page.waitForFunction(()=>state?.seller_project);
-  assert.ok((await page.locator('nav [data-view=prospecting]').innerText()).includes('Pozyskiwanie leadów'));
-  assert.ok((await page.locator('nav [data-view=discover]').innerText()).includes('Odkrywanie firm'));
+  assert.ok((await page.locator('nav [data-view=prospecting]').innerText()).includes('Leady'));
+  assert.ok((await page.locator('nav [data-view=discover]').innerText()).includes('Odkrywaj'));
   await page.evaluate(async()=>{
    await api('contacts',{name:'Prospect Lead',email:'terminology@example.com',target_group:'Grupa docelowa',notes:'Lead, Prospect, Opportunity'});
    await api('seller-project',{project_id:state.seller_project.id,revision:state.seller_project.revision,offer:'Lead Prospect Offering',audience:'Grupa docelowa ICP'});await refresh();
   });
   await page.locator('nav [data-view=prospecting]').click();
-  await page.getByRole('heading',{name:'Pozyskiwanie leadów',exact:true}).waitFor();
-  assert.equal(await page.locator('nav svg[data-app-icon]').count(),10);
+  await page.getByRole('heading',{name:'Leady',exact:true}).waitFor();
+  assert.equal(await page.locator('nav svg[data-app-icon]').count(),11);
   await page.locator('#current-seller-project').click();
   assert.equal(await page.getByLabel('Kryteria idealnego klienta (ICP)',{exact:true}).inputValue(),'Grupa docelowa ICP');
   assert.equal(await page.getByRole('heading',{name:'Dowody wiarygodności',exact:true}).count(),1);

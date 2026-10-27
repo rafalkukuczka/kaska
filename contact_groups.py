@@ -1,5 +1,6 @@
 """Optional named target groups shared by contacts, independently of seller projects."""
 import unicodedata
+import project_scope
 
 
 def init_schema(c):
@@ -16,13 +17,13 @@ def normalize(c,value):
         raise ValueError('Grupa docelowa: maksymalnie 100 znaków, bez znaków sterujących.')
     value=unicodedata.normalize('NFC',value).strip()
     if not value:return ''
-    for row in c.execute("SELECT DISTINCT target_group FROM contacts WHERE target_group!='' ORDER BY id"):
+    for row in c.execute("SELECT DISTINCT target_group FROM contacts WHERE contact_pool=? AND target_group!='' ORDER BY id",(project_scope.contact_pool(c),)):
         if row[0].casefold()==value.casefold():return row[0]
     return value
 
 
 def names(db):
-    with db() as c:rows=c.execute("SELECT target_group FROM contacts WHERE target_group!='' ORDER BY id").fetchall()
+    with db() as c:rows=c.execute("SELECT target_group FROM contacts WHERE contact_pool=? AND target_group!='' ORDER BY id",(project_scope.contact_pool(c),)).fetchall()
     unique={}
     for row in rows:unique.setdefault(row[0].casefold(),row[0])
     return sorted(unique.values(),key=str.casefold)
@@ -31,7 +32,7 @@ def names(db):
 def campaign_group(c,item):
     if item.get('audience_mode')!='group':return ''
     group=normalize(c,item.get('target_group',''))
-    if not group or not c.execute('SELECT 1 FROM contacts WHERE target_group=?',(group,)).fetchone():
+    if not group or not c.execute('SELECT 1 FROM contacts WHERE target_group=? AND contact_pool=?',(group,project_scope.contact_pool(c))).fetchone():
         raise ValueError('Wybierz istniejącą grupę docelową kontaktów.')
     return group
 
@@ -39,6 +40,7 @@ def campaign_group(c,item):
 def assign(db,item):
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
+        project_scope.require_contact(c,item['id'])
         value=normalize(c,item.get('target_group',''))
         changed=c.execute('UPDATE contacts SET target_group=? WHERE id=?',(value,int(item['id']))).rowcount
         if not changed:raise ValueError('Nie znaleziono kontaktu.')

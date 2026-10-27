@@ -1,5 +1,6 @@
 """Semicolon-delimited contact tags and campaign recipient matching."""
 import json
+import project_scope
 import unicodedata
 
 
@@ -30,39 +31,44 @@ def init_schema(c):
     if 'tag_match' not in {row[1] for row in c.execute('PRAGMA table_info(campaigns)')}:
         c.execute("ALTER TABLE campaigns ADD COLUMN tag_match TEXT NOT NULL DEFAULT 'any'")
     c.execute('CREATE TABLE IF NOT EXISTS contact_tag_definitions(id INTEGER PRIMARY KEY,name TEXT NOT NULL,tag_key TEXT NOT NULL UNIQUE)')
-    for row in c.execute('SELECT tags FROM contacts').fetchall():register(c,stored(row['tags']))
-    for row in c.execute("SELECT audience_tags FROM campaigns WHERE audience_mode='tags'").fetchall():register(c,stored(row['audience_tags']))
+    scoped='contact_pool' in {row[1] for row in c.execute('PRAGMA table_info(contacts)')}
+    for row in c.execute('SELECT * FROM contacts').fetchall():register(c,stored(row['tags']),row['contact_pool'] if scoped else None)
+    for row in c.execute("SELECT * FROM campaigns WHERE audience_mode='tags'").fetchall():register(c,stored(row['audience_tags']),project_scope.contact_pool(c,row['project_id']) if scoped and c.execute('SELECT 1 FROM seller_projects WHERE id=? AND deleted=0',(row['project_id'],)).fetchone() else (0 if scoped else None))
 
 
 def stored(value):
     return json.loads(value) if isinstance(value,str) else value
 
 
-def catalog(c):
-    unique={row['tag_key']:row['name'] for row in c.execute('SELECT name,tag_key FROM contact_tag_definitions ORDER BY id')}
-    for row in c.execute('SELECT tags FROM contacts ORDER BY id'):
+def catalog(c,project_id=None):
+    unique={row['tag_key']:row['name'] for row in c.execute('SELECT name,tag_key FROM contact_tag_definitions WHERE contact_pool=? ORDER BY id',(project_scope.contact_pool(c,project_id),))}
+    for row in c.execute('SELECT tags FROM contacts WHERE contact_pool=? ORDER BY id',(project_scope.contact_pool(c,project_id),)):
         for tag in stored(row['tags']):unique.setdefault(tag.casefold(),tag)
     return sorted(unique.values(),key=str.casefold)
 
 
-def register(c,tags):
-    for tag in parse(tags):c.execute('INSERT OR IGNORE INTO contact_tag_definitions(name,tag_key) VALUES(?,?)',(tag,tag.casefold()))
+def register(c,tags,pool=None):
+    scoped='contact_pool' in {row[1] for row in c.execute('PRAGMA table_info(contact_tag_definitions)')}
+    for tag in parse(tags):
+        if scoped:c.execute('INSERT OR IGNORE INTO contact_tag_definitions(name,tag_key,contact_pool) VALUES(?,?,?)',(tag,tag.casefold(),project_scope.contact_pool(c) if pool is None else pool))
+        else:c.execute('INSERT OR IGNORE INTO contact_tag_definitions(name,tag_key) VALUES(?,?)',(tag,tag.casefold()))
 
 
 def names(db):
     with db() as c:return catalog(c)
 
 
-def normalize(c,value):
-    known={tag.casefold():tag for tag in catalog(c)}
+def normalize(c,value,project_id=None):
+    known={tag.casefold():tag for tag in catalog(c,project_id)}
     return [known.get(tag.casefold(),tag) for tag in parse(value)]
 
 
-def set_tags(c,contact_id,tags,merge=False):
+def set_tags(c,contact_id,tags,merge=False,project_id=None):
+    project_scope.require_contact(c,contact_id,project_id)
     row=c.execute('SELECT tags FROM contacts WHERE id=?',(contact_id,)).fetchone()
     if not row:raise ValueError('Nie znaleziono kontaktu.')
-    tags=normalize(c,stored(row['tags'])+parse(tags) if merge else tags)
-    register(c,tags)
+    tags=normalize(c,stored(row['tags'])+parse(tags) if merge else tags,project_id)
+    register(c,tags,project_scope.contact_pool(c,project_id))
     c.execute('UPDATE contacts SET tags=?,target_group=? WHERE id=?',(json.dumps(tags,ensure_ascii=False),'; '.join(tags),contact_id))
     return tags
 
@@ -85,6 +91,7 @@ def bulk_assign(db,item):
         rows=[]
         for start in range(0,len(ids),500):
             batch=ids[start:start+500]
+            for contact_id in batch:project_scope.require_contact(c,contact_id)
             rows.extend(c.execute('SELECT id,tags FROM contacts WHERE id IN ('+','.join('?' for _ in batch)+')',batch).fetchall())
         if len(rows)!=len(ids):raise ValueError('Nie znaleziono części zaznaczonych kontaktów. Odśwież listę.')
         updates=[]
@@ -113,12 +120,12 @@ def matches(tags,selected,match='any'):
 
 def state(db):
     with db() as c:
-        rows=[dict(row,contacts=0,campaigns=0) for row in c.execute('SELECT id,name,tag_key FROM contact_tag_definitions ORDER BY name COLLATE NOCASE')]
+        rows=[dict(row,contacts=0,campaigns=0) for row in c.execute('SELECT id,name,tag_key FROM contact_tag_definitions WHERE contact_pool=? ORDER BY name COLLATE NOCASE',(project_scope.contact_pool(c),))]
         counts={row['tag_key']:row for row in rows}
-        for row in c.execute('SELECT tags FROM contacts'):
+        for row in c.execute('SELECT tags FROM contacts WHERE contact_pool=?',(project_scope.contact_pool(c),)):
             for tag in stored(row['tags']):
                 if tag.casefold() in counts:counts[tag.casefold()]['contacts']+=1
-        for row in c.execute("SELECT audience_tags FROM campaigns WHERE audience_mode='tags' AND status!='deleted'"):
+        for row in c.execute("SELECT audience_tags FROM campaigns WHERE project_id=? AND audience_mode='tags' AND status!='deleted'",(project_scope.active(c),)):
             for tag in stored(row['audience_tags']):
                 if tag.casefold() in counts:counts[tag.casefold()]['campaigns']+=1
     return rows
@@ -133,22 +140,22 @@ def manage(db,item):
             values=parse(item.get('name'))
             if len(values)!=1:raise ValueError('Podaj nazwę jednego tagu.')
             name=values[0];key=name.casefold()
-            existing=c.execute('SELECT id FROM contact_tag_definitions WHERE tag_key=?',(key,)).fetchone()
+            existing=c.execute('SELECT id FROM contact_tag_definitions WHERE tag_key=? AND contact_pool=?',(key,project_scope.contact_pool(c))).fetchone()
             if existing and (action=='create' or existing['id']!=int(item.get('id',0))):raise ValueError('Tag o tej nazwie już istnieje.')
         if action=='create':
-            tag_id=c.execute('INSERT INTO contact_tag_definitions(name,tag_key) VALUES(?,?)',(name,key)).lastrowid
+            tag_id=c.execute('INSERT INTO contact_tag_definitions(name,tag_key,contact_pool) VALUES(?,?,?)',(name,key,project_scope.contact_pool(c))).lastrowid
             return {'id':tag_id,'name':name,'action':action}
-        row=c.execute('SELECT * FROM contact_tag_definitions WHERE id=?',(int(item['id']),)).fetchone()
+        row=c.execute('SELECT * FROM contact_tag_definitions WHERE id=? AND contact_pool=?',(int(item['id']),project_scope.contact_pool(c))).fetchone()
         if not row:raise ValueError('Nie znaleziono tagu.')
         old=row['tag_key'];replacement=name if action=='rename' else None
         def replace(values):
             return parse([replacement if tag.casefold()==old else tag for tag in stored(values) if tag.casefold()!=old or replacement is not None])
         contacts=campaigns=0
-        for contact in c.execute('SELECT id,tags FROM contacts').fetchall():
+        for contact in c.execute('SELECT id,tags FROM contacts WHERE contact_pool=?',(project_scope.contact_pool(c),)).fetchall():
             if old not in {tag.casefold() for tag in stored(contact['tags'])}:continue
             tags=replace(contact['tags']);contacts+=1
             c.execute('UPDATE contacts SET tags=?,target_group=? WHERE id=?',(json.dumps(tags,ensure_ascii=False),'; '.join(tags),contact['id']))
-        for campaign in c.execute("SELECT id,audience_tags FROM campaigns WHERE audience_mode='tags'").fetchall():
+        for campaign in c.execute("SELECT c.id,c.audience_tags FROM campaigns c JOIN seller_projects p ON p.id=c.project_id WHERE (CASE WHEN p.share_contacts=1 THEN 0 ELSE p.id END)=? AND c.audience_mode='tags'",(project_scope.contact_pool(c),)).fetchall():
             if old not in {tag.casefold() for tag in stored(campaign['audience_tags'])}:continue
             tags=replace(campaign['audience_tags']);campaigns+=1
             c.execute('UPDATE campaigns SET audience_tags=? WHERE id=?',(json.dumps(tags,ensure_ascii=False),campaign['id']))

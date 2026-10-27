@@ -8,6 +8,7 @@ import contact_groups
 import contact_tags
 import languages
 import shared_project
+import project_scope
 from prospecting import Hunter,clean_domain,safe_link
 
 
@@ -50,13 +51,13 @@ class DiscoverContacts:
             for person in {p['email']:p for p in validated}.values():
                 tags=self.person_tags(c,item,person['email']);group='; '.join(tags)
                 if not group:raise ValueError('Dodaj co najmniej jeden tag każdemu zapisywanemu kontaktowi.')
-                row=c.execute('SELECT id,simulated FROM contacts WHERE email=?',(person['email'],)).fetchone()
+                row=c.execute('SELECT id,simulated FROM contacts WHERE email=? AND contact_pool=?',(person['email'],project_scope.contact_pool(c,project['id']))).fetchone()
                 if row:
                     existing+=1
-                    if row['simulated']:contact_tags.set_tags(c,row['id'],tags,merge='tags' in item or 'tags_by_contact' in item)
+                    if row['simulated']:contact_tags.set_tags(c,row['id'],tags,merge='tags' in item or 'tags_by_contact' in item,project_id=project['id'])
                     continue
-                self.add_contact(c,{**person,'company':company,'tags':tags,'notes':'Dane symulacyjne. Projekt: '+project['name']+'. Wykluczone z rzeczywistej wysyłki.'})
-                c.execute('UPDATE contacts SET simulated=1 WHERE email=?',(person['email'],));added+=1
+                self.add_contact(c,{**person,'project_id':project['id'],'company':company,'tags':tags,'notes':'Dane symulacyjne. Projekt: '+project['name']+'. Wykluczone z rzeczywistej wysyłki.'})
+                c.execute('UPDATE contacts SET simulated=1 WHERE email=? AND contact_pool=?',(person['email'],project_scope.contact_pool(c,project['id'])));added+=1
         return {'added':added,'existing':existing,'target_group':group,'simulated':True,'persisted':True}
 
     def search(self,item):
@@ -97,7 +98,7 @@ class DiscoverContacts:
             sources=[source for source in sources if source['url']]
             if not name or not sources or email in seen:continue
             seen.add(email)
-            with self.db() as c:existing=c.execute('SELECT id,target_group,status FROM contacts WHERE email=?',(email,)).fetchone()
+            with self.db() as c:existing=c.execute('SELECT id,target_group,status FROM contacts WHERE email=? AND contact_pool=?',(email,project_scope.contact_pool(c,project['id']))).fetchone()
             contacts.append({'id':len(contacts),'name':name,'email':email,'role':str(person.get('position') or '')[:250],
                              'sources':sources,'existing':dict(existing) if existing else None})
         with self.db() as c:
@@ -122,11 +123,11 @@ class DiscoverContacts:
             for index in dict.fromkeys(selected):
                 person=contacts[index]
                 tags=self.person_tags(c,item,person['email']);group='; '.join(tags)
-                row=c.execute('SELECT id FROM contacts WHERE email=?',(person['email'],)).fetchone()
+                row=c.execute('SELECT id FROM contacts WHERE email=? AND contact_pool=?',(person['email'],project_scope.contact_pool(c,project['id']))).fetchone()
                 if row:
                     existing+=1
-                    if group:contact_tags.set_tags(c,row['id'],tags,merge='tags' in item or 'tags_by_contact' in item)
+                    if group:contact_tags.set_tags(c,row['id'],tags,merge='tags' in item or 'tags_by_contact' in item,project_id=project['id'])
                     continue
                 notes=('Discover / Hunter; email wymaga weryfikacji.\nDomena: '+search['domain']+'\nDowód zdarzenia: '+search['context']+'\nŹródła adresu:\n'+'\n'.join(source['url'] for source in person['sources']))[:10000]
-                self.add_contact(c,{'name':person['name'],'email':person['email'],'company':search['company'],'role':person['role'],'notes':notes,'tags':tags});added+=1
+                self.add_contact(c,{'project_id':project['id'],'name':person['name'],'email':person['email'],'company':search['company'],'role':person['role'],'notes':notes,'tags':tags});added+=1
         return {'added':added,'existing':existing,'target_group':group}

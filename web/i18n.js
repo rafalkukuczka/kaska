@@ -2,6 +2,43 @@
 let uiLanguage='pl';
 try{uiLanguage=localStorage.getItem('kaska-ui-language')==='en'?'en':'pl'}catch{}
 const uiEnglish={
+ 'Raporty':'Reports', 'Lejek kontaktu, aktywność i wyniki kampanii bieżącego projektu.':'Contact flow, activity and campaign results for this project.',
+ 'Okres raportów':'Report period', 'Odśwież raporty':'Refresh reports',
+ 'Raporty pomijają symulację. Zaangażowanie i odbicia wymagają osobnego pomiaru.':'Reports exclude simulations. Engagement and bounces require separate tracking.',
+ 'Wczytywanie raportów…':'Loading reports…', 'Stan na:':'As of:',
+ 'Porównanie kampanii':'Campaign comparison', 'Wysyłki do sprawdzenia':'Sends to review', 'Usunięta':'Deleted',
+ 'Brak kampanii w tym projekcie.':'No campaigns in this project.',
+ 'Wysyłki i odbiorcy z wybranego okresu. Kolejka i wysyłki do sprawdzenia pokazują stan bieżący. Historia obejmuje również usunięte kampanie.':'Sends and recipients are from the selected period. Queued sends and sends to review show the current state. History includes deleted campaigns.',
+ 'Odpowiedzi raportujemy dla projektu. Błąd SMTP nie oznacza potwierdzonego odbicia.':'Replies are reported for the project. An SMTP error is not a confirmed bounce.',
+ 'Nie udało się wczytać raportów. Spróbuj ponownie.':'Could not load reports. Please try again.',
+ 'Twój lejek kontaktu':'Check out your flow',
+ 'Ostatnie 7 dni · pula odbiorców: stan bieżący':'Last 7 days · prospect pool: current state',
+ 'Dane rzeczywiste':'Real data', 'Brak danych':'No data', 'Potencjalni odbiorcy':'Potential prospects',
+ 'Skontaktowani odbiorcy':'Contacted prospects', 'Zaangażowanie':'Engagement rate',
+ 'Wskaźnik odpowiedzi':'Reply rate', 'Wskaźnik odbić':'Bounce rate',
+ 'Jak liczymy ten wskaźnik?':'How is this metric calculated?',
+ 'Brak wysyłek w tym okresie':'No sends in this period',
+ 'Aktywne, rzeczywiste kontakty z puli projektu, do których nie wysłano jeszcze wiadomości w tym projekcie. Stan bieżący.':'Active, real contacts in this project’s pool who have not yet been emailed in this project. Current state.',
+ 'Unikalni odbiorcy z potwierdzoną wysyłką SMTP w tym projekcie w ostatnich 7 dniach. Follow-upy nie zwiększają liczby osób.':'Unique recipients with an SMTP-confirmed send in this project over the last 7 days. Follow-ups do not increase the number of people.',
+ 'Brak pomiaru otwarć i kliknięć. Odpowiedzi pokazujemy osobno.':'Opens and clicks are not tracked. Replies are reported separately.',
+ 'Odsetek skontaktowanych odbiorców z ostatnich 7 dni, od których otrzymano odpowiedź po wysyłce. Każda osoba jest liczona raz.':'Percentage of recipients contacted in the last 7 days who replied after a send. Each person is counted once.',
+ 'Brak rejestracji potwierdzonych odbić poczty. Błędy SMTP i wyniki weryfikacji adresów nie są liczone jako odbicia.':'Confirmed email bounces are not recorded. SMTP errors and address verification results are not counted as bounces.',
+ 'Wiadomości i odpowiedzi':'Messages and replies',
+ 'Dane dzienne bieżącego projektu · czas polski':'Daily activity for this project · Warsaw time',
+ 'Okres':'Period', 'dni':'days', 'Dane wykresu':'Chart data',
+ 'Brak wysłanych wiadomości i odpowiedzi w wybranym okresie.':'No sent messages or replies in the selected period.',
+ 'Współdziel kontakty':'Share contacts',
+ 'Zaznacz, aby korzystać ze wspólnej puli kontaktów. Bez zaznaczenia projekt ma własne kontakty. Kampanie zawsze należą do jednego projektu.':'Select to use the shared contact pool. Otherwise, this project has its own contacts. Campaigns always belong to one project.',
+ 'Kontakty: współdzielone':'Contacts: shared',
+ 'Kontakty: tylko w tym projekcie':'Contacts: this project only',
+ 'Cały świat':'Worldwide',
+ 'Cały świat — brak ograniczeń obszaru wyszukiwania.':'Worldwide — no geographic search restrictions.',
+ 'Cały świat. Ustalam Twoją lokalizację…':'Worldwide. Finding your location…',
+ 'Cały świat. Mapa wyśrodkowana na Twojej lokalizacji.':'Worldwide. Map centered on your location.',
+ 'Cały świat. Lokalizacja niedostępna — możesz przesunąć mapę ręcznie.':'Worldwide. Location unavailable — you can move the map manually.',
+ 'Dodaj ofertę':'Add an offer',
+ 'Wygeneruj przykładowe dane':'Generate example data',
+ 'Uzupełniono puste pola fikcyjnymi danymi. Własny adres strony możesz dodać później.':'Empty fields were filled with fictional data. You can add your own website later.',
  'Odpowiedz w Gmailu ↗':'Reply in Gmail ↗', 'Otwórz aplikację pocztową':'Open mail app', 'Brak adresu email nadawcy odpowiedzi.':'The reply sender’s email address is unavailable.',
  'Zaplanowano:':'Scheduled:',
  'Symulowane są pobieranie danych, wysyłka i odpowiedzi. Twoje wpisy i konfiguracja są zapisywane normalnie. Wiadomości nie są wysyłane do klientów.':'Data acquisition, sending and replies are simulated. Your inputs and configuration are saved normally. No messages are sent to customers.',
@@ -191,7 +228,7 @@ const uiEnglish={
  'Opisz, co sprzedajesz. Kaśka zaproponuje tematy, typy sygnałów i powód, dla którego warto je śledzić.':'Describe what you sell. Kaśka will suggest topics, signal types and why they matter.',
  'Dobierz sygnały do oferty':'Match signals to your offer', 'Monitoruj temat':'Monitor a topic',
  'Wpisz branżę, technologię lub przepis. Monitoruj wiadomości bez podawania oferty i firmy.':'Enter an industry, technology or regulation. Monitor news without an offer or a company.',
- 'Podłącz OpenAI w Integracjach.':'Connect OpenAI in Integrations.', 'Twoje monitoringi':'Your monitors',
+ 'Podłącz OpenAI w Integracjach.':'Connect OpenAI in Integrations.', 'Twoje monitoringi':'Monitoring',
  'Monitorowanie konkretnych firm →':'Monitor specific companies →', 'aktywnych źródeł':'active sources',
  'Zobacz zdarzenia':'View events', 'Zarządzaj źródłami':'Manage sources', 'Wszystkie monitoringi':'All monitors',
  'Wybierz sposób monitorowania':'Choose a monitoring mode',
@@ -351,9 +388,10 @@ Object.assign(uiEnglish,{
 // UI aliases only: never rewrite stored records, user input or provider evidence.
 const salesTerminology={
  'Przegląd':['Dashboard','Dashboard'],
- 'Znajdź klientów':['Pozyskiwanie leadów','Lead generation'],
- 'Discover':['Odkrywanie firm','Company discovery'],
- 'Firmy warte uwagi':['Firmy docelowe','Target accounts'],
+ 'Znajdź klientów':['Leady','Leads'],
+ 'Discover':['Odkrywaj','Discover'],
+ 'Twoje monitoringi':['Monitoring','Monitoring'],
+ 'Firmy warte uwagi':['Firmy/Instytucje','Companies/Institutions'],
  'Opis firm, których szukasz':['Kryteria idealnego klienta (ICP)','Ideal customer criteria (ICP)'],
  'Grupa docelowa':['Lista kontaktów','Contact list'],
  'Z grupy docelowej':['Z listy kontaktów','From a contact list'],
@@ -477,8 +515,12 @@ function localizeUi(){
 }
 const uiObserver=new MutationObserver(()=>localizeUi());
 function applyUiLanguage(language){
+  const changed=uiLanguage!==(language==='en'?'en':'pl');
   uiLanguage=language==='en'?'en':'pl';
   try{localStorage.setItem('kaska-ui-language',uiLanguage)}catch{}
+  if(changed&&typeof renderDashboardActivity==='function')renderDashboardActivity();
+  if(changed&&typeof dashboardFlowPanel==='function'){const flow=document.querySelector('.dashboard-flow');if(flow)flow.outerHTML=dashboardFlowPanel()}
+  if(changed&&typeof renderReports==='function'&&view==='reports')renderReports();
   localizeUi();
 }
 function syncLanguages(){
@@ -499,7 +541,7 @@ document.addEventListener('change',e=>{
 document.addEventListener('DOMContentLoaded',()=>applyUiLanguage(uiLanguage));
 window.addEventListener('hashchange',()=>{
   const next=location.hash.slice(1);
-  if(['dashboard','discover','prospecting','contacts','campaigns','signals','inbox','library','settings','administration','project'].includes(next)){
+  if(['dashboard','discover','prospecting','contacts','campaigns','signals','inbox','library','reports','settings','administration','project'].includes(next)){
     view=next;selectedCampaign=null;render();
   }
 });

@@ -1,3 +1,4 @@
+import project_scope
 """Background, web-grounded source discovery with independent URL verification."""
 import json
 import re
@@ -105,7 +106,7 @@ class Discovery:
         return {'ok':True}
 
     def hints(self,company):
-        with self.db() as c:emails=[row['email'] for row in c.execute('SELECT email FROM contacts WHERE company_key(company)=company_key(?)',(company,))]
+        with self.db() as c:emails=[row['email'] for row in c.execute('SELECT email FROM contacts WHERE company_key(company)=company_key(?) AND contact_pool=?',(company,project_scope.contact_pool(c)))]
         # Domains are hints for identity checks; never send names or full email addresses.
         domains={email.rsplit('@',1)[-1].lower() for email in emails if '@' in email}
         return sorted(domain for domain in domains if domain not in PERSONAL and re.fullmatch(r'[a-z0-9.-]+\.[a-z]{2,}',domain))[:10]

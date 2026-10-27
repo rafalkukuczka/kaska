@@ -10,6 +10,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
   const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  await page.route('https://tile.openstreetmap.org/**',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')}));
   page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(()=>{if(!localStorage.getItem('kaska-monitoring-simulation'))localStorage.setItem('kaska-monitoring-simulation','off');if(!localStorage.getItem('kaska-project-example'))localStorage.setItem('kaska-profile-example',JSON.stringify({profile_id:1,libraryProfiles:[],offer:'User profile text'}))});
   await page.goto('http://localhost:8790/#profile');
@@ -28,6 +29,11 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('#seller-project-form,#prospect-offer').count(),0);
   await page.locator('#current-seller-project').click();
   assert.ok(page.url().endsWith('#project'));
+  await page.evaluate(async()=>{
+   await api('contacts',{name:'Shared contact',email:'shared@example.com'});
+   await api('campaigns',{name:'Project A campaign',offer:'Services',audience_mode:'all',steps:[{delay_days:0,subject:'Hello',body:'Hello'}]});
+   await refresh();
+  });
   await page.locator('#seller-name').fill('Company A');
   await page.locator('#prospect-website').fill('alpha.example');
   await page.locator('#prospect-offer').fill('Consulting A');
@@ -37,11 +43,13 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('#prospect-offer').inputValue(),'Consulting A');
   // Hold autosave: creating another project must wait for the current project's latest edits.
   await page.evaluate(async()=>flushSellerProject());
+  await page.evaluate(()=>localStorage.setItem(builderDraftKey(),JSON.stringify({name:'Project A unsaved campaign'})));
   let release;const gate=new Promise(resolve=>release=resolve);
   await page.route('**/api/seller-project',async route=>{await gate;await route.continue()});
   await page.locator('#prospect-offer').fill('Latest consulting A');
   await page.locator('#new-seller-project').click();
   await page.locator('#new-project-name').fill('Company B');
+  assert.equal(await page.locator('#new-seller-project-form [name=share_contacts]').isChecked(),false);
   await page.getByRole('button',{name:'Utwórz projekt',exact:true}).click();
   assert.equal(await page.locator('#active-project').isDisabled(),true);
   release();
@@ -50,6 +58,8 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.unroute('**/api/seller-project');
   const second=await page.locator('#active-project').inputValue();
   assert.notEqual(second,'1');
+  assert.deepEqual(await page.evaluate(()=>({contacts:state.contacts.length,campaigns:state.campaigns.length,shared:state.seller_project.share_contacts})),{contacts:0,campaigns:0,shared:false});
+  assert.equal(await page.evaluate(()=>localStorage.getItem(builderDraftKey())),null);
   assert.equal(await page.locator('#prospect-offer').inputValue(),'');
   assert.equal(await page.locator('#seller-project-form [name=pain_points]').inputValue(),'');
   await page.locator('#prospect-offer').fill('Delivery B');
@@ -57,6 +67,8 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('#seller-project-form [data-point-editor=value_props] .point-row input').fill('Value B');
   await page.locator('#active-project').selectOption('1');
   await page.waitForFunction(()=>state.seller_project.id===1&&!sellerSwitchBusy);
+  assert.deepEqual(await page.evaluate(()=>({contacts:state.contacts.length,campaigns:state.campaigns.length})),{contacts:1,campaigns:1});
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem(builderDraftKey())).name),'Project A unsaved campaign');
   assert.equal(await page.locator('#prospect-offer').inputValue(),'Latest consulting A');
   assert.equal(await page.locator('#seller-project-form [name=pain_points]').inputValue(),'Pain A');
   assert.equal(await page.locator('#seller-project-form [name=value_props]').inputValue(),'Value A');
@@ -122,6 +134,14 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('#active-project option').count(),1);
   assert.equal(await page.locator('#prospect-offer').inputValue(),'');
   assert.deepEqual(errors,[]);
+  await page.locator('#new-seller-project').click();
+  await page.locator('#new-project-name').fill('Shared pool project');
+  await page.locator('[name=share_contacts]').check();
+  await page.getByRole('button',{name:'Utwórz projekt',exact:true}).click();
+  await page.waitForFunction(()=>state.seller_project.name==='Shared pool project'&&!sellerSwitchBusy);
+  assert.deepEqual(await page.evaluate(()=>({contacts:state.contacts.length,campaigns:state.campaigns.length,shared:state.seller_project.share_contacts})),{contacts:1,campaigns:0,shared:true});
+  await page.reload();await page.waitForFunction(()=>state?.seller_project?.share_contacts===true);
+  assert.equal(await page.evaluate(()=>state.contacts[0].email),'shared@example.com');
   console.log('Projects browser QA passed: create, switch, isolation, delete, cancel, retry, last-project replacement, reload persistence and mobile.');
  }finally{if(browser)await browser.close();server.kill()}
 })().catch(e=>{console.error(e);process.exitCode=1});

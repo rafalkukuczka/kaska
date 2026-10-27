@@ -25,6 +25,15 @@ function shouldSimulateRequest(path,data){
  return monitoringSimulation&&simulatedFetchPaths.has(path);
 }
 function fetchedSimulation(projectId=state.seller_project.id){return simulationResults[projectId]||={runs:[],candidates:[],materials:[],libraryProjects:[],jobs:[]}}
+function simulationContactResults(project,projects){
+ const key='contacts:'+(project.share_contacts?'shared':project.id);
+ if(!simulationResults[key]){
+  const owners=project.share_contacts?projects.filter(row=>row.share_contacts):[project],unique=new Map();
+  for(const owner of owners)for(const contact of simulationResults[owner.id]?.contacts||[])if(!unique.has(contact.email.toLowerCase()))unique.set(contact.email.toLowerCase(),contact);
+  simulationResults[key]={contacts:[...unique.values()].map((contact,index)=>({...contact,id:-index-1}))};
+ }
+ return simulationResults[key];
+}
 function saveSimulationResults(){try{sessionStorage.setItem('kaska-data-simulation-results',JSON.stringify(simulationResults))}catch{}}
 async function saveSimulationMode(enabled,csrf){
  const response=await fetch('/api/data-simulation',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({enabled})});
@@ -37,9 +46,9 @@ async function loadAppState(){
  else monitoringSimulation=snapshot.data_simulation;
  try{localStorage.setItem('kaska-simulation',monitoringSimulation?'on':'off');localStorage.setItem('kaska-monitoring-simulation',monitoringSimulation?'on':'off')}catch{}
  if(!monitoringSimulation)return snapshot;
- const results=simulationResults[snapshot.seller_project.id];
+ const results=fetchedSimulation(snapshot.seller_project.id),contactResults=simulationContactResults(snapshot.seller_project,snapshot.seller_projects);
  if(results){
-  const demoContacts=(results.contacts||[]).filter(contact=>!snapshot.contacts.some(real=>real.email.toLowerCase()===contact.email.toLowerCase()));
+  const demoContacts=(contactResults.contacts||[]).filter(contact=>!snapshot.contacts.some(real=>real.email.toLowerCase()===contact.email.toLowerCase()));
   demoContacts.forEach(contact=>contact.tags=contactTags(contact));
   snapshot.contacts=[...demoContacts,...snapshot.contacts];snapshot.totals.contacts+=demoContacts.length;
   const knownTags=new Map((snapshot.contact_tags||[]).map(tag=>[tag.toLocaleLowerCase(),tag]));
@@ -58,7 +67,7 @@ async function loadAppState(){
  return applyDeliverySimulation(snapshot);
 }
 async function simulationApi(path,data={}){
- const results=fetchedSimulation(data.project_id??state.seller_project.id),now=Date.now()/1000;let result;
+ const results=fetchedSimulation(data.project_id??state.seller_project.id),contactResults=simulationContactResults(state.seller_project,state.seller_projects),now=Date.now()/1000;let result;
  if(path==='discover/contacts/search'){
   const names=['Anna Kowalska','Piotr Nowak','Marta Wiśniewska','Tomasz Wójcik','Katarzyna Zielińska','Michał Kamiński','Agnieszka Lewandowska','Paweł Dąbrowski','Magdalena Szymańska','Krzysztof Woźniak'],roles=['Operations Manager','CEO','IT Director','Sales Director','Marketing Manager'];
   result={id:simulationResultId(),company:data.company,domain:'demo.example',organization:data.company,contacts:Array.from({length:Math.max(1,Math.min(10,Math.floor(Number(data.limit)||5)))},(_,i)=>({id:i,name:names[i],email:`kontakt${i+1}@demo.example`,role:data.titles||roles[i%roles.length],sources:[],existing:null})),simulated:true};
@@ -72,7 +81,7 @@ async function simulationApi(path,data={}){
    if(tags.length>30||tags.some(tag=>tag.length>100||/[\u0000-\u001f\u007f]/.test(tag)))throw Error('Nieprawidłowe tagi.');
    return {person,tags,group:tags.join('; ')};
   });
-  const contacts=results.contacts||=[];let added=0,existing=0;
+  const contacts=contactResults.contacts||=[];let added=0,existing=0;
   for(const {person,tags,group} of plans){
    const saved=contacts.find(c=>c.email===person.email);
    if(saved){existing++;if(group){saved.tags=contactTags([...contactTags(saved),...tags]);saved.target_group=saved.tags.join('; ')}continue}
@@ -82,14 +91,14 @@ async function simulationApi(path,data={}){
   }
   result={added,existing,simulated:true};
  }else if(path==='contacts/tags/bulk'){
-  const tags=contactTags(data.tags),contacts=(results.contacts||[]).filter(contact=>data.ids.includes(contact.id));
+  const tags=contactTags(data.tags),contacts=(contactResults.contacts||[]).filter(contact=>data.ids.includes(contact.id));
   if(!tags.length||contacts.length!==new Set(data.ids).size)throw Error('Wybierz kontakty i co najmniej jeden tag.');
   const updates=contacts.map(contact=>({contact,tags:contactTags([...contactTags(contact),...tags])}));
   if(updates.some(row=>row.tags.length>30||row.tags.some(tag=>tag.length>100||/[\u0000-\u001f\u007f]/.test(tag))))throw Error('Nieprawidłowe tagi.');
   updates.forEach(row=>{row.contact.tags=row.tags;row.contact.target_group=row.tags.join('; ')});
   result={updated:contacts.length,tags,simulated:true};
  }else if(path==='contact/group'||path==='contact/tags'||path==='contact/status'){
-  const contact=(results.contacts||[]).find(c=>c.id===data.id);if(!contact)throw Error('Nie znaleziono kontaktu z symulacji.');
+  const contact=(contactResults.contacts||[]).find(c=>c.id===data.id);if(!contact)throw Error('Nie znaleziono kontaktu z symulacji.');
   if(path==='contact/group'||path==='contact/tags'){
    const tags=contactTags(data.tags??data.target_group??'');
    if(tags.length>30||tags.some(tag=>tag.length>100||/[\u0000-\u001f\u007f]/.test(tag)))throw Error('Nieprawidłowe tagi.');

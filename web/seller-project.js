@@ -5,6 +5,7 @@ const sellerDraftKey=id=>'kaska-seller-draft-'+id;
 function cacheSellerDraft(){try{const key=sellerDraftKey(sellerBase?.id);if(Object.keys(sellerPending).length)localStorage.setItem(key,JSON.stringify({revision:sellerBase?.revision,fields:sellerPending}));else localStorage.removeItem(key)}catch{}}
 function syncSellerProject(){
  const incoming=state.seller_project;if(!incoming)return;
+ if(!sellerBase){try{const legacy=localStorage.getItem('campaign-builder-draft');if(legacy!==null){const key='campaign-builder-draft:'+incoming.id;if(localStorage.getItem(key)===null)localStorage.setItem(key,legacy);localStorage.removeItem('campaign-builder-draft')}}catch{}}
  const switched=sellerBase&&incoming.id!==sellerBase.id;
  if(switched){cacheSellerDraft();sellerPending={};clearTimeout(sellerSaveTimer);$('#content')?.replaceChildren();if(typeof discoverReview!=='undefined')discoverReview.stop=true}
  const first=!sellerBase||switched;
@@ -56,7 +57,7 @@ function bindSharedProject(form){
  const project=sellerProject();
  form.dataset.sellerProjectId=String(project.id);
  for(const field of sellerFields)if(form.elements[field])form.elements[field].value=['search_languages','search_areas'].includes(field)?JSON.stringify(project[field]||[]):project[field]||'';
- restoreSellingPoints(form);bindSearchLanguages(form);bindSearchMap(form);
+ restoreSellingPoints(form);bindSearchLanguages(form);bindSearchMap(form);bindWebsiteActions(form);syncWebsiteActions(form);
  form.addEventListener('input',()=>updateSellerProject(form));
  form.addEventListener('change',()=>updateSellerProject(form));
  form.addEventListener('focusout',()=>queueMicrotask(()=>{if(form.isConnected)updateSellerProject(form)}));
@@ -68,7 +69,7 @@ function projectContextLink(){
 }
 function renderSellerProject(){
  if($('#seller-project-form'))return;
- $('#content').innerHTML=renderTop('Projekt','Oferta i kryteria odbiorców wspólne dla odkrywania firm i pozyskiwania leadów.')+sharedProjectPanel();
+ $('#content').innerHTML=renderTop('Projekt','Oferta i kryteria odbiorców wspólne dla odkrywania firm i pozyskiwania leadów.')+`<p class="hint">${esc(translateUiText(sellerProject().share_contacts?'Kontakty: współdzielone':'Kontakty: tylko w tym projekcie'))}</p>`+sharedProjectPanel();
  $('#discover-project').open=true;
  bindDiscoverProject();
 }
@@ -103,7 +104,7 @@ async function chooseSellerProject(path,item,signal){
    if(deleting){try{localStorage.removeItem(sellerDraftKey(item.project_id));if(item.project_id===1)localStorage.removeItem('kaska-seller-draft')}catch{}}
    if(typeof discoverReview!=='undefined'){discoverReview.stop=true;discoverReview={running:false,stop:false,completed:0,total:0}}
    clearTimeout(sellerSaveTimer);sellerPending={};sellerBase=null;state.seller_project=project;
-   prospectRunId=null;prospectSelected.clear();signalFilter.monitor=null;
+   prospectRunId=null;prospectSelected.clear();selectedCampaign=null;contactBulkSelected.clear();signalFilter.monitor=null;
    if(view==='builder')view='discover';
    $('#content').replaceChildren();await refresh();
  }catch(error){if(deleting&&sellerBase?.id===item.project_id){sellerPending={...discarded,...sellerPending};cacheSellerDraft()}throw error}
@@ -128,7 +129,7 @@ document.addEventListener('change',e=>{
 });
 document.addEventListener('click',e=>{
  if(!e.target.closest('#new-seller-project'))return;
- modal(`<h2>Nowy projekt</h2><form id="new-seller-project-form"><label for="new-project-name">Nazwa projektu</label><input id="new-project-name" name="name" required maxlength="100" placeholder="np. Moja firma"><p class="hint">Każdy projekt ma własną ofertę, problemy, wartości i monitoringi Discover.</p><div class="actions"><button class="primary">Utwórz projekt</button><button type="button" class="secondary close">Anuluj</button></div></form>`);
+ modal(`<h2>Nowy projekt</h2><form id="new-seller-project-form"><label for="new-project-name">Nazwa projektu</label><input id="new-project-name" name="name" required maxlength="100" placeholder="np. Moja firma"><label class="check"><input type="checkbox" name="share_contacts"> <span>Współdziel kontakty</span></label><p class="hint">Zaznacz, aby korzystać ze wspólnej puli kontaktów. Bez zaznaczenia projekt ma własne kontakty. Kampanie zawsze należą do jednego projektu.</p><div class="actions"><button class="primary">Utwórz projekt</button><button type="button" class="secondary close">Anuluj</button></div></form>`);
  $('#new-project-name').focus();
- $('#new-seller-project-form').onsubmit=e=>{e.preventDefault();run(e.submitter,async()=>{await chooseSellerProject('seller-projects/create',{name:e.target.elements.name.value});$('#modal').close();editSellerProject();toast('Utworzono projekt.')})};
+ $('#new-seller-project-form').onsubmit=e=>{e.preventDefault();run(e.submitter,async()=>{await chooseSellerProject('seller-projects/create',{name:e.target.elements.name.value,share_contacts:e.target.elements.share_contacts.checked});$('#modal').close();editSellerProject();toast('Utworzono projekt.')})};
 });

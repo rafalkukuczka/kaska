@@ -32,6 +32,8 @@ Aplikacja nie ma domyślnego klienta, domeny ani branży. Można działać bez s
 
 Projekt edytuje się na osobnej stronie **Szczegóły**, dostępnej pod listą projektów w pasku bocznym (`#project`). Oferta, problemy, propozycje wartości, dowody, opis odbiorców, języki wyszukiwania i obszary są wspólne dla Odkrywania firm i Pozyskiwania leadów. Te widoki nie powielają formularza projektu. Przycisk **+** tworzy projekt i otwiera jego edycję, a ikona kosza usuwa projekt po potwierdzeniu. Kampania może pobrać te treści przyciskiem **Importuj z projektu**.
 
+Przy tworzeniu projektu opcja **Współdziel kontakty** wybiera wspólną pulę kontaktów i tagów. Domyślnie nowy projekt ma własną bazę. Ten sam email może występować osobno w różnych prywatnych projektach. Kampanie, ich wiadomości i odpowiedzi należą do konkretnego projektu; odbiorcy pochodzą z jego puli kontaktów. Usunięcie projektu wstrzymuje jego kampanie i reguły sygnałów. Migracja zachowuje dotychczasową wspólną pulę kontaktów i przypisuje kampanie do projektu wskazanego przez wyszukiwanie, a pozostałe do pierwszego istniejącego projektu. Zachowuje identyfikatory i historię wiadomości.
+
 Wiadomości w kampanii mają paginację z wyborem 10/25/50/100 pozycji. Checkbox **Operacje zbiorcze** włącza wybieranie wiadomości i usuwanie zaznaczonych; wybór pozostaje przy zmianie strony, a checkbox w nagłówku obejmuje tylko bieżącą stronę. Usuwanie wymaga wstrzymania aktywnej kampanii i potwierdzenia. Usunięcie oczekującego kroku anuluje późniejsze oczekujące kroki tej osoby. Rekordy wysłanych wiadomości pozostają w bazie dla historii doręczeń, dopasowania odpowiedzi i limitów wysyłki, a usunięte pozycje znikają z listy.
 
 Kreator ma panel pomocy z działającymi skrótami, edytor sekwencji i podgląd dla wybranego aktywnego kontaktu. Panel pomocy jest przewodnikiem, a nie pozorowanym czatem AI. Podgląd personalizuje szablon bez wywoływania modelu; generowanie AI odbywa się podczas przygotowania wiadomości, jeśli skonfigurowano model. Odpowiedzi i rezygnacje zatrzymują sekwencję; ta wersja nie ma graficznego edytora dowolnych rozgałęzień ani wysyłki LinkedIn.
@@ -139,7 +141,7 @@ Testy korzystają z osobnej tymczasowej bazy i atrap usług pocztowych. Nie wysy
 
 ## Grupy docelowe kontaktów
 
-Pod tytułem formularza dodawania kontaktu pole „Grupa docelowa” pozwala wybrać istniejącą nazwę lub wpisać nową. Przypisanie jest opcjonalne i trwałe. W Kontaktach można zmienić grupę, usunąć przypisanie przez wyczyszczenie pola oraz filtrować listę według grupy. Grupy są wspólne dla bazy kontaktów i niezależne od projektów nadawcy.
+Pod tytułem formularza dodawania kontaktu pole „Grupa docelowa” pozwala wybrać istniejącą nazwę lub wpisać nową. Przypisanie jest opcjonalne i trwałe. W Kontaktach można zmienić grupę, usunąć przypisanie przez wyczyszczenie pola oraz filtrować listę według grupy. Grupy i tagi dotyczą puli kontaktów wybranej przy tworzeniu projektu.
 
 Przy imporcie CSV można wskazać grupę dla całej paczki. Opcjonalna kolumna `target_group` nadpisuje ten wybór dla konkretnego wiersza; istniejące kontakty o tym samym adresie email są pomijane bez zmiany ich grupy.
 

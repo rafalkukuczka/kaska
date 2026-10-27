@@ -10,6 +10,8 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
   const page=await browser.newPage({viewport:{width:1440,height:1100}}),errors=[],payloads=[];let tiles=0;
+  await page.context().grantPermissions(['geolocation']);
+  await page.context().setGeolocation({latitude:40.7128,longitude:-74.006});
   await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
   page.on('pageerror',e=>errors.push(e.message));
   page.on('request',r=>{if(r.url().endsWith('/api/prospecting/search'))payloads.push(r.postDataJSON())});
@@ -17,12 +19,18 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.route('https://tile.openstreetmap.org/**',route=>{tiles++;return route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')})});
   await page.goto('http://localhost:8795');await page.waitForFunction(()=>state?.seller_project);
   await page.locator('#current-seller-project').click();
-  assert.equal(tiles,0);
+  // Dashboard now renders the worldwide preview even without selected areas.
   await page.locator('#prospect-website').fill('alpha.example');
   await page.locator('#prospect-offer').fill('Logistics services');
   await page.locator('#prospect-audience').fill('Retail companies with online stores');
   await page.locator('[data-show-search-map]').check();
   await page.locator('[data-search-area-map].leaflet-container').waitFor();
+  await page.waitForFunction(()=>document.querySelector('[data-search-map-status]').textContent.includes('wyśrodkowana'));
+  const worldwide=await page.evaluate(()=>({areas:readSearchAreas(document.querySelector('[data-search-map-picker]').closest('form')),center:document.querySelector('[data-search-map-picker]')._searchMap.getCenter(),zoom:document.querySelector('[data-search-map-picker]')._searchMap.getZoom()}));
+  assert.deepEqual(worldwide.areas,[]);assert.equal(worldwide.zoom,1);
+  assert.ok(Math.abs(worldwide.center.lat-40.7128)<0.5&&Math.abs(worldwide.center.lng+74.006)<0.5);
+  assert.equal(await page.locator('[data-area-lat]').inputValue(),'');
+  assert.equal(await page.locator('[data-area-lng]').inputValue(),'');
   await page.locator('[data-search-area-map]').click({position:{x:150,y:140}});
   const lat=Number(await page.locator('[data-area-lat]').inputValue()),lng=Number(await page.locator('[data-area-lng]').inputValue());
   assert.ok(Number.isFinite(lat)&&Number.isFinite(lng));

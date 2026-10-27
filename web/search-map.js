@@ -1,4 +1,35 @@
 function searchMapControls(){return `<section class="search-map-picker" data-search-map-picker><label class="check"><input type="checkbox" data-show-search-map> <span>Pokaż mapę</span></label><p class="hint" data-search-area-count></p><div data-search-map-panel hidden><p class="hint">Kliknij punkt na mapie, ustaw promień i naciśnij „Dodaj obszar”. Możesz też wpisać współrzędne.</p><div class="search-area-map" data-search-area-map role="region" aria-label="Mapa obszarów klientów"></div><p class="hint" data-search-map-status role="status"></p><div class="search-area-fields"><label>Szerokość geograficzna<input data-area-lat type="number" step="any" inputmode="decimal" placeholder="np. 52.2297"></label><label>Długość geograficzna<input data-area-lng type="number" step="any" inputmode="decimal" placeholder="np. 21.0122"></label><label>Promień (km)<input data-area-radius type="number" step="any" inputmode="decimal" value="50"></label><label>Nazwa obszaru (opcjonalnie)<input data-area-label maxlength="100" placeholder="np. Warszawa i okolice"></label></div><div class="actions"><button type="button" class="secondary" data-add-search-area>+ Dodaj obszar</button><button type="button" class="link" data-clear-search-areas>Usuń wszystkie obszary</button></div><p class="hint">Szukamy w dowolnym z dodanych obszarów. Ukrycie mapy nie usuwa obszarów.</p><p class="hint">Obszary trafiają do kryteriów wyszukiwania. Dokładne położenie znalezionych firm wymaga potwierdzenia.</p></div><div data-search-areas-list></div><input name="search_areas" type="hidden" value="[]"></section>`}
+// Location only changes the viewport; an empty area list always means worldwide.
+let currentMapLocation=null,currentMapLocationRequest=null;
+function getCurrentMapLocation(){
+ if(currentMapLocation&&Date.now()-currentMapLocation.at<300000)return Promise.resolve(currentMapLocation.coords);
+ if(currentMapLocationRequest)return currentMapLocationRequest;
+ currentMapLocationRequest=new Promise((resolve,reject)=>{
+  if(!navigator.geolocation){reject(new Error('Geolocation unavailable'));return}
+  navigator.geolocation.getCurrentPosition(position=>{
+   const coords=[Math.max(-85,Math.min(85,position.coords.latitude)),position.coords.longitude];
+   currentMapLocation={coords,at:Date.now()};resolve(coords);
+  },reject,{enableHighAccuracy:false,timeout:8000,maximumAge:300000});
+ }).finally(()=>{currentMapLocationRequest=null});
+ return currentMapLocationRequest;
+}
+function centerWorldwideMap(map,canvas,status,isCurrent=()=>true,zoom=1){
+ canvas._cancelWorldView?.();
+ map.setView([0,0],zoom,{animate:false});
+ if(status)status.textContent=translateUiText('Cały świat. Ustalam Twoją lokalizację…');
+ let cancelled=false;
+ const cancel=()=>{cancelled=true;map.off('dragstart zoomstart click',cancel);if(canvas._cancelWorldView===cancel)delete canvas._cancelWorldView};
+ canvas._cancelWorldView=cancel;
+ map.on('dragstart zoomstart click',cancel);
+ getCurrentMapLocation().then(coords=>{
+  if(cancelled||!canvas.isConnected||!isCurrent())return;
+  cancel();map.invalidateSize({pan:false});map.setView(coords,zoom,{animate:false});
+  if(status)status.textContent=translateUiText('Cały świat. Mapa wyśrodkowana na Twojej lokalizacji.');
+ },()=>{
+  if(cancelled||!canvas.isConnected||!isCurrent())return;
+  cancel();if(status)status.textContent=translateUiText('Cały świat. Lokalizacja niedostępna — możesz przesunąć mapę ręcznie.');
+ });
+}
 function readSearchAreas(form){try{const areas=JSON.parse(form.elements.search_areas?.value||'[]');return Array.isArray(areas)?areas:[]}catch{return []}}
 function projectCoverageAreas(){
  const areas=new Map();
@@ -18,24 +49,25 @@ function projectCoverageAreas(){
 }
 function projectCoveragePanel(){
  const areas=projectCoverageAreas();
- return `<section class="panel project-coverage"><div class="panel-head"><h2>Obszary obsługiwane przez projekt</h2><span class="badge gray">${areas.length}</span></div><p data-no-translate>${esc(state.seller_project.name)}</p><p class="hint">Zbiorczo: obszary projektu i jego monitoringów. Powtarzające się obszary pokazujemy raz.</p>${areas.length?'<div class="search-area-map project-coverage-map" id="project-coverage-map" role="region" aria-label="Zbiorcza mapa obszarów projektu"></div><p class="hint" id="project-coverage-status" role="status"></p>':'<p class="hint">Brak wybranych obszarów. Dodaj je w Projekcie lub podczas tworzenia monitoringu.</p>'}<div class="project-coverage-legend">${areas.map((area,index)=>`<button type="button" class="secondary" data-coverage-area="${index}" data-no-translate>${esc(area.label||translateUiText('Obszar')+' '+(index+1))} · ${esc(area.radius_km)} km</button>`).join('')}</div></section>`;
+ return `<section class="panel project-coverage"><div class="panel-head"><h2>Obszary obsługiwane przez projekt</h2><span class="badge gray">${areas.length}</span></div><p data-no-translate>${esc(state.seller_project.name)}</p><p class="hint">Zbiorczo: obszary projektu i jego monitoringów. Powtarzające się obszary pokazujemy raz.</p>${areas.length?'':'<p class="hint">Cały świat — brak ograniczeń obszaru wyszukiwania.</p>'}<div class="search-area-map project-coverage-map" id="project-coverage-map" role="region" aria-label="Zbiorcza mapa obszarów projektu"></div><p class="hint" id="project-coverage-status" role="status"></p><div class="project-coverage-legend">${areas.map((area,index)=>`<button type="button" class="secondary" data-coverage-area="${index}" data-no-translate>${esc(area.label||translateUiText('Obszar')+' '+(index+1))} · ${esc(area.radius_km)} km</button>`).join('')}</div></section>`;
 }
 function projectCoverageTile(){
  const areas=projectCoverageAreas();
- return `<div class="stat project-coverage-tile"><button type="button" data-open-project-map aria-label="${esc(translateUiText('Otwórz mapę na cały ekran'))}"><span>Obszary obsługi</span><span id="project-coverage-preview" aria-hidden="true">${areas.length?'':'◉'}</span><small><span>Wybrane obszary:</span> ${areas.length} · <span>Otwórz mapę</span> ↗</small></button>${areas.length?'<a class="coverage-map-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap</a>':''}</div>`;
+ return `<div class="stat project-coverage-tile"><button type="button" data-open-project-map aria-label="${esc(translateUiText('Otwórz mapę na cały ekran'))}"><span>Obszary obsługi</span><span id="project-coverage-preview" aria-hidden="true"></span><small>${areas.length?'<span>Wybrane obszary:</span> '+areas.length:'<span>Cały świat</span>'} · <span>Otwórz mapę</span> ↗</small></button><a class="coverage-map-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap</a></div>`;
 }
 function bindProjectCoverageTile(){
  const canvas=$('#project-coverage-preview'),button=$('[data-open-project-map]');if(!canvas||!button)return;
  button.onclick=openProjectCoverageMap;
- const areas=projectCoverageAreas();if(!areas.length||typeof L==='undefined')return;
+ const areas=projectCoverageAreas();if(typeof L==='undefined')return;
  const map=L.map(canvas,{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,doubleClickZoom:false,touchZoom:false,boxZoom:false,keyboard:false,zoomAnimation:false,fadeAnimation:false}).setView([51,15],4);
  canvas._coverageMap=map;
  const layer=L.featureGroup().addTo(map);
  areas.forEach(area=>L.circle([area.lat,area.lng],{radius:area.radius_km*1000,color:'#6039ed',weight:1.5,fillOpacity:0.25,interactive:false}).addTo(layer));
- map.fitBounds(layer.getBounds(),{padding:[5,5],maxZoom:10,animate:false});
+ if(areas.length)map.fitBounds(layer.getBounds(),{padding:[5,5],maxZoom:10,animate:false});
+ else centerWorldwideMap(map,canvas,null,()=>true,0);
  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,keepBuffer:0}).addTo(map);
- const resize=new ResizeObserver(()=>{if(canvas.isConnected){map.invalidateSize();map.fitBounds(layer.getBounds(),{padding:[5,5],maxZoom:10,animate:false})}});resize.observe(canvas);
- const cleanup=new MutationObserver(()=>{if(!canvas.isConnected){resize.disconnect();cleanup.disconnect();map.remove()}});cleanup.observe($('#content'),{childList:true,subtree:true});
+ const resize=new ResizeObserver(()=>{if(canvas.isConnected){map.invalidateSize({animate:false});if(areas.length)map.fitBounds(layer.getBounds(),{padding:[5,5],maxZoom:10,animate:false})}});resize.observe(canvas);
+ const cleanup=new MutationObserver(()=>{if(!canvas.isConnected){resize.disconnect();cleanup.disconnect();canvas._cancelWorldView?.();map.remove()}});cleanup.observe($('#content'),{childList:true,subtree:true});
 }
 function openProjectCoverageMap(){
  const dialog=document.createElement('dialog');dialog.className='project-map-fullscreen';dialog.setAttribute('aria-label',translateUiText('Zbiorcza mapa obszarów projektu'));
@@ -55,13 +87,14 @@ function bindProjectCoverageMap(root=document){
   const tooltip=document.createElement('span');tooltip.textContent=(area.label||translateUiText('Obszar')+' '+(index+1))+' · '+area.radius_km+' km — '+area.sources.join(', ');
   return L.circle([area.lat,area.lng],{radius:area.radius_km*1000,color:'#6039ed',weight:2,fillColor:'#c6b5fa',fillOpacity:0.25}).bindTooltip(tooltip).addTo(layer);
  });
- map.fitBounds(layer.getBounds(),{padding:[24,24],maxZoom:11,animate:false});
+ if(areas.length)map.fitBounds(layer.getBounds(),{padding:[24,24],maxZoom:11,animate:false});
+ else centerWorldwideMap(map,canvas,root.querySelector('#project-coverage-status'));
  canvas._coverageAreas=areas;
  canvas.parentElement.querySelectorAll('[data-coverage-area]').forEach(button=>button.onclick=()=>{const circle=circles[Number(button.dataset.coverageArea)];map.fitBounds(circle.getBounds(),{padding:[24,24],maxZoom:12,animate:false});circle.openTooltip()});
- const resize=new ResizeObserver(()=>{if(canvas.isConnected)map.invalidateSize()});resize.observe(canvas);
- const cleanup=new MutationObserver(()=>{if(!canvas.isConnected){resize.disconnect();cleanup.disconnect();map.remove()}});cleanup.observe(canvas.closest('dialog')?document.body:$('#content'),{childList:true,subtree:true});
+ const resize=new ResizeObserver(()=>{if(canvas.isConnected)map.invalidateSize({animate:false})});resize.observe(canvas);
+ const cleanup=new MutationObserver(()=>{if(!canvas.isConnected){resize.disconnect();cleanup.disconnect();canvas._cancelWorldView?.();map.remove()}});cleanup.observe(canvas.closest('dialog')?document.body:$('#content'),{childList:true,subtree:true});
 }
-function searchAreasLabel(value){try{const areas=Array.isArray(value)?value:JSON.parse(value||'[]');return areas.length?areas.map((a,index)=>`${a.label||translateUiText('Obszar')+' '+(index+1)} · ${a.radius_km} km`).join('; '):translateUiText('Dowolny obszar')}catch{return translateUiText('Dowolny obszar')}}
+function searchAreasLabel(value){try{const areas=Array.isArray(value)?value:JSON.parse(value||'[]');return areas.length?areas.map((a,index)=>`${a.label||translateUiText('Obszar')+' '+(index+1)} · ${a.radius_km} km`).join('; '):translateUiText('Cały świat')}catch{return translateUiText('Cały świat')}}
 function bindSearchMap(form){
  const root=form.querySelector('[data-search-map-picker]');if(!root)return;
  const show=root.querySelector('[data-show-search-map]'),panel=root.querySelector('[data-search-map-panel]'),canvas=root.querySelector('[data-search-area-map]'),status=root.querySelector('[data-search-map-status]'),list=root.querySelector('[data-search-areas-list]'),storage=form.elements.search_areas;
@@ -88,17 +121,17 @@ function bindSearchMap(form){
   L.circleMarker(center,{radius:5,color:'#6039ed',fillOpacity:1,interactive:false}).addTo(previewLayer);
  }
  function renderAreas(){
-  root.querySelector('[data-search-area-count]').textContent=translateUiText('Wybrane obszary:')+' '+areas.length;
+  root.querySelector('[data-search-area-count]').textContent=areas.length?translateUiText('Wybrane obszary:')+' '+areas.length:translateUiText('Cały świat — brak ograniczeń obszaru wyszukiwania.');
   add.disabled=areas.length>=10;root.querySelector('[data-clear-search-areas]').disabled=!areas.length;
   clearThumbnails();
   list.innerHTML=areas.map((area,index)=>`<div class="search-area-row"><button type="button" class="search-area-thumbnail" data-open-search-area="${index}" aria-label="${esc(translateUiText('Pokaż obszar na mapie:')+' '+(area.label||translateUiText('Obszar')+' '+(index+1)))}"><span class="search-area-thumbnail-map" data-area-thumbnail-map="${index}" aria-hidden="true"></span></button><span data-no-translate><strong>${esc(area.label||translateUiText('Obszar')+' '+(index+1))}</strong><small>${esc(area.radius_km)} km</small></span><button type="button" class="link danger" data-remove-search-area="${index}">Usuń obszar</button></div>`).join('')+(areas.length?'<p class="search-area-map-credit">&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors</p>':'');
   list.querySelectorAll('[data-area-thumbnail-map]').forEach(element=>thumbnailObserver.observe(element));
-  if(!map)return;savedLayer.clearLayers();
+  if(!map)return;if(areas.length)canvas._cancelWorldView?.();savedLayer.clearLayers();
   areas.forEach((area,index)=>L.circle([area.lat,area.lng],{radius:area.radius_km*1000,color:'#6039ed',weight:2,fillColor:'#c6b5fa',fillOpacity:0.25}).bindTooltip(tooltip((area.label||translateUiText('Obszar')+' '+(index+1))+' · '+area.radius_km+' km')).addTo(savedLayer));
  }
  function sync(){
   if(!root.isConnected||state.seller_project.id!==projectId)return;
-  storage.value=JSON.stringify(areas);storage.dispatchEvent(new Event('input',{bubbles:true}));renderAreas();
+  storage.value=JSON.stringify(areas);storage.dispatchEvent(new Event('input',{bubbles:true}));renderAreas();if(map&&!areas.length)centerWorldwideMap(map,canvas,status,()=>!areas.length&&state.seller_project.id===projectId);
  }
  function initializeMap(){
   if(!canvas.clientWidth||!canvas.clientHeight)return;
@@ -108,7 +141,7 @@ function bindSearchMap(form){
   L.tileLayer(tileUrl,{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'}).on('tileerror',()=>{status.textContent='Nie udało się pobrać podkładu mapy. Współrzędne i obszary nadal działają.'}).addTo(map);
   savedLayer=L.featureGroup().addTo(map);previewLayer=L.layerGroup().addTo(map);
   map.on('click',event=>{lat.value=event.latlng.lat.toFixed(6);lng.value=event.latlng.wrap().lng.toFixed(6);preview();status.textContent=translateUiText('Wybrano współrzędne. Ustaw promień i dodaj obszar.')});
-  renderAreas();if(areas.length)map.fitBounds(savedLayer.getBounds(),{padding:[20,20],maxZoom:10});preview();
+  renderAreas();if(areas.length)map.fitBounds(savedLayer.getBounds(),{padding:[20,20],maxZoom:10});else centerWorldwideMap(map,canvas,status,()=>!areas.length&&state.seller_project.id===projectId);preview();
  }
  show.checked=areas.length>0;
  try{const saved=sessionStorage.getItem(key);if(saved!==null)show.checked=saved==='on'}catch{}
@@ -133,6 +166,6 @@ function bindSearchMap(form){
  };
  root.querySelector('[data-clear-search-areas]').onclick=()=>{areas=[];sync()};
  const resize=new ResizeObserver(()=>{if(root.isConnected&&!panel.hidden)initializeMap()});resize.observe(canvas);
- const cleanup=new MutationObserver(()=>{if(!root.isConnected){resize.disconnect();cleanup.disconnect();clearThumbnails();map?.remove()}});cleanup.observe(form.closest('dialog')||$('#content'),{childList:true,subtree:true});
+ const cleanup=new MutationObserver(()=>{if(!root.isConnected){resize.disconnect();cleanup.disconnect();clearThumbnails();canvas._cancelWorldView?.();map?.remove()}});cleanup.observe(form.closest('dialog')||$('#content'),{childList:true,subtree:true});
  renderAreas();show.onchange();
 }

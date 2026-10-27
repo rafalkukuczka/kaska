@@ -1,3 +1,4 @@
+import project_scope
 """Bounded, review-first company discovery, contact verification and draft handoff."""
 import json
 import os
@@ -251,7 +252,7 @@ class Prospecting:
                 if person.get('type') != 'personal' or person.get('provenance') not in (None, 'found'):
                     continue
                 with self.db() as c:
-                    if c.execute('SELECT 1 FROM contacts WHERE email=?', (email,)).fetchone():
+                    if c.execute('SELECT 1 FROM contacts WHERE email=? AND contact_pool=?', (email,project_scope.contact_pool(c,run['project_id']))).fetchone():
                         continue
                 sources = []
                 for source in person.get('sources') or []:
@@ -363,7 +364,7 @@ class Prospecting:
             if len(rows) != len(ids):
                 raise ValueError('Wybierz osoby z tego wyszukiwania.')
             with self.db() as c:
-                self._validate_draft(c, rows)
+                self._validate_draft(c, rows, run['project_id'])
             self.update(run_id, status='drafting', stage='Generowanie wiadomości', error='',
                         draft_completed=0, draft_total=len(rows)*len(languages.steps(run['language'])))
             started = True
@@ -393,11 +394,11 @@ class Prospecting:
         finally:
             self.lock.release()
 
-    def _validate_draft(self, c, rows):
+    def _validate_draft(self, c, rows, project_id=None):
         for row in rows:
             if row['qualification'] == 'rejected' or row['verification_status'] != 'valid' or not row['checked_at'] or row['checked_at'] < time.time()-7*86400 or not row['verified_at'] or row['verified_at'] < time.time()-31*86400:
                 raise ValueError('Wybrane osoby wymagają aktualnej weryfikacji email.')
-            if c.execute('SELECT 1 FROM contacts WHERE email=?', (row['email'],)).fetchone():
+            if c.execute('SELECT 1 FROM contacts WHERE email=? AND contact_pool=?', (row['email'],project_scope.contact_pool(c,project_id))).fetchone():
                 raise ValueError('Kontakt jest już w bazie. Odśwież wyniki i pomiń tę osobę.')
 
     def _generate_drafts(self, run, rows):
@@ -417,15 +418,15 @@ class Prospecting:
             raise ValueError('Poczta jest zajęta. Poczekaj chwilę i ponów tworzenie szkiców.')
         try:
             with self.db() as c:
-                self._validate_draft(c, rows)  # Re-check suppression and duplicates after slow external generation.
-                campaign_id = c.execute("INSERT INTO campaigns(name,offer,audience,status,created,website,audience_mode,material_mode,language) VALUES(?,?,?,'draft',?,?,'selected','auto',?)",
-                    ('Klienci · ' + str(run_id), run['offer'], run['audience'], time.time(), run['website'], run['language'])).lastrowid
+                self._validate_draft(c, rows, run['project_id'])  # Re-check suppression and duplicates after slow external generation.
+                campaign_id = c.execute("INSERT INTO campaigns(name,offer,audience,status,created,website,audience_mode,material_mode,language,project_id) VALUES(?,?,?,'draft',?,?,'selected','auto',?,?)",
+                    ('Klienci · ' + str(run_id), run['offer'], run['audience'], time.time(), run['website'], run['language'],run['project_id'])).lastrowid
                 c.execute('UPDATE campaigns SET pain_points=?,value_props=? WHERE id=?', (run['pain_points'], run['value_props'], campaign_id))
                 c.execute('UPDATE campaigns SET proof_points=? WHERE id=?', (run['proof_points'], campaign_id))
                 contact_ids = {}
                 for row in rows:
                     notes = row['fit_reason'] + '\n' + row['why_now'] + '\nŹródła: ' + ', '.join(s['url'] for s in json.loads(row['sources']))
-                    contact_ids[row['id']] = c.execute('INSERT INTO contacts(name,email,company,role,notes) VALUES(?,?,?,?,?)', (row['name'], row['email'], row['company'], row['role'], notes)).lastrowid
+                    contact_ids[row['id']] = c.execute('INSERT INTO contacts(name,email,company,role,notes,contact_pool) VALUES(?,?,?,?,?,?)', (row['name'], row['email'], row['company'], row['role'], notes,project_scope.contact_pool(c,run['project_id']))).lastrowid
                 c.execute('UPDATE campaigns SET contact_ids=? WHERE id=?', (json.dumps(list(contact_ids.values())), campaign_id))
                 for position, step in enumerate(steps):
                     c.execute('INSERT INTO steps(campaign_id,position,delay_days,subject,body) VALUES(?,?,?,?,?)', (campaign_id, position, step['delay_days'], step['subject'], step['body']))

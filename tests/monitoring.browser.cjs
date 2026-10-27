@@ -14,6 +14,12 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.goto('http://localhost:8789');
   await page.locator('nav [data-view=discover]').click();
   await page.locator('#my-monitoring').evaluate(panel=>panel.open=true);
+  await page.locator('[data-monitor-add-offer]').click();
+  assert.ok(page.url().endsWith('#project'));
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'prospect-offer');
+  assert.equal(await page.locator('#active-project').inputValue(),'1');
+  await page.locator('nav [data-view=discover]').click();
+  await page.locator('#my-monitoring').evaluate(panel=>panel.open=true);
   assert.equal(await page.getByRole('heading',{name:'Jak chcesz szukać okazji?'}).count(),0);
   assert.equal(await page.getByRole('button',{name:'Dobierz sygnały do oferty'}).isDisabled(),true);
   assert.equal(await page.evaluate(()=>state.contacts.length),0);
@@ -35,6 +41,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('nav [data-view=discover]').click();
   await page.locator('#my-monitoring').evaluate(panel=>panel.open=true);
   assert.equal(await page.evaluate(()=>sellerProject().offer),'ERP implementation support QA');
+  assert.equal(await page.locator('[data-monitor-add-offer]').count(),0);
   assert.equal(await page.evaluate(()=>sellerProject().pain_points),'Manual planning');
   await page.getByRole('button',{name:'Dobierz sygnały do oferty'}).click();
   assert.equal(await page.locator('#monitor-offer-form textarea').count(),0);

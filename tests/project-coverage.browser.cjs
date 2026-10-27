@@ -10,10 +10,18 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
   const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  await page.context().grantPermissions(['geolocation']);
+  await page.context().setGeolocation({latitude:35.6762,longitude:139.6503});
   await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('https://tile.openstreetmap.org/**',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')}));
   await page.goto('http://localhost:8800');await page.waitForFunction(()=>state?.seller_project);
+  await page.locator('#project-coverage-preview.leaflet-container').waitFor();
+  await page.waitForFunction(()=>{const map=document.querySelector('#project-coverage-preview')._coverageMap;return Math.abs(map.getCenter().lng-139.6503)<1});
+  const preview=await page.evaluate(()=>{const map=document.querySelector('#project-coverage-preview')._coverageMap;return {center:map.getCenter(),zoom:map.getZoom(),areas:state.seller_project.search_areas}});
+  assert.equal(preview.zoom,0);assert.deepEqual(preview.areas,[]);
+  assert.ok(Math.abs(preview.center.lat-35.6762)<1);
+  assert.equal(await page.locator('#project-coverage-preview path.leaflet-interactive').count(),0);
   assert.equal(await page.locator('#project-coverage-map').count(),0);
   assert.ok((await page.locator('nav [data-view=dashboard]').innerText()).includes('Dashboard'));
   assert.equal(await page.locator('.dashboard-stats>.stat').nth(1).getAttribute('class'),'stat project-coverage-tile');
@@ -50,7 +58,28 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('nav [data-view=dashboard]').click();
   assert.equal(await page.locator('#project-coverage-map').count(),0);
   await page.locator('[data-open-project-map]').click();
-  await page.getByText('Brak wybranych obszarów. Dodaj je w Projekcie lub podczas tworzenia monitoringu.',{exact:true}).waitFor();
+  await page.getByText('Cały świat — brak ograniczeń obszaru wyszukiwania.',{exact:true}).waitFor();
+  await page.waitForFunction(()=>document.querySelector('#project-coverage-status').textContent.includes('wyśrodkowana'));
+  const worldwide=await page.evaluate(()=>{const map=document.querySelector('#project-coverage-map')._coverageMap;return {center:map.getCenter(),zoom:map.getZoom(),areas:state.seller_project.search_areas}});
+  assert.equal(worldwide.zoom,1);assert.deepEqual(worldwide.areas,[]);
+  assert.ok(Math.abs(worldwide.center.lat-35.6762)<0.5&&Math.abs(worldwide.center.lng-139.6503)<0.5,JSON.stringify(worldwide));
+  assert.equal(await page.locator('#project-coverage-map path.leaflet-interactive').count(),0);
+  // Denial keeps worldwide scope. A late location response must not undo user navigation.
+  const fallback=await page.evaluate(async()=>{
+   const canvas=document.querySelector('#project-coverage-map'),map=canvas._coverageMap,status=document.querySelector('#project-coverage-status');
+   const original=navigator.geolocation.getCurrentPosition;
+   try{
+    currentMapLocation=null;navigator.geolocation.getCurrentPosition=(_,fail)=>fail({code:1});
+    centerWorldwideMap(map,canvas,status);await new Promise(resolve=>setTimeout(resolve,0));
+    const denied=status.textContent;
+    let success;navigator.geolocation.getCurrentPosition=callback=>{success=callback};
+    centerWorldwideMap(map,canvas,status);map.fire('dragstart');map.setView([10,20],3,{animate:false});
+    success({coords:{latitude:-33.87,longitude:151.21}});await new Promise(resolve=>setTimeout(resolve,0));
+    return {denied,center:map.getCenter(),zoom:map.getZoom(),areas:state.seller_project.search_areas};
+   }finally{navigator.geolocation.getCurrentPosition=original;currentMapLocation=null}
+  });
+  assert.ok(fallback.denied.includes('Lokalizacja niedostępna'));assert.equal(fallback.zoom,3);
+  assert.ok(Math.abs(fallback.center.lat-10)<0.5&&Math.abs(fallback.center.lng-20)<0.5);assert.deepEqual(fallback.areas,[]);
   await page.locator('.coverage-map-close').click();
   await page.evaluate(async()=>{await api('seller-projects/select',{project_id:1});await refresh()});
   await page.locator('[data-open-project-map]').click();

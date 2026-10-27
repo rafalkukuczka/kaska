@@ -8,6 +8,7 @@ function renderAssistantButtons(){
   const root=$('.assistant-shortcuts');if(!root)return;
   root.innerHTML=builderStep===2?'<button type="button" data-builder="improve-step">Popraw treść tego kroku z AI</button><button type="button" data-builder="first-touch">Napisz pierwszą wiadomość z AI</button>':'<button type="button" data-builder="website-shortcut">Stwórz ofertę z naszej strony</button><button type="button" data-builder="materials-shortcut">Zbuduj ofertę z historii sukcesu</button>';
   root.querySelectorAll('button').forEach(button=>button.disabled=builderAssistantBusy);
+  syncWebsiteActions($('#campaign-form'));
   if(!$('#assistant-step-note'))root.insertAdjacentHTML('afterend','<label class="assistant-step-note" id="assistant-note-label" hidden>Uwagi do AI<textarea id="assistant-step-note" rows="3" maxlength="2000" placeholder="Jak poprawić wiadomość?"></textarea></label>');
   $('#assistant-note-label').hidden=builderStep!==2;
   $('#assistant-step-note').oninput=persistBuilder;

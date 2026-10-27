@@ -1,3 +1,4 @@
+import project_scope
 """Evidence-backed sales signals. Standard library only; no vendor data is bundled."""
 import hashlib
 import http.client
@@ -190,8 +191,8 @@ class Engine:
         with self.db() as c:
             return {'catalog':list(CATALOG.values()),'providers':list(PROVIDERS.values()),'sources':[dict(r) for r in c.execute('SELECT id,name,kind,url,company,enabled,auto_accept,signal_kinds,interval_minutes,last_checked,last_success,last_error,config,next_retry,last_warning,last_total,last_matched,last_created FROM signal_sources WHERE deleted=0 ORDER BY id DESC')],
                     'items':[dict(r) for r in c.execute('SELECT * FROM sales_signals ORDER BY observed DESC,id DESC LIMIT 2000')],
-                    'rules':[dict(r) for r in c.execute('SELECT * FROM signal_rules ORDER BY id DESC')],
-                    'enrollments':[dict(r) for r in c.execute('SELECT * FROM signal_enrollments ORDER BY id DESC LIMIT 2000')],
+                    'rules':[dict(r) for r in c.execute('SELECT r.* FROM signal_rules r JOIN campaigns p ON p.id=r.campaign_id WHERE p.project_id=? ORDER BY r.id DESC',(project_scope.active(c),))],
+                    'enrollments':[dict(r) for r in c.execute('SELECT e.* FROM signal_enrollments e JOIN campaigns p ON p.id=e.campaign_id WHERE p.project_id=? ORDER BY e.id DESC LIMIT 2000',(project_scope.active(c),))],
                     'counts':dict(c.execute("SELECT status,COUNT(*) FROM sales_signals GROUP BY status").fetchall())}
 
     def source_values(self,item):
@@ -249,7 +250,7 @@ class Engine:
 
     def contact_companies(self):
         with self.db() as c:
-            names=[r['company'].strip() for r in c.execute("SELECT DISTINCT company FROM contacts WHERE simulated=0 AND trim(company)!='' ORDER BY company COLLATE NOCASE")]
+            names=[r['company'].strip() for r in c.execute("SELECT DISTINCT company FROM contacts WHERE contact_pool=? AND simulated=0 AND trim(company)!='' ORDER BY company COLLATE NOCASE",(project_scope.contact_pool(c),))]
         unique={}
         for name in names:unique.setdefault(norm(name),name)
         return list(unique.values())
@@ -316,7 +317,7 @@ class Engine:
         age=(now-basis)/86400 if basis else None
         if age is not None and age>90: raise ValueError('Sygnał jest starszy niż 90 dni')
         with (nullcontext(connection) if connection is not None else self.db()) as c:
-            matching=c.execute("SELECT COUNT(*) FROM contacts WHERE company_key(company)=company_key(?) AND status='active' AND simulated=0",(company,)).fetchone()[0] if company else 0
+            matching=c.execute("SELECT COUNT(*) FROM contacts WHERE company_key(company)=company_key(?) AND status='active' AND simulated=0 AND contact_pool=?",(company,project_scope.contact_pool(c))).fetchone()[0] if company else 0
             weight=CATALOG[kind]['weight']; freshness=10 if age is not None and age<=7 else 5 if age is not None and age<=30 else 0
             score=min(100,weight+freshness+(10 if matching else 0))
             reason=f'Waga typu: {weight}; świeżość: +{freshness}; aktywne kontakty tej firmy: +{10 if matching else 0}. To priorytet, nie pewność prawdziwości.'
@@ -341,6 +342,7 @@ class Engine:
         kinds=item.get('kinds',[]); campaign_id=int(item['campaign_id']);score=int(item.get('min_score',60));days=int(item.get('max_age_days',30))
         if not isinstance(kinds,list) or not kinds or any(k not in CATALOG for k in kinds) or not 0<=score<=100 or not 1<=days<=90: raise ValueError('Wybierz typy, próg 0–100 i wiek 1–90 dni')
         with self.mail_lock,self.db() as c:
+            project_scope.require_campaign(c,campaign_id)
             if not c.execute("SELECT 1 FROM campaigns WHERE id=? AND status!='deleted'",(campaign_id,)).fetchone(): raise ValueError('Nie znaleziono kampanii')
             previous=c.execute('SELECT id FROM signal_rules WHERE campaign_id=?',(campaign_id,)).fetchone()
             if not previous and c.execute('SELECT 1 FROM messages WHERE campaign_id=?',(campaign_id,)).fetchone():
@@ -364,7 +366,7 @@ class Engine:
                 for signal in signals:
                     if not signal['company'].strip() or signal['kind'] not in kinds: continue
                     with self.db() as c:
-                        contacts=c.execute("SELECT * FROM contacts WHERE company_key(company)=company_key(?) AND status='active' AND simulated=0 AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.campaign_id=? AND m.contact_id=contacts.id) AND NOT EXISTS(SELECT 1 FROM signal_enrollments e WHERE e.campaign_id=? AND e.contact_id=contacts.id)",(signal['company'],campaign['id'],campaign['id'])).fetchall()
+                        contacts=c.execute("SELECT * FROM contacts WHERE company_key(company)=company_key(?) AND status='active' AND simulated=0 AND contact_pool=? AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.campaign_id=? AND m.contact_id=contacts.id) AND NOT EXISTS(SELECT 1 FROM signal_enrollments e WHERE e.campaign_id=? AND e.contact_id=contacts.id)",(signal['company'],project_scope.contact_pool(c,campaign['project_id']),campaign['id'],campaign['id'])).fetchall()
                     for contact in contacts:
                         if campaign['audience_mode']=='tags' and not contact_tags.matches(contact['tags'],campaign['audience_tags'],campaign['tag_match']):continue
                         if not sequence_conditions.matches(campaign['conditions'], contact):continue
