@@ -1,0 +1,5 @@
+Generated with the built-in image_gen tool using the imagegen skill, 2026-10-26.
+Project asset: web/assets/kaska.png
+
+Final prompt:
+Use case: stylized-concept. Asset type: finished bitmap portrait for the left assistant panel in a sales campaign web application. Create a charming polished 3D animated female assistant named Kaśka, with short tousled curly ginger-orange bob haircut, round dark-rimmed glasses, warm brown eyes, fair lightly freckled skin, welcoming small smile, white collared blouse. Bust portrait, looking straight toward viewer, centered, shoulders visible, fully visible hair with margin above. Friendly sophisticated stylized 3D cartoon rendering with soft clay-like skin and individually sculpted hair locks, clean rounded forms. Background a uniform pale lavender #e9e2ff with subtle soft studio lighting. Landscape 3:2 composition. This is a character portrait only, no interface, no letters, no logos, no text, no watermark. Keep the visual clear and readable at 300px wide. Save the finished asset as a local image so it can be used in the application.

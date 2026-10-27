@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "company": "Firma Testowa",
+      "kind": "demo_request",
+      "title": "Zamówienie prezentacji z formularza",
+      "evidence": "Przykładowy rekord testowy CRM #123. Zastąp rzeczywistym zdarzeniem.",
+      "url": "https://example.com/crm/events/123",
+      "occurred": "2026-10-26T10:00:00Z"
+    }
+  ]
+}
