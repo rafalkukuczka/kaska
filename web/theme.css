@@ -32,7 +32,8 @@ nav button { color: #807a89; font-size: 12px; padding: 12px; border-radius: 5px;
 nav button:hover { background: #f7f4fc; color: #614798; }
 nav button.selected { background: var(--lavender-selected); color: #7451bc; font-weight: 500; }
 nav button[data-view="dashboard"] { font-weight: 700; }
-nav button[data-view="administration"], nav button[data-view="administration"]:hover { background: transparent; }
+nav button[data-view="administration"],
+nav button[data-view="administration"]:is(.selected,:hover,:active,:focus) { background: none; box-shadow: none; }
 .sidebar-bottom, .sidebar-bottom small { color: #aaa1b6; }
 .pulse { background: #b398e3; }
 .avatar { background: var(--lavender-soft); color: #9a7ac3; }

@@ -27,7 +27,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('.message-delivery-sending').count(),0);
   await page.locator('[data-action=campaign-status][data-status=active]').click();
   await page.locator('.message-delivery-sent').first().waitFor();
-  await page.waitForFunction(()=>state.replies.some(reply=>reply.delivery_simulated));
+  await page.waitForFunction(()=>state.replies.some(reply=>String(reply.id).startsWith('sim-reply-')));
   assert.ok(await page.evaluate(()=>deliverySimulationRuns()[selectedCampaign].messages.some(m=>m.status==='cancelled')));
   assert.equal(writes.length,0);
   await page.locator('nav [data-view=inbox]').click();await page.locator('.badge').filter({hasText:'Symulowana odpowiedź'}).first().waitFor();
@@ -41,7 +41,8 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('#app-simulation').check();await page.waitForFunction(()=>monitoringSimulation&&!document.querySelector('#app-simulation').disabled);
   await page.locator('.badge').filter({hasText:'Symulowana odpowiedź'}).first().waitFor();
   await page.evaluate(async()=>chooseSellerProject('seller-projects/create',{name:'Other demo project'}));
-  assert.equal(await page.locator('.message').count(),0);
+  assert.equal(await page.locator('.message').count(),3);
+  assert.ok(await page.evaluate(()=>state.replies.every(reply=>reply.demo_inbox)));
   await page.locator('#active-project').selectOption('1');await page.waitForFunction(()=>!sellerSwitchBusy&&state.seller_project.id===1);
   await page.locator('.badge').filter({hasText:'Symulowana odpowiedź'}).first().waitFor();
   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);

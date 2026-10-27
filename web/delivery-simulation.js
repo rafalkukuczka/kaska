@@ -22,13 +22,29 @@ function advanceDeliverySimulation(run,now=Date.now()){
  }
  return changed;
 }
+function demoInboxReplies(snapshot){
+ const project=snapshot.seller_project,results=fetchedSimulation(project.id);
+ if(!results.inboxDemoCreated){results.inboxDemoCreated=Date.now();saveSimulationResults()}
+ const polish=(snapshot.preferences?.message_language||'pl')==='pl';
+ const examples=polish?[
+  ['Anna Kowalska','Re: Propozycja współpracy','Dzień dobry, dziękuję za wiadomość. Propozycja wygląda interesująco. Czy możemy umówić krótką rozmowę w przyszłym tygodniu?'],
+  ['Piotr Nowak','Re: Szczegóły oferty','Dziękuję za kontakt. Proszę o orientacyjny koszt oraz przykłady podobnych realizacji. Przekażę je osobie odpowiedzialnej za ten obszar.'],
+  ['Marta Wiśniewska','Re: Termin rozmowy','Obecnie kończymy inny projekt. Proszę wrócić do nas za miesiąc — wtedy będziemy mogli omówić szczegóły.']
+ ]:[
+  ['Anna Kowalska','Re: Working together','Thank you for reaching out. Your proposal looks interesting. Could we arrange a short call next week?'],
+  ['Piotr Nowak','Re: Offer details','Thank you for your message. Please send an estimated cost and examples of similar work. I will forward them to the person responsible.'],
+  ['Marta Wiśniewska','Re: Meeting availability','We are currently finishing another project. Please contact us again next month so we can discuss the details.']
+ ];
+ return examples.map(([contact_name,subject,body],index)=>({id:`demo-inbox-${project.id}-${index}`,contact_id:null,contact_name,email:['anna','piotr','marta'][index]+'@firma-demo.example',subject,body,received:results.inboxDemoCreated/1000-index*900,simulated:true,delivery_simulated:true,demo_inbox:true}));
+}
 function applyDeliverySimulation(snapshot){
  const runs=deliverySimulationRuns(snapshot.seller_project.id);
  for(const run of Object.values(runs))advanceDeliverySimulation(run);
  snapshot.campaigns=snapshot.campaigns.map(c=>({...c,status:runs[c.id]?.status||(c.status==='active'?'paused':c.status),delivery_simulated:!!runs[c.id]}));
  const messages=new Map(Object.values(runs).flatMap(run=>run.messages).map(message=>[message.id,message]));
  snapshot.messages=snapshot.messages.map(message=>messages.has(message.id)?{...message,...messages.get(message.id),delivery_simulated:true}:message);
- snapshot.replies=[...Object.values(runs).flatMap(run=>run.replies),...snapshot.replies.filter(reply=>!reply.delivery_simulated)].sort((a,b)=>b.received-a.received);
+ const replies=Object.values(runs).flatMap(run=>run.replies);
+ snapshot.replies=(replies.length?replies:demoInboxReplies(snapshot)).sort((a,b)=>b.received-a.received);
  return snapshot;
 }
 function simulationCampaignMessagePage(id,data){
