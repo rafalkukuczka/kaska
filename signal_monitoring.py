@@ -1,3 +1,4 @@
+import project_scope
 """Offer-led and topic-led monitoring, independent of the contact database."""
 import json
 import time
@@ -73,12 +74,19 @@ class Monitoring:
     def state(self,project_id=None):
         project_id=shared_project.get(self.db,project_id)['id']
         with self.db() as c:
-            monitors=[dict(r) for r in c.execute("SELECT * FROM signal_monitors WHERE status='active' AND project_id=? ORDER BY id DESC",(project_id,))]
+            owners=project_scope.monitoring_projects(c,project_id);slots=','.join('?' for _ in owners)
+            monitors=[dict(r) for r in c.execute("SELECT * FROM signal_monitors WHERE status='active' AND project_id IN ("+slots+") ORDER BY id DESC",owners)]
+            shared=bool(c.execute('SELECT share_monitorings FROM seller_projects WHERE id=?',(project_id,)).fetchone()[0])
             companies=[dict(r) for r in c.execute('SELECT * FROM signal_project_companies WHERE project_id=? ORDER BY id DESC LIMIT 2000',(project_id,))]
             reviews=[dict(r) for r in c.execute('SELECT * FROM signal_company_reviews WHERE project_id=?',(project_id,))]
-            other_source_ids=[r[0] for r in c.execute("SELECT DISTINCT s.source_id FROM signal_monitor_sources s JOIN signal_monitors m ON m.id=s.monitor_id WHERE m.project_id!=? AND m.status='active'",(project_id,))]
+            other_source_ids=[r[0] for r in c.execute("SELECT DISTINCT s.source_id FROM signal_monitor_sources s JOIN signal_monitors m ON m.id=s.monitor_id WHERE m.project_id NOT IN ("+slots+") AND m.status='active'",owners)]
             source_usage={r[0]:r[1] for r in c.execute("SELECT s.source_id,COUNT(*) FROM signal_monitor_sources s JOIN signal_monitors m ON m.id=s.monitor_id WHERE m.status='active' GROUP BY s.source_id")}
             for monitor in monitors:
+                # Older offer monitors stored a 100-character prefix as their name.
+                # Recover the complete heading from the retained offer snapshot.
+                if monitor['mode']=='offer' and monitor['offer'] and monitor['name']==monitor['offer'][:100]:
+                    monitor['name']=monitor['offer']
+                monitor['shared']=shared
                 monitor['plan']=json.loads(monitor['plan'])
                 monitor['search_areas']=json.loads(monitor['search_areas'])
                 monitor['source_ids']=[r[0] for r in c.execute('SELECT source_id FROM signal_monitor_sources WHERE monitor_id=?',(monitor['id'],))]
@@ -111,7 +119,7 @@ class Monitoring:
             c.execute('BEGIN IMMEDIATE')
             if not c.execute('SELECT 1 FROM seller_projects WHERE id=? AND deleted=0',(item['project_id'],)).fetchone():raise ValueError('Projekt został usunięty.')
             monitor_id=c.execute("INSERT INTO signal_monitors(mode,status,name,offer,audience,plan,created) VALUES('offer','draft',?,?,?,?,?)",
-                (offer[:100],offer,audience,json.dumps(plan,ensure_ascii=False),time.time())).lastrowid
+                (offer,offer,audience,json.dumps(plan,ensure_ascii=False),time.time())).lastrowid
             c.execute('UPDATE signal_monitors SET pain_points=?,value_props=?,proof_points=? WHERE id=?',
                       tuple(bounded(item.get(field),10000) for field in ('pain_points','value_props','proof_points'))+(monitor_id,))
             c.execute('UPDATE signal_monitors SET project_id=? WHERE id=?',(item['project_id'],monitor_id))
@@ -139,7 +147,7 @@ class Monitoring:
             if not c.execute('SELECT 1 FROM seller_projects WHERE id=? AND deleted=0',(project_id,)).fetchone():raise ValueError('Projekt został usunięty.')
             monitor=c.execute('SELECT * FROM signal_monitors WHERE id=?',(int(item['id']),)).fetchone()
             if not monitor:raise ValueError('Nie znaleziono planu monitoringu.')
-            if monitor['project_id']!=project_id:raise ValueError('Ten plan należy do innego projektu.')
+            if monitor['project_id'] not in project_scope.monitoring_projects(c,project_id):raise ValueError('Ten plan należy do innego projektu.')
             if monitor['status']=='deleted':raise ValueError('Monitoring został usunięty.')
             if monitor['status']=='active':return {'id':monitor['id'],'created':0}
             plan=json.loads(monitor['plan']);selected=item.get('selected',list(range(len(plan))))
@@ -154,8 +162,8 @@ class Monitoring:
         with self.db() as c:
             c.execute('PRAGMA busy_timeout=3000')
             c.execute('BEGIN IMMEDIATE')
-            monitor=c.execute('SELECT * FROM signal_monitors WHERE id=? AND project_id=?',(monitor_id,project_id)).fetchone()
-            if not monitor:raise ValueError('Nie znaleziono monitoringu w tym projekcie.')
+            monitor=c.execute('SELECT * FROM signal_monitors WHERE id=?',(monitor_id,)).fetchone()
+            if not monitor or monitor['project_id'] not in project_scope.monitoring_projects(c,project_id):raise ValueError('Nie znaleziono monitoringu w tym projekcie.')
             c.execute("UPDATE signal_monitors SET status='deleted' WHERE id=?",(monitor_id,))
             # Keep shared feeds active for other monitors, including other projects.
             paused=c.execute("""UPDATE signal_sources SET enabled=0
@@ -187,7 +195,8 @@ class Monitoring:
         with self.db() as c:
             signal=c.execute('SELECT * FROM sales_signals WHERE id=?',(int(item['id']),)).fetchone()
             if not signal:raise ValueError('Nie znaleziono sygnału.')
-            monitors=c.execute("SELECT m.offer,m.audience,m.plan FROM signal_monitors m JOIN signal_monitor_sources s ON s.monitor_id=m.id WHERE s.source_id=? AND m.status='active' AND m.mode='offer' AND m.project_id=? ORDER BY m.id DESC",(signal['source_id'],project['id'])).fetchall()
+            owners=project_scope.monitoring_projects(c,project['id']);slots=','.join('?' for _ in owners)
+            monitors=c.execute("SELECT m.offer,m.audience,m.plan FROM signal_monitors m JOIN signal_monitor_sources s ON s.monitor_id=m.id WHERE s.source_id=? AND m.status='active' AND m.mode='offer' AND m.project_id IN ("+slots+") ORDER BY m.id DESC",[signal['source_id'],*owners]).fetchall()
             offers=[]
             for monitor in monitors:
                 if any(ss.norm(row['topic'])==ss.norm(signal['topic']) and (not row['signal_kinds'] or signal['kind'] in row['signal_kinds']) for row in json.loads(monitor['plan'])):

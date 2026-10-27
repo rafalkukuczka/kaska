@@ -2,6 +2,13 @@
 let uiLanguage='pl';
 try{uiLanguage=localStorage.getItem('kaska-ui-language')==='en'?'en':'pl'}catch{}
 const uiEnglish={
+ 'Współdziel monitoringi':'Share monitoring',
+ 'Projekty z tą opcją korzystają ze wspólnych monitoringów. Dodanie lub usunięcie monitoringu jest widoczne we wszystkich tych projektach.':'Projects with this option use the same monitors. Adding or deleting a monitor affects all these projects.',
+ 'Monitoringi: współdzielone':'Monitoring: shared',
+ 'Monitoringi: tylko w tym projekcie':'Monitoring: this project only',
+ 'Monitoring współdzielony':'Shared monitor',
+ 'Usunięcie tego monitoringu dotyczy wszystkich współdzielących go projektów.':'Deleting this monitor affects every project sharing it.',
+ 'Projekt zniknie z listy, a jego prywatne monitoringi zostaną zatrzymane. Wspólne monitoringi pozostaną dostępne dla innych korzystających z nich projektów. Historia pozostanie zachowana.':'The project will be removed and its private monitors stopped. Shared monitors will remain available to other projects using them. History is retained.',
  'Raporty':'Reports', 'Lejek kontaktu, aktywność i wyniki kampanii bieżącego projektu.':'Contact flow, activity and campaign results for this project.',
  'Okres raportów':'Report period', 'Odśwież raporty':'Refresh reports',
  'Raporty pomijają symulację. Zaangażowanie i odbicia wymagają osobnego pomiaru.':'Reports exclude simulations. Engagement and bounces require separate tracking.',

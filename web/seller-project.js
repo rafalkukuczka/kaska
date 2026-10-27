@@ -69,7 +69,7 @@ function projectContextLink(){
 }
 function renderSellerProject(){
  if($('#seller-project-form'))return;
- $('#content').innerHTML=renderTop('Projekt','Oferta i kryteria odbiorców wspólne dla odkrywania firm i pozyskiwania leadów.')+`<p class="hint">${esc(translateUiText(sellerProject().share_contacts?'Kontakty: współdzielone':'Kontakty: tylko w tym projekcie'))}</p>`+sharedProjectPanel();
+ $('#content').innerHTML=renderTop('Projekt','Oferta i kryteria odbiorców wspólne dla odkrywania firm i pozyskiwania leadów.')+`<p class="hint">${esc(translateUiText(sellerProject().share_contacts?'Kontakty: współdzielone':'Kontakty: tylko w tym projekcie'))}</p><p class="hint">${esc(translateUiText(sellerProject().share_monitorings?'Monitoringi: współdzielone':'Monitoringi: tylko w tym projekcie'))}</p>`+sharedProjectPanel();
  $('#discover-project').open=true;
  bindDiscoverProject();
 }
@@ -113,7 +113,7 @@ async function chooseSellerProject(path,item,signal){
 
 function deleteSellerProjectForm(){
  const project=sellerProject(),last=(state.seller_projects||[]).length===1;
- modal(`<h2>Usunąć projekt?</h2><p data-no-translate><strong>${esc(project.name)}</strong></p><p>Projekt zniknie z listy, a jego monitoringi zostaną zatrzymane. Kontakty i dotychczasowe kampanie pozostaną zachowane.</p>${last?'<p class="hint">To ostatni projekt. Po usunięciu utworzymy nowy pusty projekt.</p>':''}<p class="hint" role="status" data-project-delete-status></p><div class="actions"><button type="button" class="secondary close">Anuluj</button><button type="button" class="primary danger" data-project-delete-confirm>Usuń projekt</button></div>`);
+ modal(`<h2>Usunąć projekt?</h2><p data-no-translate><strong>${esc(project.name)}</strong></p><p>Projekt zniknie z listy, a jego prywatne monitoringi zostaną zatrzymane. Wspólne monitoringi pozostaną dostępne dla innych korzystających z nich projektów. Historia pozostanie zachowana.</p>${last?'<p class="hint">To ostatni projekt. Po usunięciu utworzymy nowy pusty projekt.</p>':''}<p class="hint" role="status" data-project-delete-status></p><div class="actions"><button type="button" class="secondary close">Anuluj</button><button type="button" class="primary danger" data-project-delete-confirm>Usuń projekt</button></div>`);
  $('[data-project-delete-confirm]').onclick=e=>run(e.currentTarget,async()=>{
    const status=$('[data-project-delete-status]'),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
    status.textContent=translateUiText('Usuwam projekt…');
@@ -129,7 +129,7 @@ document.addEventListener('change',e=>{
 });
 document.addEventListener('click',e=>{
  if(!e.target.closest('#new-seller-project'))return;
- modal(`<h2>Nowy projekt</h2><form id="new-seller-project-form"><label for="new-project-name">Nazwa projektu</label><input id="new-project-name" name="name" required maxlength="100" placeholder="np. Moja firma"><label class="check"><input type="checkbox" name="share_contacts"> <span>Współdziel kontakty</span></label><p class="hint">Zaznacz, aby korzystać ze wspólnej puli kontaktów. Bez zaznaczenia projekt ma własne kontakty. Kampanie zawsze należą do jednego projektu.</p><div class="actions"><button class="primary">Utwórz projekt</button><button type="button" class="secondary close">Anuluj</button></div></form>`);
+ modal(`<h2>Nowy projekt</h2><form id="new-seller-project-form"><label for="new-project-name">Nazwa projektu</label><input id="new-project-name" name="name" required maxlength="100" placeholder="np. Moja firma"><label class="check"><input type="checkbox" name="share_contacts"> <span>Współdziel kontakty</span></label><label class="check"><input type="checkbox" name="share_monitorings"> <span>Współdziel monitoringi</span></label><p class="hint">Projekty z tą opcją korzystają ze wspólnych monitoringów. Dodanie lub usunięcie monitoringu jest widoczne we wszystkich tych projektach.</p><p class="hint">Zaznacz, aby korzystać ze wspólnej puli kontaktów. Bez zaznaczenia projekt ma własne kontakty. Kampanie zawsze należą do jednego projektu.</p><div class="actions"><button class="primary">Utwórz projekt</button><button type="button" class="secondary close">Anuluj</button></div></form>`);
  $('#new-project-name').focus();
- $('#new-seller-project-form').onsubmit=e=>{e.preventDefault();run(e.submitter,async()=>{await chooseSellerProject('seller-projects/create',{name:e.target.elements.name.value,share_contacts:e.target.elements.share_contacts.checked});$('#modal').close();editSellerProject();toast('Utworzono projekt.')})};
+ $('#new-seller-project-form').onsubmit=e=>{e.preventDefault();run(e.submitter,async()=>{await chooseSellerProject('seller-projects/create',{name:e.target.elements.name.value,share_contacts:e.target.elements.share_contacts.checked,share_monitorings:e.target.elements.share_monitorings.checked});$('#modal').close();editSellerProject();toast('Utworzono projekt.')})};
 });

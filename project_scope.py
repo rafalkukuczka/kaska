@@ -6,6 +6,13 @@ def active(c):
     return c.execute('SELECT project_id FROM seller_project_selection WHERE id=1').fetchone()[0]
 
 
+def monitoring_projects(c,project_id):
+    row=c.execute('SELECT share_monitorings FROM seller_projects WHERE id=? AND deleted=0',(project_id,)).fetchone()
+    if not row:raise ValueError('Nie znaleziono projektu.')
+    if not row[0]:return [project_id]
+    return [row[0] for row in c.execute('SELECT id FROM seller_projects WHERE share_monitorings=1 AND deleted=0 ORDER BY id')]
+
+
 def contact_pool(c, project_id=None):
     project_id=active(c) if project_id is None else int(project_id)
     row=c.execute('SELECT share_contacts FROM seller_projects WHERE id=? AND deleted=0',(project_id,)).fetchone()
