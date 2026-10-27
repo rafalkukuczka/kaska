@@ -171,3 +171,7 @@ button.link.danger,button.secondary.danger{color:#b34759}button.primary.danger{b
 @media(max-width:450px){.monitor-source-row{align-items:flex-start;flex-wrap:wrap}}
 .profile-lines{white-space:pre-line}#discover-profile summary{cursor:pointer}#seller-profile-form{margin-top:20px}
 .discover-company blockquote{margin:12px 0;padding-left:12px;border-left:3px solid #d7c8f5}
+.profile-picker{margin-top:16px;max-width:100%;min-width:0}
+.profile-picker label{margin:0 0 6px;font-size:11px}.profile-picker select{padding:9px;min-width:0}
+.profile-picker button{margin-top:6px;text-align:left}.profile-picker+.eyebrow{margin-top:22px}
+@media(max-width:850px){.profile-picker{max-width:340px}.profile-picker select{max-width:100%}}

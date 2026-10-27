@@ -2,6 +2,9 @@
 let uiLanguage='pl';
 try{uiLanguage=localStorage.getItem('kaska-ui-language')==='en'?'en':'pl'}catch{}
 const uiEnglish={
+ '+ Nowy profil':'+ New profile', 'Nowy profil':'New profile', 'Nazwa profilu':'Profile name',
+ 'Utwórz profil':'Create profile', 'Utworzono profil.':'Profile created.', 'np. Moja firma':'e.g. My company',
+ 'Każdy profil ma własną ofertę, problemy, wartości i monitoringi Discover.':'Each profile has its own offer, pain points, value propositions and Discover monitors.',
  'Ocena dotyczy wcześniejszej wersji profilu. Oceń ponownie, aby uwzględnić zmiany.':'This assessment uses an earlier profile. Reassess to include your changes.',
  'Discover':'Discover', 'Odkrywaj firmy, dla których Twoja oferta może być przydatna.':'Discover companies that may benefit from your offer.',
  'Profil':'Profile', 'Oferta, problemy i wartości są wspólne dla Discover i Znajdź klientów.':'Your offer, pain points and value propositions are shared by Discover and Find customers.',

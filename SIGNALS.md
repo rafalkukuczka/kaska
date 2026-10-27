@@ -2,6 +2,10 @@
 
 ## Dwa sposoby rozpoczęcia monitoringu
 
+Pod logo Kaśka znajduje się wybór aktywnego **Profilu** i przycisk **+ Nowy profil**. Każdy profil ma własną nazwę, stronę, ofertę, odbiorców, pain points, value propositions i proof points. Nazwę można zmienić w sekcji „Profil” w Discover. Dotychczasowe dane są zachowane w „Profilu 1”; nowe profile mają puste pola. Wybór aktywnego profilu pozostaje po ponownym uruchomieniu.
+
+Przełączenie najpierw zapisuje oczekujące zmiany. Szkice lokalne są oddzielne dla każdego profilu. Monitoring, oceny firm w Discover oraz historia wyszukiwań klientów są przypisane do profilu, również gdy wynik AI wróci już po przełączeniu. Ten sam sygnał może mieć różne oceny dla różnych ofert. Publiczne źródła mogą być współdzielone; okno usunięcia informuje o współdzieleniu między monitoringami.
+
 Widok **Discover**, nad „Znajdź klientów” w nawigacji, pokazuje firmy warte uwagi, ich powiązanie z ofertą i cytaty ze zdarzeń. Monitoring rynku jest teraz częścią tego ekranu. Przycisk oceny analizuje maksymalnie 10 nowych zdarzeń przez OpenAI; można zatrzymać kolejne analizy po bieżącym zapytaniu. Pusta lista firm nie jest uzupełniana wymyślonymi wynikami.
 
 Oferta, strona, odbiorcy, pain points, value propositions i proof points tworzą jeden **wspólny profil** dla Discover i Znajdź klientów. Edycje oraz zastosowane propozycje AI zapisują się automatycznie do SQLite; lokalny szkic chroni zmiany oczekujące na zapis. Profil można edytować w obu ekranach. Przy pierwszej migracji przenosimy ostatnie wyszukiwanie klientów, a gdy go nie ma — ostatni profil z Biblioteki. Zapisany profil nie jest ponownie nadpisywany przez migrację. Zmiana profilu oznacza starsze oceny firm jako wymagające ponownej oceny; nie wykonuje płatnych zapytań automatycznie.

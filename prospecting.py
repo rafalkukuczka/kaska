@@ -10,6 +10,7 @@ from urllib.parse import urlencode, urlparse
 
 import ai_service
 import languages
+import shared_profile
 from sales_signals import public_url
 
 DEPARTMENTS = ('executive', 'it', 'finance', 'management', 'sales', 'legal', 'support', 'hr',
@@ -90,6 +91,7 @@ def init_schema(c):
         UNIQUE(run_id,email));
     ''')
     columns = {row[1] for row in c.execute('PRAGMA table_info(prospect_runs)')}
+    if 'profile_id' not in columns:c.execute('ALTER TABLE prospect_runs ADD COLUMN profile_id INTEGER NOT NULL DEFAULT 1')
     for name in ('language', 'assistant_language'):
         if name not in columns:
             c.execute('ALTER TABLE prospect_runs ADD COLUMN '+name+" TEXT NOT NULL DEFAULT 'pl'")
@@ -108,10 +110,11 @@ class Prospecting:
         self.db, self.library, self.ai_copy, self.mail_lock = db, library, ai_copy, mail_lock
         self.lock = threading.Lock()
 
-    def state(self):
+    def state(self,profile_id=None):
+        profile_id=shared_profile.get(self.db,profile_id)['id']
         with self.db() as c:
-            runs = [dict(r) for r in c.execute('SELECT * FROM prospect_runs ORDER BY id DESC LIMIT 50')]
-            candidates = [dict(r) for r in c.execute('SELECT p.* FROM prospect_candidates p WHERE run_id IN (SELECT id FROM prospect_runs ORDER BY id DESC LIMIT 50) ORDER BY id')]
+            runs = [dict(r) for r in c.execute('SELECT * FROM prospect_runs WHERE profile_id=? ORDER BY id DESC LIMIT 50',(profile_id,))]
+            candidates = [dict(r) for r in c.execute('SELECT p.* FROM prospect_candidates p WHERE run_id IN (SELECT id FROM prospect_runs WHERE profile_id=? ORDER BY id DESC LIMIT 50) ORDER BY id',(profile_id,))]
         return {'runs': runs, 'candidates': candidates, 'hunter': bool(os.getenv('HUNTER_API_KEY', '').strip())}
 
     def update(self, run_id, **fields):
@@ -122,6 +125,7 @@ class Prospecting:
             c.execute('UPDATE prospect_runs SET ' + ','.join(k+'=?' for k in fields) + ',updated=? WHERE id=?', (*fields.values(), time.time(), run_id))
 
     def start(self, item):
+        profile_id=shared_profile.get(self.db,item.get('profile_id'))['id']
         Hunter()  # Fail before inserting a run when the integration is missing.
         website = str(item.get('website', '')).strip()
         if '://' not in website:
@@ -155,6 +159,7 @@ class Prospecting:
                     (website, str(item.get('offer', '')).strip()[:10000], audience, str(item.get('titles', '')).strip()[:500], department,
                      company_limit, per_company, json.dumps(exclusions), now, now)).lastrowid
                 c.execute('UPDATE prospect_runs SET language=?,assistant_language=? WHERE id=?', (message_language, prefs['ui_language'], run_id))
+                c.execute('UPDATE prospect_runs SET profile_id=? WHERE id=?',(profile_id,run_id))
                 c.execute('UPDATE prospect_runs SET pain_points=?,value_props=? WHERE id=?', (points['pain_points'], points['value_props'], run_id))
                 c.execute('UPDATE prospect_runs SET proof_points=? WHERE id=?', (points['proof_points'], run_id))
             threading.Thread(target=self.execute, args=(run_id, 'search'), daemon=True).start()

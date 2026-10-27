@@ -622,10 +622,11 @@ class Handler(BaseHTTPRequestHandler):
             discovery_snapshot = source_finder.state()
             result['signals'] = signal_engine.state()
             result['signals']['discovery'] = discovery_snapshot
-            result['signals']['monitoring'] = signal_monitor.state()
             result['seller_profile'] = shared_profile.get(db)
+            result['seller_profiles'] = shared_profile.profiles(db)
+            result['signals']['monitoring'] = signal_monitor.state(result['seller_profile']['id'])
             result['library'] = library.state()
-            result['prospecting'] = prospector.state()
+            result['prospecting'] = prospector.state(result['seller_profile']['id'])
             result['preferences'] = languages.preferences(db)
             result['languages'] = languages.LANGUAGES
             return self.respond(result)
@@ -664,6 +665,10 @@ class Handler(BaseHTTPRequestHandler):
             item = json.loads(self.rfile.read(size))
             if self.path == '/api/seller-profile':
                 return self.respond(shared_profile.save(db,item))
+            if self.path == '/api/seller-profiles/create':
+                return self.respond(shared_profile.create(db,item))
+            if self.path == '/api/seller-profiles/select':
+                return self.respond(shared_profile.select(db,item))
             if self.path.startswith('/api/signals/monitoring/'):
                 return self.respond(signal_monitor.post(self.path[len('/api/signals/monitoring/'):],item))
             if self.path == '/api/signals/discovery/start':

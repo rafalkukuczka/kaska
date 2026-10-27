@@ -104,7 +104,7 @@ setInterval(()=>pollDiscovery().catch(()=>{}),3000);
 
 function deleteSourceForm(id){
  const source=sig().sources.find(s=>s.id===id);if(!source)return;
- const shared=(sig().monitoring?.monitors||[]).filter(m=>m.source_ids.includes(id)).length>1;
+ const shared=(sig().monitoring?.source_usage?.[id]||(sig().monitoring?.monitors||[]).filter(m=>m.source_ids.includes(id)).length)>1;
  modal(`<h2>Usunąć źródło?</h2><p data-no-translate><strong>${esc(source.name)}</strong></p><p>Zatrzymamy monitorowanie tego źródła. Dotychczasowe sygnały, kontakty i wiadomości pozostaną zachowane.</p><p class="hint" role="status" data-source-delete-status></p><div class="actions"><button class="secondary close">Anuluj</button><button class="primary danger" data-source-delete-confirm>Usuń źródło</button></div>`);
  if(shared)$('[data-source-delete-status]').insertAdjacentHTML('beforebegin','<p class="notice">To źródło jest używane przez kilka monitoringów. Usunięcie zatrzyma je we wszystkich.</p>');
  $('[data-source-delete-confirm]').onclick=e=>run(e.currentTarget,async()=>{

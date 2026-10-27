@@ -1,5 +1,5 @@
 let discoverReview={running:false,stop:false,completed:0,total:0};
-function discoverPendingSignals(){const revision=sellerProfile().revision;return sig().items.filter(s=>!s.company&&s.status!=='dismissed'&&(!s.companies_checked_at||s.companies_profile_revision!==revision))}
+function discoverPendingSignals(){const revision=sellerProfile().revision,monitoring=sig().monitoring||{},reviews=new Map((monitoring.reviews||[]).map(r=>[r.signal_id,r])),own=new Set((monitoring.monitors||[]).flatMap(m=>m.source_ids)),other=new Set(monitoring.other_source_ids||[]);return sig().items.filter(s=>!s.company&&s.status!=='dismissed'&&(!other.has(s.source_id)||own.has(s.source_id))&&reviews.get(s.id)?.revision!==revision)}
 function renderDiscover(){
  if(!$('#discover-root')){
    $('#content').innerHTML=renderTop('Discover','Odkrywaj firmy, dla których Twoja oferta może być przydatna.',`<button class="secondary" data-signal="scan">↻ Skanuj źródła</button>`)+`<div id="discover-root">${sharedProfilePanel()}<section class="panel" id="discover-companies"></section><div id="signal-content"></div></div>`;
@@ -11,19 +11,19 @@ function renderDiscoverCompanies(){
  const root=$('#discover-companies');if(!root)return;
  const rows=sig().monitoring?.companies||[],signals=new Map(sig().items.map(s=>[s.id,s]));
  const groups=new Map();
- for(const company of rows){const signal=signals.get(company.signal_id);if(!signal||signal.status==='dismissed')continue;const key=company.company.toLocaleLowerCase();if(!groups.has(key))groups.set(key,[]);groups.get(key).push({...company,signal})}
+ for(const company of rows){const signal=signals.get(company.signal_id);if(!signal||signal.status==='dismissed')continue;const review=sig().monitoring?.reviews?.find(r=>r.signal_id===signal.id);const key=company.company.toLocaleLowerCase();if(!groups.has(key))groups.set(key,[]);groups.get(key).push({...company,signal,review})}
  const pending=discoverPendingSignals();
- root.innerHTML=`<div class="panel-head"><div><h2>Firmy warte uwagi</h2><p>Dlaczego mogą potrzebować Twoich usług — na podstawie zdarzeń i wspólnej oferty.</p></div><button class="primary" data-discover-review ${!state.integrations.ai||discoverReview.running||!pending.length?'disabled':''}>Oceń firmy z nowych zdarzeń</button></div><p class="hint">AI wskazuje firmy wymienione w dowodach. Dopasowanie do oferty to hipoteza do sprawdzenia. Jedno kliknięcie ocenia do 10 zdarzeń przez płatne OpenAI API.</p>${discoverReview.running?`<p role="status"><span>Oceniono zdarzeń:</span> ${discoverReview.completed} / ${discoverReview.total}</p><button class="secondary" data-discover-stop ${discoverReview.stop?'disabled':''}>Przerwij ocenianie</button>`:''}${[...groups.values()].map(entries=>{const company=entries[0];return `<article class="signal-card discover-company"><div class="panel-head"><h3 data-no-translate>${esc(company.company)}</h3><span class="badge gray">${entries.length} <span>zdarzeń</span></span></div>${entries.map(entry=>`<div class="monitor-plan-row"><strong data-no-translate>${esc(entry.signal.title)}</strong>${entry.signal.companies_profile_revision!==sellerProfile().revision?'<p class="hint">Ocena dotyczy wcześniejszej wersji profilu. Oceń ponownie, aby uwzględnić zmiany.</p>':''}<p data-no-translate>${esc(entry.reason)}</p><blockquote data-no-translate>${esc(entry.quote)}</blockquote><p class="hint">${esc(signalLabel(entry.signal.kind))} · ${date(entry.signal.observed)}</p>${sourceLink(entry.signal.url)}</div>`).join('')}</article>`}).join('')||empty('Jeszcze nie ma firm do oceny','Uruchom monitoring poniżej, pobierz zdarzenia i oceń wymienione w nich firmy. Oferta i punkty wartości pochodzą z profilu.')}`;
+ root.innerHTML=`<div class="panel-head"><div><h2>Firmy warte uwagi</h2><p>Dlaczego mogą potrzebować Twoich usług — na podstawie zdarzeń i wspólnej oferty.</p></div><button class="primary" data-discover-review ${!state.integrations.ai||discoverReview.running||!pending.length?'disabled':''}>Oceń firmy z nowych zdarzeń</button></div><p class="hint">AI wskazuje firmy wymienione w dowodach. Dopasowanie do oferty to hipoteza do sprawdzenia. Jedno kliknięcie ocenia do 10 zdarzeń przez płatne OpenAI API.</p>${discoverReview.running?`<p role="status"><span>Oceniono zdarzeń:</span> ${discoverReview.completed} / ${discoverReview.total}</p><button class="secondary" data-discover-stop ${discoverReview.stop?'disabled':''}>Przerwij ocenianie</button>`:''}${[...groups.values()].map(entries=>{const company=entries[0];return `<article class="signal-card discover-company"><div class="panel-head"><h3 data-no-translate>${esc(company.company)}</h3><span class="badge gray">${entries.length} <span>zdarzeń</span></span></div>${entries.map(entry=>`<div class="monitor-plan-row"><strong data-no-translate>${esc(entry.signal.title)}</strong>${entry.review?.revision!==sellerProfile().revision?'<p class="hint">Ocena dotyczy wcześniejszej wersji profilu. Oceń ponownie, aby uwzględnić zmiany.</p>':''}<p data-no-translate>${esc(entry.reason)}</p><blockquote data-no-translate>${esc(entry.quote)}</blockquote><p class="hint">${esc(signalLabel(entry.signal.kind))} · ${date(entry.signal.observed)}</p>${sourceLink(entry.signal.url)}</div>`).join('')}</article>`}).join('')||empty('Jeszcze nie ma firm do oceny','Uruchom monitoring poniżej, pobierz zdarzenia i oceń wymienione w nich firmy. Oferta i punkty wartości pochodzą z profilu.')}`;
  $('[data-discover-review]').onclick=e=>run(e.currentTarget,reviewDiscoverCompanies);
  const stop=$('[data-discover-stop]');if(stop)stop.onclick=()=>{discoverReview.stop=true;renderDiscoverCompanies()};
 }
 async function reviewDiscoverCompanies(){
  await flushSellerProfile();
  const pending=discoverPendingSignals().slice(0,10);
- discoverReview={running:true,stop:false,completed:0,total:pending.length};renderDiscoverCompanies();
+ const profile_id=sellerProfile().id,review={running:true,stop:false,completed:0,total:pending.length};discoverReview=review;renderDiscoverCompanies();
  try{
-   for(const signal of pending){if(discoverReview.stop||view!=='discover')break;await api('signals/monitoring/companies',{id:signal.id});discoverReview.completed++;await refresh()}
- }finally{discoverReview.running=false;renderDiscoverCompanies()}
+   for(const signal of pending){if(review.stop||view!=='discover'||sellerProfile().id!==profile_id)break;await api('signals/monitoring/companies',{id:signal.id,profile_id});review.completed++;await refresh()}
+ }finally{review.running=false;if(discoverReview===review)renderDiscoverCompanies()}
 }
 function monitorMatches(m,s){return m.source_ids.includes(s.source_id)&&m.plan.some(row=>row.topic.toLocaleLowerCase()===s.topic?.toLocaleLowerCase()&&(!row.signal_kinds.length||row.signal_kinds.includes(s.kind)))}
 function monitorSources(sources){return `<div class="monitor-source-list"><h4>Źródła monitoringu</h4>${sources.map(source=>`<div class="monitor-source-row" data-monitor-source="${source.id}"><div><strong data-no-translate>${esc(source.name)}</strong><p class="hint">${source.enabled?'Włączone':'Wstrzymane'}</p></div><button class="link danger" data-signal="delete-source" data-id="${source.id}">Usuń źródło</button></div>`).join('')||'<p class="hint">W tym monitoringu nie ma już źródeł.</p>'}</div>`}
@@ -55,7 +55,7 @@ function monitorPlanForm(result){
  $('#monitor-plan-form').onsubmit=e=>{e.preventDefault();run(e.submitter,async()=>{
    const selected=[...e.target.querySelectorAll('[name=selected]:checked')].map(input=>Number(input.value));
    if(!selected.length)throw Error('Wybierz co najmniej jeden temat z planu.');
-   await api('signals/monitoring/activate',{id:result.id,selected});$('#modal').close();view='discover';await refresh();toast('Monitoring uruchomiony. Źródła będą sprawdzane w tle.');
+   await api('signals/monitoring/activate',{id:result.id,profile_id:result.profile_id,selected});$('#modal').close();view='discover';await refresh();toast('Monitoring uruchomiony. Źródła będą sprawdzane w tle.');
  })};
 }
 function monitorTopicForm(){
