@@ -49,6 +49,25 @@ class ProspectingTests(unittest.TestCase):
         with patch.dict(os.environ, {'HUNTER_API_KEY': 'fixture-key'}), patch('prospecting.Hunter.request', side_effect=self.provider):
             self.manager.verify(run_id)
 
+    def test_search_languages_are_snapshot_separate_from_message_language_and_used_in_query(self):
+        run_id=self.setup_run(search_languages=['en','de','en'],language='fr')
+        run=self.manager.get_run(run_id)
+        self.assertEqual(json.loads(run['search_languages']),['en','de'])
+        self.assertEqual(run['language'],'fr')
+        calls=[]
+        def provider(endpoint,params=None,body=None):
+            if endpoint=='discover':calls.append(body)
+            return self.provider(endpoint,params,body)
+        with patch.dict(os.environ,{'HUNTER_API_KEY':'fixture-key'}),patch('prospecting.Hunter.request',side_effect=provider),patch.object(app.library,'page',return_value={'url':'https://buyer.example/','summary':'Buyer runs online retail shops.'}):
+            self.manager.search(run_id)
+        self.assertIn('English, German',calls[0]['query'])
+        self.assertTrue(calls[0]['query'].startswith('Retail companies in Poland'))
+        self.assertNotIn('French',calls[0]['query'])
+        with app.db() as c:missing=c.execute('SELECT missing_data FROM prospect_candidates WHERE run_id=?',(run_id,)).fetchone()[0]
+        self.assertIn('English',missing)
+        for value in ('en',['xx'],[None],['en']*7):
+            with self.subTest(value=value),self.assertRaises(ValueError):self.setup_run(search_languages=value)
+
     def test_full_pipeline_creates_review_only_drafts_and_is_idempotent(self):
         run_id = self.setup_run()
         row = self.search(run_id)

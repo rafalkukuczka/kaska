@@ -1,8 +1,18 @@
 # Sygnały sprzedażowe
 
+Operacje w tle są widoczne na pasku u dołu ekranu, również po zmianie zakładki. Konfiguracja źródeł i generowanie szkiców pokazują rzeczywisty licznik oraz procent; operacje bez znanej liczby kroków, np. pojedyncze zapytanie do AI, mają wskaźnik „W trakcie”. Pasek obejmuje także prace innych profili, nie odświeża formularzy i znika po zakończeniu. Przycisk przerwania konfiguracji źródeł pozostaje dostępny na tym pasku.
+
+## Symulacja Discover
+
+W Discover dostępna jest symulacja: każde źródło przypisane do monitoringu wybranego profilu generuje dokładnie 3 przykładowe sygnały w przeglądarce. Dwa źródła oznaczają 6 zdarzeń na karcie monitoringu. Przycisk przy źródle pokazuje jego 3 sygnały, a „Zobacz zdarzenia” — symulowane wyniki całego monitoringu. Przykładowe firmy i zdarzenia mają oznaczenie „Symulacja”.
+
+Symulacja jest domyślnie włączona przy pierwszym użyciu; przełącznik zapisuje wybór w przeglądarce. „Wyłącz symulację” przywraca rzeczywiste dane. Symulowane sygnały nie są zapisywane w SQLite ani wysyłane do OpenAI, nie mają przycisków akceptacji i nie mogą uruchamiać kampanii. „Symuluj skanowanie” nie pobiera danych z dostawców. Normalny serwerowy monitoring nadal działa niezależnie w tle.
+
 ## Dwa sposoby rozpoczęcia monitoringu
 
 Pod logo Kaśka znajduje się wybór aktywnego **Profilu** i przycisk **+ Nowy profil**. Każdy profil ma własną nazwę, stronę, ofertę, odbiorców, pain points, value propositions i proof points. Nazwę można zmienić w sekcji „Profil” w Discover. Dotychczasowe dane są zachowane w „Profilu 1”; nowe profile mają puste pola. Wybór aktywnego profilu pozostaje po ponownym uruchomieniu.
+
+Przycisk **Usuń profil** pod wyborem profilu otwiera potwierdzenie. Profil znika z wyboru, a jego monitoringi są wyłączane; wspólne źródła pracujące dla innych profili pozostają aktywne. Kontakty i istniejące kampanie są zachowywane. Usunięcie aktywnego profilu przełącza na kolejny dostępny; usunięcie ostatniego tworzy nowy pusty profil. Historia jest archiwizowana w bazie i nie jest przywracana przy restarcie. Usunięty profil odrzuca spóźnione zapisy oraz wyniki AI. Przed usunięciem trzeba zakończyć trwające wyszukiwanie klientów lub tworzenie szkiców w tym profilu.
 
 Przełączenie najpierw zapisuje oczekujące zmiany. Szkice lokalne są oddzielne dla każdego profilu. Monitoring, oceny firm w Discover oraz historia wyszukiwań klientów są przypisane do profilu, również gdy wynik AI wróci już po przełączeniu. Ten sam sygnał może mieć różne oceny dla różnych ofert. Publiczne źródła mogą być współdzielone; okno usunięcia informuje o współdzieleniu między monitoringami.
 

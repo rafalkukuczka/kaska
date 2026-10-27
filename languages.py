@@ -1,4 +1,11 @@
-"""Independent workspace/assistant and outbound message language settings."""
+"""Independent workspace, outreach and company-search language settings."""
+SEARCH_LANGUAGE_NAMES={'pl':'Polish','en':'English','de':'German','fr':'French','es':'Spanish','it':'Italian'}
+
+
+def validate_search_languages(value):
+    if not isinstance(value,list) or len(value)>len(SEARCH_LANGUAGE_NAMES) or any(not isinstance(code,str) or code not in SEARCH_LANGUAGE_NAMES for code in value):
+        raise ValueError('Wybierz języki wyszukiwania z listy.')
+    return list(dict.fromkeys(value))
 LANGUAGES = {
     'pl': {'label': 'Polski', 'prompt': 'polsku', 'subject': 'Pomysł dla {{company}}', 'follow_subject': 'Wracam do tematu',
            'body': 'Dzień dobry {{name}},\n\npiszę w sprawie współpracy z {{company}}.\n\n{{offer}}\n\nCzy to temat, o którym warto porozmawiać?',

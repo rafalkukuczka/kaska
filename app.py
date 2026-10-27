@@ -609,6 +609,16 @@ class Handler(BaseHTTPRequestHandler):
         if not self.valid_host():
             return self.respond({'error': 'Nieprawidłowy host'}, 403)
         path = urlparse(self.path)
+        if path.path == '/api/background':
+            with db() as c:
+                jobs=[dict(r) for r in c.execute("""SELECT 'prospect-'||r.id AS id,'prospecting' AS kind,r.status,r.stage,p.name AS profile_name,
+                  CASE WHEN r.status='drafting' THEN r.draft_completed END AS completed,
+                  CASE WHEN r.status='drafting' THEN r.draft_total END AS total
+                  FROM prospect_runs r JOIN seller_profiles p ON p.id=r.profile_id
+                  WHERE p.deleted=0 AND r.status IN ('searching','verifying','drafting') ORDER BY r.id DESC""")]
+                jobs.extend(dict(r) for r in c.execute("""SELECT 'discovery-'||id AS id,'discovery' AS kind,status,stage,completed,total
+                  FROM source_discovery_jobs WHERE status IN ('running','cancelling') ORDER BY id DESC"""))
+            return self.respond({'jobs':jobs})
         if path.path == '/api/state':
             with db() as c:
                 result = {table: [dict(row) for row in c.execute('SELECT * FROM ' + table + ' ORDER BY id DESC LIMIT 2000')] for table in ('contacts', 'replies', 'events')}
@@ -638,7 +648,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond('<html lang="pl"><meta charset="utf-8"><title>Rezygnacja</title><h1>Rezygnacja z wiadomości</h1><form method="post" action="/unsubscribe"><input type="hidden" name="id" value="'+html.escape(contact_id, quote=True)+'"><input type="hidden" name="token" value="'+sign(contact_id)+'"><button>Potwierdzam rezygnację</button></form></html>', content_type='text/html; charset=utf-8')
         if path.path == '/assets/kaska.png':
             return self.respond((ROOT / 'web' / 'assets' / 'kaska.png').read_bytes(), content_type='image/png')
-        files = {'/seller-profile.js': ('seller-profile.js', 'text/javascript'), '/monitoring.js': ('monitoring.js', 'text/javascript'), '/sequence.js': ('sequence.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'), '/ai-settings.js': ('ai-settings.js', 'text/javascript'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/signals.js': ('signals.js', 'text/javascript'), '/builder.js': ('builder.js', 'text/javascript'), '/builder.css': ('builder.css', 'text/css'), '/theme.css': ('theme.css', 'text/css'), '/style.css': ('style.css', 'text/css')}
+        files = {'/background-progress.js': ('background-progress.js', 'text/javascript'), '/simulation.js': ('simulation.js', 'text/javascript'), '/seller-profile.js': ('seller-profile.js', 'text/javascript'), '/monitoring.js': ('monitoring.js', 'text/javascript'), '/sequence.js': ('sequence.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'), '/ai-settings.js': ('ai-settings.js', 'text/javascript'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/signals.js': ('signals.js', 'text/javascript'), '/builder.js': ('builder.js', 'text/javascript'), '/builder.css': ('builder.css', 'text/css'), '/theme.css': ('theme.css', 'text/css'), '/style.css': ('style.css', 'text/css')}
         if path.path in files:
             name, mime = files[path.path]
             return self.respond((ROOT / 'web' / name).read_text(encoding='utf-8'), content_type=mime+'; charset=utf-8')
@@ -669,6 +679,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(shared_profile.create(db,item))
             if self.path == '/api/seller-profiles/select':
                 return self.respond(shared_profile.select(db,item))
+            if self.path == '/api/seller-profiles/delete':
+                return self.respond(shared_profile.delete(db,item))
             if self.path.startswith('/api/signals/monitoring/'):
                 return self.respond(signal_monitor.post(self.path[len('/api/signals/monitoring/'):],item))
             if self.path == '/api/signals/discovery/start':

@@ -103,6 +103,8 @@ class Monitoring:
         except (KeyError,json.JSONDecodeError,TypeError):raise ValueError('AI zwróciło nieprawidłowy plan. Spróbuj ponownie.') from None
         if any(not row['reason'] for row in plan):raise ValueError('AI zwróciło plan bez uzasadnienia. Spróbuj ponownie.')
         with self.db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            if not c.execute('SELECT 1 FROM seller_profiles WHERE id=? AND deleted=0',(item['profile_id'],)).fetchone():raise ValueError('Profil został usunięty.')
             monitor_id=c.execute("INSERT INTO signal_monitors(mode,status,name,offer,audience,plan,created) VALUES('offer','draft',?,?,?,?,?)",
                 (offer[:100],offer,audience,json.dumps(plan,ensure_ascii=False),time.time())).lastrowid
             c.execute('UPDATE signal_monitors SET pain_points=?,value_props=?,proof_points=? WHERE id=?',
@@ -116,6 +118,7 @@ class Monitoring:
         # Manual monitoring never invokes AI or requires an API key.
         with self.db() as c:
             c.execute('BEGIN IMMEDIATE')
+            if not c.execute('SELECT 1 FROM seller_profiles WHERE id=? AND deleted=0',(profile_id,)).fetchone():raise ValueError('Profil został usunięty.')
             monitor_id=c.execute("INSERT INTO signal_monitors(mode,status,name,plan,created) VALUES('topic','draft',?,?,?)",
                                  (plan[0]['topic'],json.dumps(plan,ensure_ascii=False),time.time())).lastrowid
             c.execute('UPDATE signal_monitors SET profile_id=? WHERE id=?',(profile_id,monitor_id))
@@ -125,6 +128,7 @@ class Monitoring:
         profile_id=shared_profile.get(self.db,item.get('profile_id'))['id']
         with self.db() as c:
             c.execute('BEGIN IMMEDIATE')
+            if not c.execute('SELECT 1 FROM seller_profiles WHERE id=? AND deleted=0',(profile_id,)).fetchone():raise ValueError('Profil został usunięty.')
             monitor=c.execute('SELECT * FROM signal_monitors WHERE id=?',(int(item['id']),)).fetchone()
             if not monitor:raise ValueError('Nie znaleziono planu monitoringu.')
             if monitor['profile_id']!=profile_id:raise ValueError('Ten plan należy do innego profilu.')
@@ -185,6 +189,7 @@ class Monitoring:
             validated.append((signal['id'],profile['id'],company,reason,quote))
         with self.db() as c:
             c.execute('BEGIN IMMEDIATE')
+            if not c.execute('SELECT 1 FROM seller_profiles WHERE id=? AND deleted=0',(profile['id'],)).fetchone():raise ValueError('Profil został usunięty.')
             c.execute('DELETE FROM signal_profile_companies WHERE signal_id=? AND profile_id=?',(signal['id'],profile['id']))
             c.executemany('INSERT OR IGNORE INTO signal_profile_companies(signal_id,profile_id,company,reason,quote) VALUES(?,?,?,?,?)',validated)
             c.execute('INSERT INTO signal_company_reviews(signal_id,profile_id,revision,checked_at) VALUES(?,?,?,?) ON CONFLICT(signal_id,profile_id) DO UPDATE SET revision=excluded.revision,checked_at=excluded.checked_at',

@@ -1,5 +1,7 @@
 # Pierwszy etap: od opisu odbiorców do szkiców
 
+Pod opisem firm znajduje się rozwijana lista **Szukaj w językach** z checkboxami dla polskiego, angielskiego, niemieckiego, francuskiego, hiszpańskiego i włoskiego. Można wybrać kilka języków; brak zaznaczeń oznacza brak ograniczenia. Wybór zapisuje się w profilu, jest dostępny również w edycji profilu Discover i trafia jako preferencja języka rozmowy do zapytania Hunter oraz oceny dopasowania. Historia wyszukiwania zachowuje własną listę wybranych języków. Język wiadomości jest oddzielnym ustawieniem. Język kontaktu z firmą wymaga potwierdzenia — kraj siedziby, domena ani sam wynik wyszukiwarki go nie potwierdzają.
+
 ## Uruchomienie
 
 1. Włącz aplikację przez `start.ps1` i otwórz `http://localhost:8787`.

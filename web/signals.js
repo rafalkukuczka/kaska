@@ -44,12 +44,12 @@ const discoveryCancelPending=new Set();
 function renderDiscoveryBanner(){
  const active=state?.signals?.discovery?.jobs.find(job=>['running','cancelling'].includes(job.status));
  let banner=$('#discovery-active-banner');
- if(!active){banner?.remove();return}
- if(!banner){banner=document.createElement('section');banner.id='discovery-active-banner';banner.setAttribute('role','status');document.body.append(banner)}
+ if(!active){banner?.remove();renderBackgroundProgress();return}
+ if(!banner){banner=document.createElement('section');banner.id='discovery-active-banner';banner.setAttribute('role','status');backgroundProgressHost().append(banner)}
  const stopping=active.status==='cancelling'||discoveryCancelPending.has(active.id);
- banner.innerHTML=`<div><strong>${stopping?'Przerywanie konfiguracji…':'Trwa konfiguracja źródeł z AI'}</strong><span>${active.completed} / ${active.total} <span>firm</span> · <span data-no-translate>${esc(active.current_company)}</span></span>${stopping?'<small>Zatrzymamy po zakończeniu bieżącego odczytu. Zapisane wyniki pozostaną zachowane.</small>':''}</div><div class="actions"><button type="button" class="link" data-discovery-open>Zobacz postęp</button><button type="button" class="secondary danger" data-discovery-cancel ${stopping?'disabled':''}>Przerwij konfigurację</button></div>`;
+ banner.innerHTML=`<div><strong>${stopping?'Przerywanie konfiguracji…':'Trwa konfiguracja źródeł z AI'}</strong><span>${active.completed} / ${active.total} <span>firm</span> · <span data-no-translate>${esc(active.current_company)}</span></span><progress aria-label="Postęp konfiguracji źródeł" max="${active.total}" value="${active.completed}"></progress>${stopping?'<small>Zatrzymamy po zakończeniu bieżącego odczytu. Zapisane wyniki pozostaną zachowane.</small>':''}</div><div class="actions"><button type="button" class="link" data-discovery-open>Zobacz postęp</button><button type="button" class="secondary danger" data-discovery-cancel ${stopping?'disabled':''}>Przerwij konfigurację</button></div>`;
  banner.querySelector('[data-discovery-open]').onclick=()=>{discoveryJobId=active.id;signalTab='sources';view='signals';render()};
- banner.querySelector('[data-discovery-cancel]').onclick=e=>run(e.currentTarget,()=>stopDiscovery(active.id));
+ banner.querySelector('[data-discovery-cancel]').onclick=e=>run(e.currentTarget,()=>stopDiscovery(active.id));renderBackgroundProgress();
 }
 async function pollDiscovery(){
  if(discoveryPollBusy||!state?.signals?.discovery?.jobs.some(job=>['running','cancelling'].includes(job.status)))return;

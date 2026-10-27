@@ -1,0 +1,51 @@
+const {chromium}=require('playwright');
+const {spawn}=require('node:child_process');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ fs.mkdirSync('test-results',{recursive:true});
+ const data=fs.mkdtempSync(path.resolve('test-results/progress-'));
+ const server=spawn('python',['tests/browser_server.py'],{env:{...process.env,APP_PORT:'8792',APP_DATA_DIR:data,SMTP_HOST:'',SMTP_FROM:'',IMAP_HOST:'',OPENAI_API_KEY:'',HUNTER_API_KEY:'browser-fixture-only'},stdio:'pipe'});
+ let browser;
+ try{
+  await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
+  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  let jobs=[{id:'prospect-1',kind:'prospecting',status:'drafting',stage:'Generating messages',profile_name:'Another profile',completed:2,total:6}];
+  await page.route('**/api/background',route=>route.fulfill({json:{jobs}}));
+  await page.goto('http://localhost:8792');
+  await page.locator('#background-progress').waitFor();
+  await page.locator('#background-progress').getByText('2 / 6 · 33%',{exact:true}).waitFor();
+  assert.equal(await page.locator('#background-progress progress').getAttribute('value'),'2');
+  await page.locator('nav [data-view=contacts]').click();
+  await page.locator('[data-action=new-contact]').click();
+  await page.locator('#contact-form [name=name]').fill('Keep this draft');
+  jobs[0].completed=4;
+  await page.evaluate(async()=>pollBackgroundProgress());
+  assert.equal(await page.locator('#contact-form [name=name]').inputValue(),'Keep this draft');
+  assert.equal(await page.locator('#background-progress progress').getAttribute('value'),'4');
+  await page.locator('#modal > button.close').click();
+  await page.setViewportSize({width:390,height:844});
+  await page.screenshot({path:'test-results/progress-mobile.png'});
+  const bounds=await page.locator('#background-progress').boundingBox();
+  assert.ok(bounds.y+bounds.height<=844&&bounds.y>844/2);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  jobs=[];await page.evaluate(async()=>pollBackgroundProgress());
+  assert.equal(await page.locator('#background-progress').count(),0);
+  // A single pending request has an indeterminate bar, including on another screen.
+  let release;const gate=new Promise(resolve=>release=resolve);
+  await page.route('**/api/research',async route=>{await gate;await route.fulfill({json:{offer:'Fixture offer'}})});
+  await page.evaluate(()=>{window.progressTestRequest=api('research',{url:'https://example.com'}).catch(()=>{})});
+  await page.locator('#background-progress progress').waitFor();
+  assert.equal(await page.locator('#background-progress progress').getAttribute('value'),null);
+  await page.locator('nav [data-view=campaigns]').click();
+  assert.equal(await page.locator('#background-progress').count(),1);
+  release();await page.evaluate(async()=>window.progressTestRequest);
+  await page.waitForFunction(()=>!document.querySelector('#background-progress'));
+  await page.route('**/api/research',route=>route.fulfill({status:400,json:{error:'Fixture failure'}}));
+  await page.evaluate(async()=>{try{await api('research',{})}catch{}});
+  assert.equal(await page.locator('#background-progress').count(),0);
+  assert.deepEqual(errors,[]);
+  console.log('Progress browser QA passed: real counters, indeterminate requests, cross-view display, form preservation, completion, failure and mobile.');
+ }finally{if(browser)await browser.close();server.kill()}
+})().catch(e=>{console.error(e);process.exitCode=1});

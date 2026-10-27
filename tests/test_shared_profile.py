@@ -20,12 +20,28 @@ class SharedProfileTests(unittest.TestCase):
         self.assertEqual((profile['pain_points'],profile['value_props']),('Manual work','Less work'))
         with self.assertRaises(ValueError):shared_profile.save(app.db,{'offer':'Stale','revision':saved['revision']})
         self.assertEqual(shared_profile.get(app.db)['offer'],'Updated')
+
         for item in ({'offer':None},{'pain_points':[]},{'audience':'x'*3001}):
             with self.subTest(item=item),self.assertRaises(ValueError):shared_profile.save(app.db,item)
         shared_profile.save(app.db,{'pain_points':''})
         self.assertEqual(shared_profile.get(app.db)['pain_points'],'')
         app.init()
         self.assertEqual(shared_profile.get(app.db)['offer'],'Updated')
+
+    def test_search_languages_are_saved_per_profile_and_can_be_cleared(self):
+        first=shared_profile.save(app.db,{'search_languages':['pl','en','pl']})
+        self.assertEqual(first['search_languages'],['pl','en'])
+        self.assertEqual(shared_profile.resolve(app.db,{})['search_languages'],['pl','en'])
+        shared_profile.create(app.db,{'name':'Other'})
+        self.assertEqual(shared_profile.get(app.db)['search_languages'],[])
+        shared_profile.save(app.db,{'search_languages':['de','fr']})
+        shared_profile.select(app.db,{'profile_id':first['id']})
+        app.init()
+        self.assertEqual(shared_profile.get(app.db)['search_languages'],['pl','en'])
+        for value in ('en',['xx'],None):
+            with self.subTest(value=value),self.assertRaises(ValueError):shared_profile.save(app.db,{'search_languages':value})
+        shared_profile.save(app.db,{'search_languages':[]})
+        self.assertEqual(shared_profile.get(app.db)['search_languages'],[])
 
     def test_one_time_migration_prefers_latest_search_to_library(self):
         with app.db() as c:
@@ -117,6 +133,61 @@ class SharedProfileTests(unittest.TestCase):
         self.assertEqual([r['profile_id'] for r in app.prospector.state()['runs']],[second['id']])
         shared_profile.select(app.db,{'profile_id':first['id']})
         self.assertEqual([r['profile_id'] for r in app.prospector.state()['runs']],[first['id']])
+
+    def test_delete_active_profile_switches_and_preserves_contacts_and_campaigns(self):
+        first=shared_profile.get(app.db)
+        second=shared_profile.create(app.db,{'name':'Second'})
+        shared_profile.save(app.db,{'offer':'Second offer'})
+        selected=shared_profile.delete(app.db,{'profile_id':second['id']})
+        self.assertEqual(selected['id'],first['id'])
+        self.assertEqual([p['id'] for p in shared_profile.profiles(app.db)],[first['id']])
+        for action in (lambda:shared_profile.select(app.db,{'profile_id':second['id']}),
+                       lambda:shared_profile.save(app.db,{'profile_id':second['id'],'offer':'Late edit'})):
+            with self.assertRaises(ValueError):action()
+        with app.db() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM contacts').fetchone()[0],1)
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM campaigns').fetchone()[0],1)
+            self.assertEqual(c.execute('PRAGMA foreign_key_check').fetchall(),[])
+        app.init()
+        self.assertEqual(len(shared_profile.profiles(app.db)),1)
+
+    def test_delete_last_profile_creates_empty_replacement_without_restoring_legacy_data(self):
+        first=shared_profile.save(app.db,{'offer':'Old offer','pain_points':'Old pain'})
+        selected=shared_profile.delete(app.db,{'profile_id':first['id']})
+        self.assertNotEqual(selected['id'],first['id'])
+        self.assertTrue(all(not selected[field] for field in shared_profile.FIELDS))
+        app.init()
+        self.assertEqual(shared_profile.get(app.db)['id'],selected['id'])
+        self.assertEqual(shared_profile.get(app.db)['offer'],'')
+
+    def test_delete_profile_pauses_exclusive_sources_and_retains_shared_sources(self):
+        first=shared_profile.get(app.db)
+        app.signal_monitor.topic({'topic':'ERP'})
+        app.signal_monitor.topic({'topic':'NIS2'})
+        second=shared_profile.create(app.db,{'name':'Second'})
+        app.signal_monitor.topic({'topic':'ERP'})
+        shared_profile.delete(app.db,{'profile_id':first['id']})
+        self.assertEqual(shared_profile.get(app.db)['id'],second['id'])
+        sources=app.signal_engine.state()['sources']
+        self.assertTrue(all(s['enabled'] for s in sources if json.loads(s['config'])['topic']=='ERP'))
+        self.assertTrue(all(not s['enabled'] for s in sources if json.loads(s['config'])['topic']=='NIS2'))
+        self.assertEqual(len(app.signal_monitor.state()['monitors']),1)
+        with app.db() as c:self.assertFalse(c.execute("SELECT 1 FROM signal_monitors WHERE profile_id=? AND status='active'",(first['id'],)).fetchone())
+
+    def test_delete_rejects_busy_search_and_late_ai_cannot_restore_deleted_profile(self):
+        profile=shared_profile.get(app.db)
+        with app.db() as c:
+            run_id=c.execute("INSERT INTO prospect_runs(website,offer,audience,titles,department,company_limit,per_company,exclusions,created,updated,profile_id) VALUES('https://example.com','Offer','Audience','','',1,1,'[]',1,2,?)",(profile['id'],)).lastrowid
+        with self.assertRaises(ValueError):shared_profile.delete(app.db,{'profile_id':profile['id']})
+        self.assertEqual(shared_profile.get(app.db)['id'],profile['id'])
+        with app.db() as c:c.execute("UPDATE prospect_runs SET status='completed' WHERE id=?",(run_id,))
+        def generate(*args,**kwargs):
+            shared_profile.delete(app.db,{'profile_id':profile['id']})
+            return {'plan':json.dumps([{'topic':'ERP','signal_kinds':['erp'],'reason':'ERP work'}])}
+        shared_profile.save(app.db,{'offer':'Old offer'})
+        with patch('ai_service.generate_json',side_effect=generate),self.assertRaises(ValueError):
+            app.signal_monitor.propose({'profile_id':profile['id']})
+        self.assertEqual(app.signal_monitor.state()['monitors'],[])
 
     def test_shared_context_used_by_offer_plan_and_company_assessment(self):
         shared_profile.save(app.db,{'offer':'ERP support','audience':'Manufacturers','pain_points':'Manual planning','value_props':'Faster planning'})

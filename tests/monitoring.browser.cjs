@@ -10,6 +10,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
   const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
+  await page.addInitScript(()=>{if(!localStorage.getItem('kaska-monitoring-simulation'))localStorage.setItem('kaska-monitoring-simulation','off')});
   await page.goto('http://localhost:8789');
   await page.locator('nav [data-view=discover]').click();
   await page.getByRole('heading',{name:'Jak chcesz szukać okazji?'}).waitFor();
