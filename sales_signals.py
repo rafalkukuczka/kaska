@@ -3,6 +3,7 @@ import hashlib
 import http.client
 import ipaddress
 import json
+import contact_tags
 import re
 import socket
 import ssl
@@ -11,6 +12,7 @@ import time
 import unicodedata
 import xml.etree.ElementTree as ET
 import sequence_conditions
+import languages
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -247,7 +249,7 @@ class Engine:
 
     def contact_companies(self):
         with self.db() as c:
-            names=[r['company'].strip() for r in c.execute("SELECT DISTINCT company FROM contacts WHERE trim(company)!='' ORDER BY company COLLATE NOCASE")]
+            names=[r['company'].strip() for r in c.execute("SELECT DISTINCT company FROM contacts WHERE simulated=0 AND trim(company)!='' ORDER BY company COLLATE NOCASE")]
         unique={}
         for name in names:unique.setdefault(norm(name),name)
         return list(unique.values())
@@ -314,7 +316,7 @@ class Engine:
         age=(now-basis)/86400 if basis else None
         if age is not None and age>90: raise ValueError('Sygnał jest starszy niż 90 dni')
         with (nullcontext(connection) if connection is not None else self.db()) as c:
-            matching=c.execute("SELECT COUNT(*) FROM contacts WHERE company_key(company)=company_key(?) AND status='active'",(company,)).fetchone()[0] if company else 0
+            matching=c.execute("SELECT COUNT(*) FROM contacts WHERE company_key(company)=company_key(?) AND status='active' AND simulated=0",(company,)).fetchone()[0] if company else 0
             weight=CATALOG[kind]['weight']; freshness=10 if age is not None and age<=7 else 5 if age is not None and age<=30 else 0
             score=min(100,weight+freshness+(10 if matching else 0))
             reason=f'Waga typu: {weight}; świeżość: +{freshness}; aktywne kontakty tej firmy: +{10 if matching else 0}. To priorytet, nie pewność prawdziwości.'
@@ -362,8 +364,9 @@ class Engine:
                 for signal in signals:
                     if not signal['company'].strip() or signal['kind'] not in kinds: continue
                     with self.db() as c:
-                        contacts=c.execute("SELECT * FROM contacts WHERE company_key(company)=company_key(?) AND status='active' AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.campaign_id=? AND m.contact_id=contacts.id) AND NOT EXISTS(SELECT 1 FROM signal_enrollments e WHERE e.campaign_id=? AND e.contact_id=contacts.id)",(signal['company'],campaign['id'],campaign['id'])).fetchall()
+                        contacts=c.execute("SELECT * FROM contacts WHERE company_key(company)=company_key(?) AND status='active' AND simulated=0 AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.campaign_id=? AND m.contact_id=contacts.id) AND NOT EXISTS(SELECT 1 FROM signal_enrollments e WHERE e.campaign_id=? AND e.contact_id=contacts.id)",(signal['company'],campaign['id'],campaign['id'])).fetchall()
                     for contact in contacts:
+                        if campaign['audience_mode']=='tags' and not contact_tags.matches(contact['tags'],campaign['audience_tags'],campaign['tag_match']):continue
                         if not sequence_conditions.matches(campaign['conditions'], contact):continue
                         context=dict(contact);context.update(signal_title=signal['title'],signal_evidence=signal['evidence'],signal_url=signal['url'],signal_type=CATALOG[signal['kind']]['label'])
                         messages=[]
@@ -372,8 +375,11 @@ class Engine:
                             messages.append((campaign['id'],contact['id'],step['position'],subject,body,time.time()+step['delay_days']*86400))
                         with self.mail_lock,self.db() as c:
                             c.execute('BEGIN IMMEDIATE')
-                            valid=c.execute("SELECT 1 FROM signal_rules r JOIN campaigns p ON p.id=r.campaign_id JOIN contacts t ON t.id=? JOIN sales_signals s ON s.id=? WHERE r.id=? AND r.enabled=1 AND p.status IN ('draft','active') AND t.status='active' AND s.status='accepted' AND campaign_matches(p.conditions,t.email,t.company,t.role)=1",(contact['id'],signal['id'],rule['id'])).fetchone()
+                            valid=c.execute("SELECT 1 FROM signal_rules r JOIN campaigns p ON p.id=r.campaign_id JOIN contacts t ON t.id=? JOIN sales_signals s ON s.id=? WHERE r.id=? AND r.enabled=1 AND p.status IN ('draft','active') AND t.status='active' AND t.simulated=0 AND s.status='accepted' AND campaign_matches(p.conditions,t.email,t.company,t.role)=1",(contact['id'],signal['id'],rule['id'])).fetchone()
                             current=c.execute('SELECT * FROM signal_rules WHERE id=?',(rule['id'],)).fetchone()
+                            current_campaign=c.execute('SELECT * FROM campaigns WHERE id=?',(campaign['id'],)).fetchone()
+                            current_contact=c.execute('SELECT tags FROM contacts WHERE id=?',(contact['id'],)).fetchone()
+                            if current_campaign and current_campaign['audience_mode']=='tags' and (not current_contact or not contact_tags.matches(current_contact['tags'],current_campaign['audience_tags'],current_campaign['tag_match'])):continue
                             if not current or signal['kind'] not in json.loads(current['kinds']) or signal['score']<current['min_score'] or (signal['occurred'] or signal['source_date'] or signal['observed'])<time.time()-current['max_age_days']*86400: continue
                             if not valid or c.execute('SELECT 1 FROM signal_enrollments WHERE campaign_id=? AND contact_id=?',(campaign['id'],contact['id'])).fetchone() or c.execute('SELECT 1 FROM messages WHERE campaign_id=? AND contact_id=?',(campaign['id'],contact['id'])).fetchone(): continue
                             c.execute('INSERT INTO signal_enrollments(rule_id,campaign_id,contact_id,signal_id,created) VALUES(?,?,?,?,?)',(rule['id'],campaign['id'],contact['id'],signal['id'],time.time()))
@@ -405,6 +411,7 @@ class Engine:
         return items[:200],None
 
     def scan(self,source_id=None,force=False):
+        if languages.data_simulation(self.db):return {'created':0,'enrolled':0,'errors':[],'simulated':True}
         from data_connectors import PROVIDERS,load
         if not SCAN_LOCK.acquire(blocking=False): raise ValueError('Skanowanie już trwa')
         created=0;errors=[]
@@ -412,6 +419,7 @@ class Engine:
             with self.db() as c:
                 sources=c.execute('SELECT * FROM signal_sources WHERE enabled=1 AND deleted=0'+(' AND id=?' if source_id is not None else ''),(source_id,) if source_id is not None else ()).fetchall()
             for source in sources:
+                if languages.data_simulation(self.db):break
                 if source['next_retry'] and source['next_retry']>time.time():
                     if force:errors.append({'source_id':source['id'],'error':'Źródło czeka na ponowienie: '+(source['last_error'] or 'limit zapytań')})
                     continue

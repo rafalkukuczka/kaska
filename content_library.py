@@ -126,7 +126,7 @@ class Library:
     def validate_campaign(self,c,item):
         mode=item.get('audience_mode','all'); material_mode=item.get('material_mode','none')
         ids=item.get('contact_ids',[]);materials=item.get('material_ids',[])
-        if mode not in ('all','selected','signals') or material_mode not in ('none','auto','manual'):raise ValueError('Nieprawidłowy tryb odbiorców lub materiałów')
+        if mode not in ('all','selected','signals','group','tags') or material_mode not in ('none','auto','manual'):raise ValueError('Nieprawidłowy tryb odbiorców lub materiałów')
         if not isinstance(ids,list) or not isinstance(materials,list):raise ValueError('Lista kontaktów i materiałów musi być tablicą')
         ids=list(dict.fromkeys(int(i) for i in ids));materials=list(dict.fromkeys(int(i) for i in materials))
         if mode=='selected' and not ids:raise ValueError('Wybierz co najmniej jednego odbiorcę')

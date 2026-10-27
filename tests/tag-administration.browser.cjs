@@ -1,0 +1,53 @@
+const {chromium}=require('playwright');
+const {spawn}=require('node:child_process');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ fs.mkdirSync('test-results',{recursive:true});
+ const data=fs.mkdtempSync(path.resolve('test-results/tag-admin-'));
+ const server=spawn('python',['tests/browser_server.py'],{env:{...process.env,APP_PORT:'8802',APP_DATA_DIR:data,SMTP_HOST:'',SMTP_FROM:'',IMAP_HOST:'',OPENAI_API_KEY:'',HUNTER_API_KEY:'browser-fixture-only'},stdio:'pipe'});
+ let browser;
+ try{
+  await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
+  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));page.on('pageerror',e=>errors.push(e.message));
+  await page.goto('http://localhost:8802');await page.waitForFunction(()=>state?.seller_profile);
+  await page.locator('nav [data-view=administration]').click();
+  await page.getByRole('heading',{name:'Administracja',exact:true}).waitFor();
+  assert.equal(await page.locator('#admin-tags').evaluate(node=>node.open),false);
+  await page.locator('#admin-tags>summary').click();
+  await page.locator('#admin-new-tag').fill('Industry');await page.locator('#admin-add-tag button').click();
+  await page.waitForFunction(()=>state.contact_tags.includes('Industry'));
+  let tag=await page.evaluate(()=>state.tag_catalog.find(tag=>tag.name==='Industry'));
+  await page.locator('nav [data-view=contacts]').click();await page.locator('[data-action=new-contact]').click();
+  assert.equal(await page.locator('[data-contact-tag-select]').isVisible(),true);
+  assert.equal(await page.locator('[data-contact-tag-option][value=Industry]').count(),1);
+  await page.locator('#modal>.close').click();
+  await page.evaluate(async()=>{
+   await api('contacts',{name:'Admin Tag Person',email:'admin@tags.example',tags:'Industry'});
+   await api('campaigns',{name:'Tagged campaign',offer:'Services',audience_mode:'tags',audience_tags:['Industry'],steps:[{delay_days:0,subject:'Hi',body:'Hello'}]});await refresh();
+  });
+  await page.locator('nav [data-view=administration]').click();
+  assert.equal(await page.locator('#admin-tags').evaluate(node=>node.open),true);
+  await page.locator(`[data-admin-tag-name="${tag.id}"]`).fill('Manufacturing');
+  await page.locator(`[data-admin-tag-save="${tag.id}"]`).click();
+  await page.waitForFunction(()=>state.contact_tags.includes('Manufacturing'));
+  assert.deepEqual(await page.evaluate(()=>state.contacts[0].tags),['Manufacturing']);
+  assert.deepEqual(await page.evaluate(()=>JSON.parse(state.campaigns[0].audience_tags)),['Manufacturing']);
+  await page.reload();await page.getByRole('heading',{name:'Administracja',exact:true}).waitFor();
+  await page.locator('#admin-tags>summary').click();
+  assert.equal(await page.locator(`[data-admin-tag-name="${tag.id}"]`).inputValue(),'Manufacturing');
+  await page.locator(`[data-admin-tag-delete="${tag.id}"]`).click();
+  await page.locator('#modal .secondary.close').click();assert.ok(await page.locator(`[data-admin-tag-name="${tag.id}"]`).count());
+  await page.locator(`[data-admin-tag-delete="${tag.id}"]`).click();await page.locator('[data-admin-tag-confirm]').click();
+  await page.waitForFunction(()=>!state.contact_tags.includes('Manufacturing'));
+  assert.equal(await page.evaluate(()=>state.contacts.length),1);assert.deepEqual(await page.evaluate(()=>state.contacts[0].tags),[]);
+  assert.deepEqual(await page.evaluate(()=>JSON.parse(state.campaigns[0].audience_tags)),[]);
+  await page.locator('#ui-language').selectOption('en');await page.getByRole('heading',{name:'Administration',exact:true}).waitFor();
+  await page.getByText('Tag management',{exact:true}).waitFor();
+  await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await page.screenshot({path:'test-results/tag-administration-mobile.png',fullPage:true});
+  assert.deepEqual(errors,[]);
+  console.log('Tag administration QA passed: collapsed panel, unused tag creation, picker availability, rename across contacts/campaigns, reload, delete/cancel, English and mobile.');
+ }finally{if(browser)await browser.close();server.kill()}
+})().catch(e=>{console.error(e);process.exitCode=1});

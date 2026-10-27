@@ -1,0 +1,57 @@
+const {chromium}=require('playwright');
+const {spawn}=require('node:child_process');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ fs.mkdirSync('test-results',{recursive:true});
+ const data=fs.mkdtempSync(path.resolve('test-results/terminology-'));
+ const server=spawn('python',['tests/browser_server.py'],{env:{...process.env,APP_PORT:'8801',APP_DATA_DIR:data,SMTP_HOST:'',SMTP_FROM:'',IMAP_HOST:'',OPENAI_API_KEY:'',HUNTER_API_KEY:'browser-fixture-only'},stdio:'pipe'});
+ let browser;
+ try{
+  await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
+  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.goto('http://localhost:8801');await page.waitForFunction(()=>state?.seller_profile);
+  assert.ok((await page.locator('nav [data-view=prospecting]').innerText()).includes('Pozyskiwanie leadów'));
+  assert.ok((await page.locator('nav [data-view=discover]').innerText()).includes('Odkrywanie firm'));
+  await page.evaluate(async()=>{
+   await api('contacts',{name:'Prospect Lead',email:'terminology@example.com',target_group:'Grupa docelowa',notes:'Lead, Prospect, Opportunity'});
+   await api('seller-profile',{profile_id:state.seller_profile.id,revision:state.seller_profile.revision,offer:'Lead Prospect Offering',audience:'Grupa docelowa ICP'});await refresh();
+  });
+  await page.locator('nav [data-view=prospecting]').click();
+  await page.getByRole('heading',{name:'Pozyskiwanie leadów',exact:true}).waitFor();
+  assert.equal(await page.getByLabel('Profil idealnego klienta (ICP)',{exact:true}).inputValue(),'Grupa docelowa ICP');
+  assert.equal(await page.getByRole('heading',{name:'Dowody wiarygodności',exact:true}).count(),1);
+  await page.locator('[data-action=sales-glossary]').click();
+  assert.equal(await page.locator('.sales-glossary dt').count(),11);
+  assert.ok((await page.locator('.sales-glossary').innerText()).includes('Samo dopasowanie wskazane przez AI nie potwierdza'));
+  await page.locator('#modal>.close').click();
+  await page.locator('#ui-language').selectOption('en');
+  await page.getByRole('heading',{name:'Lead generation',exact:true}).waitFor();
+  assert.equal(await page.getByLabel('Ideal customer profile (ICP)',{exact:true}).inputValue(),'Grupa docelowa ICP');
+  assert.equal(await page.getByRole('heading',{name:'Proof points',exact:true}).count(),1);
+  await page.locator('nav [data-view=contacts]').click();
+  assert.equal(await page.locator('#contact-group-filter').getAttribute('aria-label'),'Tag filter');
+  assert.equal(await page.locator('#contact-group-filter option[value="group:Grupa docelowa"]').innerText(),'Grupa docelowa');
+  await page.locator('[data-action=sales-glossary]').click();
+  await page.getByRole('heading',{name:'Sales glossary',exact:true}).waitFor();
+  assert.ok((await page.locator('.sales-glossary').innerText()).includes('AI-assessed fit alone does not confirm'));
+  await page.locator('#modal>.close').click();
+  await page.locator('#ui-language').selectOption('pl');
+  await page.waitForFunction(()=>uiLanguage==='pl'&&document.documentElement.lang==='pl');
+  assert.equal(await page.locator('#contact-group-filter').getAttribute('aria-label'),'Filtr tagów');
+  const canonical=await page.evaluate(async()=>await(await fetch('/api/state')).json());
+  assert.equal(canonical.contacts[0].target_group,'Grupa docelowa');
+  assert.equal(canonical.contacts[0].notes,'Lead, Prospect, Opportunity');
+  assert.equal(canonical.seller_profile.offer,'Lead Prospect Offering');
+  const labels=await page.evaluate(()=>['Dopasowanie według AI','Do ręcznej oceny','Odrzucono według AI'].map(translateUiText));
+  assert.deepEqual(labels,['Dopasowanie do ICP według AI','Do kwalifikacji','Niedopasowany do ICP według AI']);
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await page.locator('[data-action=sales-glossary]').click();
+  await page.screenshot({path:'test-results/sales-glossary-mobile.png',fullPage:true});
+  assert.deepEqual(errors,[]);
+  console.log('Sales terminology QA passed: Polish/English navigation, ICP, contact lists, qualification labels, glossary, language round-trip, preserved user data and mobile.');
+ }finally{if(browser)await browser.close();server.kill()}
+})().catch(e=>{console.error(e);process.exitCode=1});

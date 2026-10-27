@@ -10,6 +10,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
   const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto('http://localhost:8793');
   await page.waitForFunction(()=>state?.seller_profile);
@@ -35,7 +36,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('[name=search_language][value=en]').isChecked(),true);
   assert.equal(await page.locator('[name=search_language][value=de]').isChecked(),true);
   await page.reload();
-  await page.getByRole('heading',{name:'Discover',exact:true}).waitFor();
+  await page.getByRole('heading',{name:'Odkrywanie firm',exact:true}).waitFor();
   assert.equal(await page.locator('[name=search_language][value=de]').isChecked(),true);
   await page.locator('nav [data-view=prospecting]').click();
   await page.locator('[data-search-language-picker] summary').click();

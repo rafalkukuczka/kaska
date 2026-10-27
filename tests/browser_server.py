@@ -56,7 +56,7 @@ if __name__=='__main__':
         if endpoint == 'discover':
             return {'data': [{'domain': 'buyer.example', 'organization': 'Buyer Retail'}], 'meta': {'filters': {'headquarters_location': {'include': [{'country': 'PL'}]}}}}
         if endpoint == 'domain-search':
-            return {'data': {'emails': [
+            return {'data': {'domain':'buyer.example','organization':'Buyer Retail','emails': [
                 {'value': name.lower()+'@buyer.example', 'first_name': name, 'last_name': 'Test', 'position': 'COO', 'type': 'personal', 'provenance': 'found', 'sources': [{'uri': 'https://buyer.example/team', 'last_seen_on': '2026-10-26'}]}
                 for name in ('Anna', 'Bob')]}}
         if endpoint == 'email-verifier':

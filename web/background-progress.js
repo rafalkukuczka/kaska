@@ -1,6 +1,11 @@
 const backgroundRequests=new Map();
 let backgroundRequestId=0,backgroundJobs=[],backgroundPolling=false,backgroundTimer;
 const backgroundLabels={
+ 'contacts/tags/bulk':'Przypisywanie tagów do kontaktów',
+ 'discover/contacts/search':'Wyszukiwanie kontaktów firmy', 'discover/contacts/add':'Dodawanie kontaktów do grupy', 'discover/contacts/add-simulation':'Zapisywanie kontaktów z symulacji',
+ 'contact/group':'Zapisywanie grupy kontaktu',
+ 'ai/suggest-audience':'Przygotowywanie filtra wyszukiwania',
+ 'signals/monitoring/delete':'Usuwanie monitoringu',
  'research':'Odczyt strony i oferty','ai/refine':'Poprawianie tekstu z AI',
  'ai/selling-points':'Przygotowywanie problemów i wartości','ai/proof-points':'Odczyt dowodów ze strony',
  'ai/step-prompt':'Przygotowywanie kroku kampanii','signals/scan':'Skanowanie źródeł',

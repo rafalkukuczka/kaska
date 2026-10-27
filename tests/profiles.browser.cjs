@@ -51,6 +51,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('#prospect-form [name=pain_points]').inputValue(),'Pain A');
   assert.equal(await page.locator('#prospect-form [name=value_props]').inputValue(),'Value A');
   await page.locator('nav [data-view=discover]').click();
+  await page.locator('#my-monitoring').evaluate(panel=>panel.open=true);
   await page.getByRole('button',{name:'Monitoruj temat',exact:true}).click();
   await page.locator('#monitor-topic-form [name=topic]').fill('Company A market');
   await page.getByRole('button',{name:'Uruchom monitoring tematu',exact:true}).click();
@@ -61,13 +62,15 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('#seller-profile-form [name=value_props]').inputValue(),'Value B');
   assert.equal(await page.getByRole('heading',{name:'Company A market',exact:true}).count(),0);
   await page.reload();
-  await page.getByRole('heading',{name:'Discover',exact:true}).waitFor();
+  await page.getByRole('heading',{name:'Odkrywanie firm',exact:true}).waitFor();
   assert.equal(await page.locator('#active-profile').inputValue(),second);
   assert.equal(await page.locator('#prospect-offer').inputValue(),'Delivery B');
   await page.setViewportSize({width:390,height:844});
   await page.screenshot({path:'test-results/profiles-mobile.png',fullPage:true});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.locator('#active-profile').selectOption('1');
+  await page.waitForFunction(()=>state.seller_profile.id===1&&!sellerSwitchBusy);
+  await page.locator('#my-monitoring').evaluate(panel=>panel.open=true);
   await page.getByRole('heading',{name:'Company A market',exact:true}).waitFor();
   assert.equal(await page.locator('#prospect-offer').inputValue(),'Latest consulting A');
   await page.locator('#delete-seller-profile').click();
@@ -87,7 +90,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.getByRole('heading',{name:'Company A market',exact:true}).count(),0);
   assert.equal(await page.evaluate(()=>state.signals.sources.some(s=>JSON.parse(s.config).topic==='Company A market'&&s.enabled)),false);
   await page.reload();
-  await page.getByRole('heading',{name:'Discover',exact:true}).waitFor();
+  await page.getByRole('heading',{name:'Odkrywanie firm',exact:true}).waitFor();
   assert.equal(await page.locator('#active-profile option').count(),1);
   // Deleting the last profile also works with an invalid, unsaved name.
   await page.locator('#discover-profile').evaluate(el=>el.open=true);
@@ -101,7 +104,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('#prospect-offer').inputValue(),'');
   assert.equal(await page.locator('#seller-profile-form [name=pain_points]').inputValue(),'');
   await page.reload();
-  await page.getByRole('heading',{name:'Discover',exact:true}).waitFor();
+  await page.getByRole('heading',{name:'Odkrywanie firm',exact:true}).waitFor();
   assert.equal(await page.locator('#active-profile option').count(),1);
   assert.equal(await page.locator('#prospect-offer').inputValue(),'');
   assert.deepEqual(errors,[]);

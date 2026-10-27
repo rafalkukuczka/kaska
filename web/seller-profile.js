@@ -1,4 +1,4 @@
-const sellerFields=['name','website','offer','audience','pain_points','value_props','proof_points','search_languages'];
+const sellerFields=['name','website','offer','audience','pain_points','value_props','proof_points','search_languages','search_areas'];
 let sellerBase=null,sellerPending={},sellerSaving=null,sellerSaveTimer;
 let sellerSwitchBusy=false;
 const sellerDraftKey=id=>'kaska-seller-draft-'+id;
@@ -9,7 +9,7 @@ function syncSellerProfile(){
  if(switched){cacheSellerDraft();sellerPending={};clearTimeout(sellerSaveTimer);$('#content')?.replaceChildren();if(typeof discoverReview!=='undefined')discoverReview.stop=true}
  const first=!sellerBase||switched;
  if(first||incoming.revision>=sellerBase.revision)sellerBase=incoming;
- if(first){try{let cached=JSON.parse(localStorage.getItem(sellerDraftKey(incoming.id))||'null');if(!cached&&incoming.id===1)cached=JSON.parse(localStorage.getItem('kaska-seller-draft')||'null');if(cached?.revision===incoming.revision){for(const field of sellerFields)if(typeof cached.fields?.[field]==='string'||(field==='search_languages'&&Array.isArray(cached.fields?.[field])))sellerPending[field]=cached.fields[field];if(Object.keys(sellerPending).length)sellerSaveTimer=setTimeout(()=>flushSellerProfile().catch(e=>toast(e.message)),450)}}catch{}}
+ if(first){try{let cached=JSON.parse(localStorage.getItem(sellerDraftKey(incoming.id))||'null');if(!cached&&incoming.id===1)cached=JSON.parse(localStorage.getItem('kaska-seller-draft')||'null');if(cached?.revision===incoming.revision){for(const field of sellerFields)if(typeof cached.fields?.[field]==='string'||(['search_languages','search_areas'].includes(field)&&Array.isArray(cached.fields?.[field])))sellerPending[field]=cached.fields[field];if(Object.keys(sellerPending).length)sellerSaveTimer=setTimeout(()=>flushSellerProfile().catch(e=>toast(e.message)),450)}}catch{}}
 }
 function sellerProfile(){syncSellerProfile();return {...(sellerBase||{}),...sellerPending}}
 function searchLanguagesPicker(){return `<details class="search-language-picker" data-search-language-picker><summary><strong>Szukaj w językach</strong><span data-search-languages-summary></span></summary><fieldset><legend>Języki rozmowy</legend>${Object.entries(state.languages).map(([code,language])=>`<label class="check"><input type="checkbox" name="search_language" value="${code}"><span data-no-translate>${esc(language.label)}</span></label>`).join('')}</fieldset><p class="hint">Brak zaznaczeń oznacza dowolny język. To preferowane języki kontaktu, niezależne od języka wiadomości. Język rozmowy z firmą wymaga potwierdzenia.</p><button class="link" type="button" data-search-languages-clear>Odznacz wszystkie języki</button></details><input type="hidden" name="search_languages" value="[]">`}
@@ -28,7 +28,7 @@ function sellerSaveStatus(text){document.querySelectorAll('[data-seller-save-sta
 function updateSellerProfile(form){
  if(sellerSwitchBusy||(form.dataset.sellerProfileId&&Number(form.dataset.sellerProfileId)!==state.seller_profile?.id))return;
  const current=sellerProfile();let changed=false;
- for(const field of sellerFields){const input=form.elements[field];if(!input)continue;const value=field==='search_languages'?readSearchLanguages(form):input.value;if(JSON.stringify(value)!==JSON.stringify(current[field]??(field==='search_languages'?[]:''))){sellerPending[field]=value;changed=true}}
+ for(const field of sellerFields){const input=form.elements[field];if(!input)continue;const value=field==='search_languages'?readSearchLanguages(form):field==='search_areas'?readSearchAreas(form):input.value;if(JSON.stringify(value)!==JSON.stringify(current[field]??(['search_languages','search_areas'].includes(field)?[]:''))){sellerPending[field]=value;changed=true}}
  if(!changed)return;
  cacheSellerDraft();
  sellerSaveStatus('Zapisywanie profilu…');clearTimeout(sellerSaveTimer);
@@ -55,8 +55,8 @@ function flushSellerProfile(){
 function bindSharedProfile(form){
  const profile=sellerProfile();
  form.dataset.sellerProfileId=String(profile.id);
- for(const field of sellerFields)if(form.elements[field])form.elements[field].value=field==='search_languages'?JSON.stringify(profile[field]||[]):profile[field]||'';
- restoreSellingPoints(form);bindSearchLanguages(form);
+ for(const field of sellerFields)if(form.elements[field])form.elements[field].value=['search_languages','search_areas'].includes(field)?JSON.stringify(profile[field]||[]):profile[field]||'';
+ restoreSellingPoints(form);bindSearchLanguages(form);bindSearchMap(form);
  form.addEventListener('input',()=>updateSellerProfile(form));
  form.addEventListener('change',()=>updateSellerProfile(form));
  form.addEventListener('focusout',()=>queueMicrotask(()=>{if(form.isConnected)updateSellerProfile(form)}));
@@ -64,7 +64,7 @@ function bindSharedProfile(form){
 }
 function sharedProfilePanel(){
  const profile=sellerProfile();
- return `<details class="panel" id="discover-profile" ${profile.offer?'':'open'}><summary><strong>Profil</strong> · <span data-no-translate>${esc(profile.website||profile.name||'')}</span></summary><form id="seller-profile-form"><label for="seller-name">Nazwa profilu</label><input id="seller-name" name="name" required maxlength="100"><input id="prospect-language" type="hidden" value="${esc(state.preferences.message_language)}"><label for="prospect-website">Strona firmy, w imieniu której piszesz</label><input id="prospect-website" name="website" type="text" placeholder="firma.pl" maxlength="2000"><label for="prospect-offer">Oferta</label><textarea id="prospect-offer" name="offer" maxlength="10000" rows="4"></textarea>${refineControls('offer')}${sellingPointsSection('prospect')}<label for="prospect-audience">Opis firm, których szukasz</label><textarea id="prospect-audience" name="audience" maxlength="3000" rows="3"></textarea>${refineControls('audience')}${searchLanguagesPicker()}<button class="secondary">Zapisz profil</button></form></details>`;
+ return `<details class="panel" id="discover-profile" ${profile.offer?'':'open'}><summary><strong>Profil</strong> · <span data-no-translate>${esc(profile.website||profile.name||'')}</span></summary><form id="seller-profile-form"><label for="seller-name">Nazwa profilu</label><input id="seller-name" name="name" required maxlength="100"><input id="prospect-language" type="hidden" value="${esc(state.preferences.message_language)}"><label for="prospect-website">Strona firmy, w imieniu której piszesz</label><input id="prospect-website" name="website" type="text" placeholder="firma.pl" maxlength="2000"><label for="prospect-offer">Oferta</label><textarea id="prospect-offer" name="offer" maxlength="10000" rows="4"></textarea>${refineControls('offer')}${sellingPointsSection('prospect')}<label for="prospect-audience">Opis firm, których szukasz</label><textarea id="prospect-audience" name="audience" maxlength="3000" rows="3"></textarea><div class="audience-ai-tools">${refineControls('audience')}${audienceSuggestionControls()}</div>${searchMapControls()}${searchLanguagesPicker()}<button class="secondary">Zapisz profil</button></form></details>`;
 }
 function bindDiscoverProfile(){
  const form=$('#seller-profile-form');bindSellingPoints(form);bindSharedProfile(form);bindRefineControls();

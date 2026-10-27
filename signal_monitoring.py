@@ -6,6 +6,7 @@ import ai_service
 import languages
 import sales_signals as ss
 import shared_profile
+import search_areas
 
 
 def init_schema(c):
@@ -30,6 +31,7 @@ def init_schema(c):
     if 'companies_profile_revision' not in {r[1] for r in c.execute('PRAGMA table_info(sales_signals)')}:
         c.execute('ALTER TABLE sales_signals ADD COLUMN companies_profile_revision INTEGER')
     if 'profile_id' not in columns:c.execute('ALTER TABLE signal_monitors ADD COLUMN profile_id INTEGER NOT NULL DEFAULT 1')
+    if 'search_areas' not in columns:c.execute("ALTER TABLE signal_monitors ADD COLUMN search_areas TEXT NOT NULL DEFAULT '[]'")
     migrated=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='signal_profile_companies'").fetchone()
     c.execute('''CREATE TABLE IF NOT EXISTS signal_profile_companies(
       id INTEGER PRIMARY KEY,signal_id INTEGER NOT NULL REFERENCES sales_signals(id),
@@ -78,11 +80,13 @@ class Monitoring:
             source_usage={r[0]:r[1] for r in c.execute("SELECT s.source_id,COUNT(*) FROM signal_monitor_sources s JOIN signal_monitors m ON m.id=s.monitor_id WHERE m.status='active' GROUP BY s.source_id")}
             for monitor in monitors:
                 monitor['plan']=json.loads(monitor['plan'])
+                monitor['search_areas']=json.loads(monitor['search_areas'])
                 monitor['source_ids']=[r[0] for r in c.execute('SELECT source_id FROM signal_monitor_sources WHERE monitor_id=?',(monitor['id'],))]
         return {'monitors':monitors,'companies':companies,'reviews':reviews,'other_source_ids':other_source_ids,'source_usage':source_usage,'profile_id':profile_id}
 
     def propose(self,item):
         item=shared_profile.resolve(self.db,item)
+        areas=search_areas.validate(item.get('search_areas',[]))
         offer=bounded(item.get('offer'),10000);audience=bounded(item.get('audience'),3000)
         if not offer:raise ValueError('Opisz ofertę, aby AI mogło dobrać sygnały.')
         answer=ai_service.generate_json(
@@ -97,6 +101,7 @@ class Monitoring:
             'Write reasons and topics in the requested UI language, keeping proper names unchanged.',
             {'offer':offer,'audience':audience,'pain_points_hypotheses':bounded(item.get('pain_points'),10000),
              'value_props':bounded(item.get('value_props'),10000),'proof_points':bounded(item.get('proof_points'),10000),
+             'search_areas':areas,
              'language':languages.preferences(self.db)['ui_language'],
              'catalog':[{'key':k,'label':v['label']} for k,v in ss.CATALOG.items()]},('plan',))
         try:plan=validate_plan(json.loads(answer['plan']))
@@ -110,10 +115,12 @@ class Monitoring:
             c.execute('UPDATE signal_monitors SET pain_points=?,value_props=?,proof_points=? WHERE id=?',
                       tuple(bounded(item.get(field),10000) for field in ('pain_points','value_props','proof_points'))+(monitor_id,))
             c.execute('UPDATE signal_monitors SET profile_id=? WHERE id=?',(item['profile_id'],monitor_id))
-        return {'id':monitor_id,'plan':plan,'profile_id':item['profile_id']}
+            c.execute('UPDATE signal_monitors SET search_areas=? WHERE id=?',(json.dumps(areas,ensure_ascii=False),monitor_id))
+        return {'id':monitor_id,'plan':plan,'profile_id':item['profile_id'],'search_areas':areas}
 
     def topic(self,item):
-        profile_id=shared_profile.get(self.db,item.get('profile_id'))['id']
+        profile=shared_profile.get(self.db,item.get('profile_id'));profile_id=profile['id']
+        areas=search_areas.validate(item.get('search_areas',profile['search_areas']))
         plan=validate_plan([{'topic':item.get('topic'),'signal_kinds':item.get('signal_kinds',[]),'reason':''}])
         # Manual monitoring never invokes AI or requires an API key.
         with self.db() as c:
@@ -122,6 +129,7 @@ class Monitoring:
             monitor_id=c.execute("INSERT INTO signal_monitors(mode,status,name,plan,created) VALUES('topic','draft',?,?,?)",
                                  (plan[0]['topic'],json.dumps(plan,ensure_ascii=False),time.time())).lastrowid
             c.execute('UPDATE signal_monitors SET profile_id=? WHERE id=?',(profile_id,monitor_id))
+            c.execute('UPDATE signal_monitors SET search_areas=? WHERE id=?',(json.dumps(areas,ensure_ascii=False),monitor_id))
             return self._activate(c,monitor_id,plan)
 
     def activate(self,item):
@@ -132,10 +140,30 @@ class Monitoring:
             monitor=c.execute('SELECT * FROM signal_monitors WHERE id=?',(int(item['id']),)).fetchone()
             if not monitor:raise ValueError('Nie znaleziono planu monitoringu.')
             if monitor['profile_id']!=profile_id:raise ValueError('Ten plan należy do innego profilu.')
+            if monitor['status']=='deleted':raise ValueError('Monitoring został usunięty.')
             if monitor['status']=='active':return {'id':monitor['id'],'created':0}
             plan=json.loads(monitor['plan']);selected=item.get('selected',list(range(len(plan))))
             if not isinstance(selected,list) or not selected or any(type(i)!=int or i<0 or i>=len(plan) for i in selected):raise ValueError('Wybierz co najmniej jeden temat z planu.')
+            areas=search_areas.validate(item.get('search_areas',json.loads(monitor['search_areas'])))
+            c.execute('UPDATE signal_monitors SET search_areas=? WHERE id=?',(json.dumps(areas,ensure_ascii=False),monitor['id']))
             return self._activate(c,monitor['id'],[plan[i] for i in dict.fromkeys(selected)])
+
+    def delete(self,item):
+        profile_id=shared_profile.get(self.db,item.get('profile_id'))['id']
+        monitor_id=int(item['id'])
+        with self.db() as c:
+            c.execute('PRAGMA busy_timeout=3000')
+            c.execute('BEGIN IMMEDIATE')
+            monitor=c.execute('SELECT * FROM signal_monitors WHERE id=? AND profile_id=?',(monitor_id,profile_id)).fetchone()
+            if not monitor:raise ValueError('Nie znaleziono monitoringu w tym profilu.')
+            c.execute("UPDATE signal_monitors SET status='deleted' WHERE id=?",(monitor_id,))
+            # Keep shared feeds active for other monitors, including other profiles.
+            paused=c.execute("""UPDATE signal_sources SET enabled=0
+              WHERE enabled=1 AND id IN (SELECT source_id FROM signal_monitor_sources WHERE monitor_id=?)
+              AND NOT EXISTS(SELECT 1 FROM signal_monitor_sources s
+                JOIN signal_monitors m ON m.id=s.monitor_id
+                WHERE s.source_id=signal_sources.id AND m.status='active')""",(monitor_id,)).rowcount
+        return {'id':monitor_id,'paused':paused}
 
     def _activate(self,c,monitor_id,plan):
         added=0
@@ -201,5 +229,6 @@ class Monitoring:
         if path=='propose':return self.propose(item)
         if path=='activate':return self.activate(item)
         if path=='topic':return self.topic(item)
+        if path=='delete':return self.delete(item)
         if path=='companies':return self.companies(item)
         raise ValueError('Nieznana operacja monitoringu.')

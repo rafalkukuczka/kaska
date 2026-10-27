@@ -2,11 +2,12 @@
 import json
 import time
 import languages
+import search_areas
 
 FIELDS={'website':2000,'offer':10000,'audience':3000,'pain_points':10000,'value_props':10000,'proof_points':10000}
 
 
-def blank_profile():return {**{key:'' for key in FIELDS},'search_languages':[]}
+def blank_profile():return {**{key:'' for key in FIELDS},'search_languages':[],'search_areas':[]}
 
 
 def init_schema(c):
@@ -33,7 +34,7 @@ def get(db,profile_id=None):
         if profile_id is None:profile_id=c.execute('SELECT profile_id FROM seller_profile_selection WHERE id=1').fetchone()[0]
         row=c.execute('SELECT * FROM seller_profiles WHERE id=? AND deleted=0',(int(profile_id),)).fetchone()
     if not row:raise ValueError('Nie znaleziono profilu.')
-    return {'search_languages':[],**json.loads(row['data']),'id':row['id'],'name':row['name'],'revision':row['revision'],'updated':row['updated']}
+    return {'search_languages':[],'search_areas':[],**json.loads(row['data']),'id':row['id'],'name':row['name'],'revision':row['revision'],'updated':row['updated']}
 
 
 def profiles(db):
@@ -97,6 +98,7 @@ def save(db,item):
         patch[key]=item[key]
     name=profile_name(item['name']) if 'name' in item else None
     if 'search_languages' in item:patch['search_languages']=languages.validate_search_languages(item['search_languages'])
+    if 'search_areas' in item:patch['search_areas']=search_areas.validate(item['search_areas'])
     with db() as c:
         c.execute('PRAGMA busy_timeout=3000');c.execute('BEGIN IMMEDIATE')
         profile_id=item.get('profile_id')
@@ -107,9 +109,9 @@ def save(db,item):
         profile=json.loads(row['data']);profile.update(patch);updated=time.time()
         name=name or row['name']
         c.execute('UPDATE seller_profiles SET name=?,data=?,revision=revision+1,updated=? WHERE id=?',(name,json.dumps(profile,ensure_ascii=False),updated,row['id']))
-    return {'search_languages':[],**profile,'id':row['id'],'name':name,'revision':row['revision']+1,'updated':updated}
+    return {'search_languages':[],'search_areas':[],**profile,'id':row['id'],'name':name,'revision':row['revision']+1,'updated':updated}
 
 
 def resolve(db,item):
     profile=get(db,item.get('profile_id'))
-    return {**{key:profile[key] for key in FIELDS},'search_languages':profile['search_languages'],**item,'profile_id':profile['id']}
+    return {**{key:profile[key] for key in FIELDS},'search_languages':profile['search_languages'],'search_areas':profile['search_areas'],**item,'profile_id':profile['id']}

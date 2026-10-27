@@ -49,6 +49,14 @@ Ręczna konfiguracja: `HUNTER_API_KEY=...` w `.env`, następnie restart aplikacj
 
 Dokumentacja dostawcy: [Hunter API](https://hunter.io/api-documentation).
 
+## Obszary na mapie
+
+Pod opisem odbiorców checkbox „Pokaż mapę” odsłania mapę Leaflet/OpenStreetMap. Kliknięcie wybiera współrzędne; promień 1–1000 km i opcjonalna nazwa pozwalają dodać do 10 obszarów. Można też wpisać współrzędne ręcznie. Wybrane koła tworzą sumę obszarów. Ukrycie mapy nie usuwa filtra. Obszary można usuwać pojedynczo lub wyczyścić wszystkie; są zapisywane per profil w `search_areas`, wspólne dla Discover i wyszukiwania, niezależne od opisu odbiorców i języków.
+
+Każde wyszukiwanie zapisuje własną kopię obszarów. Współrzędne, nazwy i promienie są przekazywane w opisie zapytania do Hunter. Obecne API dostawcy nie potwierdza dokładnego filtrowania po promieniu: wynik z wybranymi obszarami wymaga potwierdzenia lokalizacji, a ocena AI nie może oznaczyć go jako w pełni dopasowany wyłącznie na podstawie wyszukiwarki. Nie dodajemy wymyślonych lokalizacji ani adresów firm.
+
+Leaflet 1.9.4 jest dostarczany lokalnie z licencją w `web/vendor/leaflet`; podkład OSM pobierany jest bezpośrednio przez przeglądarkę dopiero po pokazaniu mapy, z widoczną atrybucją i bez prefetch/offline. Nie wymaga klucza map. Bez podkładu nadal działają ręczne współrzędne i obszary. Test mapy przechwytuje obrazy kafelków, więc automatyczne testy nie obciążają serwisu OSM.
+
 ## Weryfikacja implementacji
 
 `python -m unittest discover -s tests -v` oraz `node tests/browser.cjs` sprawdzają przepływ z atrapami usług, bez płatnych zapytań. Serwer testowy i dane przykładowe istnieją wyłącznie w `tests/`; aplikacja użytkownika nie otrzymuje domyślnych firm ani kandydatów. Rzeczywisty odczyt konta, wyszukiwanie i weryfikacja wymagają własnego klucza z uprawnieniami i kredytami.

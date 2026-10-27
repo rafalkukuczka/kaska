@@ -2,6 +2,123 @@
 let uiLanguage='pl';
 try{uiLanguage=localStorage.getItem('kaska-ui-language')==='en'?'en':'pl'}catch{}
 const uiEnglish={
+ 'Dane nadawcy':'Sender details', 'Imię i nazwisko nadawcy':'Sender full name',
+ 'Podpis wiadomości korzysta z tego imienia i nazwiska. Gdy pole jest puste, używany jest adres podłączonej skrzynki.':'Messages use this full name in the signature. If empty, the connected mailbox address is used.',
+ 'Adres nadawcy:':'Sender address:', 'Zapisz dane nadawcy':'Save sender details', 'Dane nadawcy zapisane.':'Sender details saved.',
+ 'Importuj z profilu':'Import from profile',
+ 'Dane zaimportowane z profilu. Możesz je zmienić dla tej kampanii.':'Profile data imported. You can edit it for this campaign.',
+ 'Operacje zbiorcze':'Bulk operations', 'Zakończ operacje zbiorcze':'Finish bulk operations',
+ 'Zaznacz kontakt':'Select contact', 'Zaznacz wszystkie widoczne kontakty':'Select all visible contacts',
+ 'Zaznaczono kontaktów:':'Selected contacts:', 'Odznacz wszystkie':'Deselect all',
+ 'Przypisz tagi do zaznaczonych':'Assign tags to selected contacts',
+ 'Tagi zostaną dodane do zaznaczonych osób. Dotychczasowe tagi i statusy pozostaną zachowane. Checkbox w nagłówku zaznacza tylko widoczne kontakty.':'Tags will be added to selected people. Existing tags and statuses are preserved. The header checkbox selects only visible contacts.',
+ 'Wybierz kontakty i co najmniej jeden tag.':'Select contacts and at least one tag.',
+ 'Zaktualizowano kontakty:':'Updated contacts:', 'Przypisywanie tagów do kontaktów':'Assigning tags to contacts',
+ 'Wybierz istniejący tag…':'Select an existing tag…',
+ 'Wybierz tag z listy lub dodaj nowy. Możesz przypisać wiele tagów.':'Select a tag from the dropdown or add a new one. You can assign multiple tags.',
+ 'Administracja':'Administration', 'Edycja tagów':'Tag management', 'Nazwa tagu':'Tag name',
+ 'Zarządzaj ustawieniami wspólnymi dla wszystkich profili.':'Manage settings shared by all profiles.',
+ 'Dodawaj tagi do wyboru w kontaktach i kampaniach. Zmiana nazwy aktualizuje wszystkie przypisania.':'Add tags for contacts and campaigns. Renaming updates all assignments.',
+ 'Tag':'Tag', 'Usuń tag':'Delete tag', 'Usunąć tag?':'Delete tag?',
+ 'Brak tagów. Dodaj pierwszy tag.':'No tags yet. Add your first tag.',
+ 'Tag dodany.':'Tag added.', 'Tag zmieniony.':'Tag renamed.', 'Tag usunięty.':'Tag deleted.',
+ 'Tag zostanie usunięty z katalogu, kontaktów i wyboru odbiorców kampanii. Kontakty pozostaną w bazie.':'The tag will be removed from the catalogue, contacts and campaign selection. Contacts remain in the database.',
+ 'Powiązane aktywne kampanie zostaną wstrzymane, a oczekujące wiadomości anulowane. Przed dalszą wysyłką sprawdź odbiorców.':'Related active campaigns will be paused and queued messages cancelled. Review recipients before sending again.',
+ 'Wybierz tagi':'Select tags', 'Nowy tag':'New tag', '+ Dodaj tag':'+ Add tag',
+ 'Możesz wybrać wiele tagów. Nowe tagi dodaj pojedynczo lub po średniku.':'Select multiple tags. Add new tags individually or separated by semicolons.',
+ 'Tagi':'Tags', 'Tagi kontaktu':'Contact tags', 'Tagi odbiorców':'Recipient tags',
+ 'Oddziel tagi średnikiem. Kontakt może mieć wiele tagów.':'Separate tags with semicolons. Each contact can have multiple tags.',
+ 'Filtr tagów':'Tag filter', 'Wszystkie tagi':'All tags', 'Bez tagów':'No tags',
+ 'Edytuj tagi':'Edit tags', 'Zapisz tagi':'Save tags', 'Tagi kontaktu zapisane.':'Contact tags saved.',
+ 'Pozostaw puste, aby usunąć wszystkie tagi kontaktu.':'Leave empty to remove all contact tags.',
+ 'Według tagów':'By tags', 'Sposób dopasowania tagów':'Tag matching',
+ 'Dowolny z wybranych tagów (LUB)':'Any selected tag (OR)', 'Wszystkie wybrane tagi (I)':'All selected tags (AND)',
+ 'Wybierz co najmniej jeden tag odbiorców.':'Select at least one recipient tag.',
+ 'Najpierw dodaj tagi do kontaktów.':'Add tags to contacts first.',
+ 'Kontakt bierze udział w kampanii tylko raz, nawet gdy pasuje do kilku tagów.':'Each contact participates only once, even when multiple tags match.',
+ 'Aktywne kontakty pasujące do tagów:':'Active contacts matching tags:',
+ 'Odbiorcy według tagów:':'Recipients by tags:',
+ 'Szukaj osoby, firmy, adresu lub tagu…':'Search name, company, email or tag…',
+ 'Zapisz wybrane w bazie':'Save selected to database',
+ 'Zapisywanie kontaktów z symulacji':'Saving simulated contacts',
+ 'Zapis w bazie wymaga listy kontaktów. Dane zachowają oznaczenie symulacji i będą pomijane przy rzeczywistej wysyłce.':'Saving to the database requires a contact list. Records retain their simulation label and are excluded from live sending.',
+ 'Obszary obsługi':'Service areas', 'Otwórz mapę':'Open map',
+ 'Otwórz mapę na cały ekran':'Open full-screen map', 'Zamknij mapę':'Close map',
+ 'Potwierdzam dodanie fikcyjnych kontaktów do listy w symulacji.':'I confirm adding fictional contacts to the list in simulation.',
+ 'Kontakty z symulacji są widoczne tylko w tym trybie i nie trafiają do rzeczywistej wysyłki.':'Simulated contacts are visible only in this mode and are excluded from real sending.',
+ 'Włącz symulację, aby dodać fikcyjne kontakty.':'Enable simulation to add fictional contacts.',
+ 'Fikcyjne kontakty':'Fictional contacts',
+ 'Symulacja: wyszukiwanie pokazuje fikcyjne osoby i adresy email bez połączenia z Hunter.':'Simulation: search displays fictional people and email addresses without contacting Hunter.',
+ 'Konfiguracja źródeł w Sygnałach →':'Configure sources in Signals →',
+ 'Strony firm':'Company pages', 'Firm na stronie':'Companies per page',
+ 'Pierwsza':'First', 'Poprzednia':'Previous', 'Następna':'Next', 'Ostatnia':'Last', 'Strona':'Page',
+ 'Obszary obsługiwane przez profil':'Areas served by this profile',
+ 'Zbiorcza mapa obszarów profilu':'Combined profile coverage map',
+ 'Zbiorczo: obszary profilu i jego monitoringów. Powtarzające się obszary pokazujemy raz.':'Combined areas from this profile and its monitors. Duplicate areas are displayed once.',
+ 'Brak wybranych obszarów. Dodaj je w Profilu lub podczas tworzenia monitoringu.':'No areas selected. Add them to the Profile or when creating a monitor.',
+ 'Nie udało się załadować mapy.':'Could not load the map.',
+ 'Nie udało się pobrać podkładu mapy. Obszary nadal są widoczne.':'Could not load map tiles. The selected areas are still visible.',
+ 'Z grupy docelowej':'From a target group', 'Wybierz grupę docelową…':'Choose a target group…',
+ 'Wybierz grupę docelową kontaktów.':'Choose a contact target group.',
+ 'Aktywne kontakty w wybranej grupie:':'Active contacts in the selected group:',
+ 'Grupy tworzysz, przypisując do nich kontakty w Kontaktach lub Discover.':'Create groups by assigning contacts in Contacts or Discover.',
+ 'Przygotowanie obejmuje aktywne kontakty należące do wybranej grupy w chwili generowania.':'Preparation includes active contacts belonging to the selected group at the time of generation.',
+ 'Znajdź kontakt':'Find contacts', 'Szukaj kontaktów':'Search contacts',
+ 'Domena firmy (opcjonalnie)':'Company domain (optional)', 'Stanowiska (opcjonalnie)':'Job titles (optional)',
+ 'Liczba kontaktów':'Number of contacts', 'Szukam kontaktów…':'Searching for contacts…',
+ 'Dodaję wybrane kontakty…':'Adding selected contacts…', 'Podłącz Hunter w Integracjach.':'Connect Hunter in Integrations.',
+ 'Hunter wyszuka publicznie znalezione adresy. Wyszukiwanie może zużywać kredyty. Dodanie kontaktów nie uruchamia wysyłki.':'Hunter searches for publicly found addresses. Searches may use credits. Adding contacts does not send messages.',
+ 'Znaleziona firma i domena:':'Matched company and domain:', 'Źródła adresu':'Email sources',
+ 'Już w kontaktach':'Already in contacts', 'Już w kontaktach:':'Already in contacts:',
+ 'Kontakty z symulacji nie są zapisywane w bazie.':'Simulated contacts are not saved to the database.',
+ 'Nie znaleziono kontaktów ze źródłami. Spróbuj podać domenę firmy lub inne stanowisko.':'No contacts with sources found. Try a company domain or a different job title.',
+ 'Potwierdzam, że znaleziona domena należy do właściwej firmy.':'I confirm that the matched domain belongs to the correct company.',
+ 'Adresy wymagają weryfikacji przed wysyłką. Wybrane istniejące kontakty trafią do wskazanej grupy bez zmiany ich statusu.':'Verify email addresses before sending. Selected existing contacts are assigned to the group while keeping their status.',
+ 'Dodaj wybrane do kontaktów i grupy':'Add selected to contacts and group',
+ 'Grupa docelowa':'Target group', 'Wszystkie grupy':'All groups', 'Bez grupy':'No group',
+ 'Wybierz lub wpisz nową grupę':'Choose or enter a new group', 'Zmień grupę':'Change group',
+ 'Zapisz grupę':'Save group', 'Grupa kontaktu zapisana.':'Contact group saved.',
+ 'Pozostaw puste, aby usunąć przypisanie do grupy.':'Leave empty to remove the group assignment.',
+ 'Szukaj osoby, firmy, adresu lub grupy…':'Search name, company, email or group…',
+ 'Obszary monitoringu':'Monitoring areas', 'Obszary monitoringu:':'Monitoring areas:',
+ 'Obszar dodany do monitoringu.':'Area added to monitoring.',
+ 'Obszary zapisujemy jako zasięg monitoringu. Źródła wiadomości nie gwarantują filtrowania po promieniu; lokalizacja zdarzeń wymaga sprawdzenia.':'Areas are saved as the monitoring scope. News sources do not guarantee radius filtering; event locations require review.',
+ 'Pokaż obszar na mapie:':'Show area on map:',
+ 'Pokaż mapę':'Show map', 'Mapa obszarów klientów':'Customer area map', 'Dowolny obszar':'Any area',
+ 'Obszar':'Area', 'Obszary z mapy:':'Map areas:', 'Wybrane obszary:':'Selected areas:',
+ 'Kliknij punkt na mapie, ustaw promień i naciśnij „Dodaj obszar”. Możesz też wpisać współrzędne.':'Click a point on the map, set a radius and select “Add area”. You can also enter coordinates.',
+ 'Szerokość geograficzna':'Latitude', 'Długość geograficzna':'Longitude', 'Promień (km)':'Radius (km)',
+ 'Nazwa obszaru (opcjonalnie)':'Area name (optional)', 'np. Warszawa i okolice':'e.g. Warsaw and surroundings',
+ '+ Dodaj obszar':'+ Add area', 'Usuń obszar':'Remove area', 'Usuń wszystkie obszary':'Remove all areas',
+ 'Szukamy w dowolnym z dodanych obszarów. Ukrycie mapy nie usuwa obszarów.':'Search in any of the selected areas. Hiding the map does not remove the areas.',
+ 'Obszary trafiają do kryteriów wyszukiwania. Dokładne położenie znalezionych firm wymaga potwierdzenia.':'Areas are included in search criteria. The exact location of returned companies requires confirmation.',
+ 'Wybrano współrzędne. Ustaw promień i dodaj obszar.':'Coordinates selected. Set a radius and add the area.',
+ 'Obszar dodany do profilu.':'Area added to profile.', 'Ten obszar jest już dodany.':'This area is already added.',
+ 'Możesz dodać maksymalnie 10 obszarów.':'You can add up to 10 areas.',
+ 'Podaj poprawne współrzędne i promień od 1 do 1000 km.':'Enter valid coordinates and a radius between 1 and 1000 km.',
+ 'Nie udało się załadować mapy. Możesz wpisać współrzędne poniżej.':'Could not load the map. You can enter coordinates below.',
+ 'Nie udało się pobrać podkładu mapy. Współrzędne i obszary nadal działają.':'Could not load map tiles. Coordinates and areas still work.',
+ '✧ Zaproponuj filtr z AI':'✧ Suggest search filter with AI',
+ 'Cofnij filtr':'Undo filter', 'Proponowany opis firm':'Suggested company description',
+ 'Zastosuj filtr':'Apply filter', 'Odrzuć propozycję':'Discard suggestion',
+ 'Przygotowywanie filtra wyszukiwania':'Preparing search filter',
+ 'AI proponuje filtr na podstawie oferty, problemów i wartości…':'AI is suggesting a filter based on the offer, pain points and value propositions…',
+ 'Propozycja gotowa. Sprawdź i zastosuj filtr.':'Suggestion ready. Review and apply the filter.',
+ 'Opis zmienił się podczas generowania. Sprawdź propozycję przed zastosowaniem.':'The description changed during generation. Review the suggestion before applying it.',
+ 'Nie udało się przygotować filtra. Twój opis pozostaje bez zmian.':'Could not prepare the filter. Your description is unchanged.',
+ 'Filtr zastosowany. Możesz go edytować przed wyszukiwaniem.':'Filter applied. You can edit it before searching.',
+ 'Przywrócono poprzedni opis firm.':'Previous company description restored.',
+ 'Propozycja odrzucona. Twój opis pozostaje bez zmian.':'Suggestion discarded. Your description is unchanged.',
+ 'Opis firm powinien mieć od 10 do 3000 znaków.':'The company description must contain between 10 and 3000 characters.',
+ 'Najpierw uzupełnij ofertę.':'Fill in the offer first.',
+ 'Podłącz OpenAI w Integracjach, aby zaproponować filtr.':'Connect OpenAI in Integrations to suggest a filter.',
+ 'Symulacja pobierania':'Simulated acquisition',
+ 'Symulowane jest tylko pobieranie danych. Twoje wpisy i konfiguracja są zapisywane normalnie. Wysyłka kampanii działa rzeczywiście.':'Only data acquisition is simulated. Your inputs and configuration are saved normally. Campaign sending remains live.',
+ 'Symulacja':'Simulation',
+ 'Ofertowe źródła monitoringu':'Offer-based monitoring sources',
+ 'Tematyczne źródła monitoringu':'Topic-based monitoring sources',
+ 'Monitoringi ofertowe':'Offer-based monitors', 'Monitoringi tematyczne':'Topic-based monitors',
+ 'Brak źródeł w tym temacie.':'No sources for this topic.',
  'Szukaj w językach':'Search in languages', 'Szukaj w językach:':'Search in languages:',
  'Języki rozmowy':'Conversation languages', 'Dowolny język':'Any language', 'Odznacz wszystkie języki':'Clear language selection',
  'Brak zaznaczeń oznacza dowolny język. To preferowane języki kontaktu, niezależne od języka wiadomości. Język rozmowy z firmą wymaga potwierdzenia.':'No selection means any language. These are preferred contact languages, independent of the message language. A company’s conversation language needs confirmation.',
@@ -215,7 +332,72 @@ Object.assign(uiEnglish,{
  'Uzupełnij ofertę i sekwencję, aby zobaczyć wiadomość dla konkretnej osoby.':'Enter your offer and sequence to preview a message for a specific person.',
  'Opisz konkretny produkt lub usługę.':'Describe a specific product or service.','Jakie potrzeby rozwiązuje oferta?':'Which customer needs does your offer address?','Fakty, wyróżniki i udokumentowane efekty.':'Facts, differentiators and documented results.','np. Umów rozmowę':'e.g. Book a call','np. Wprowadzenie nowej usługi':'e.g. New service launch','Stanowiska, firmy, potrzeby…':'Roles, companies, needs…','Przygotowanie szkiców do zatwierdzenia':'Preparing drafts for approval','Operacja zatrzymana':'Operation stopped'
 });
+// UI aliases only: never rewrite stored records, user input or provider evidence.
+const salesTerminology={
+ 'Przegląd':['Dashboard','Dashboard'],
+ 'Znajdź klientów':['Pozyskiwanie leadów','Lead generation'],
+ 'Discover':['Odkrywanie firm','Company discovery'],
+ 'Firmy warte uwagi':['Firmy docelowe','Target accounts'],
+ 'Opis firm, których szukasz':['Profil idealnego klienta (ICP)','Ideal customer profile (ICP)'],
+ 'Grupa docelowa':['Lista kontaktów','Contact list'],
+ 'Z grupy docelowej':['Z listy kontaktów','From a contact list'],
+ 'Wybierz grupę docelową…':['Wybierz listę kontaktów…','Choose a contact list…'],
+ 'Wybierz grupę docelową kontaktów.':['Wybierz listę kontaktów.','Choose a contact list.'],
+ 'Wybierz lub wpisz nową grupę':['Wybierz lub utwórz listę kontaktów','Choose or create a contact list'],
+ 'Wszystkie grupy':['Wszystkie listy','All lists'], 'Bez grupy':['Bez listy','No list'],
+ 'Zmień grupę':['Zmień listę','Change list'], 'Zapisz grupę':['Zapisz listę','Save list'],
+ 'Grupa kontaktu zapisana.':['Lista kontaktu zapisana.','Contact list saved.'],
+ 'Aktywne kontakty w wybranej grupie:':['Aktywne kontakty na wybranej liście:','Active contacts in the selected list:'],
+ 'Dodaj wybrane do kontaktów i grupy':['Dodaj wybrane do listy kontaktów','Add selected to contact list'],
+ 'Znajdź firmy i osoby':['Szukaj leadów','Search leads'],
+ 'Dopasowanie według AI':['Dopasowanie do ICP według AI','AI-assessed ICP fit'],
+ 'Do ręcznej oceny':['Do kwalifikacji','Needs qualification'],
+ 'Odrzucono według AI':['Niedopasowany do ICP według AI','AI-assessed ICP mismatch'],
+ 'Proof points':['Dowody wiarygodności','Proof points'],
+ 'Proof points ze strony':['Dowody wiarygodności ze strony','Proof points from website'],
+ 'Zastosuj proof points':['Zastosuj dowody wiarygodności','Apply proof points'],
+ 'Proof points zastosowane. Możesz je edytować.':['Dowody wiarygodności zastosowane. Możesz je edytować.','Proof points applied. You can edit them.'],
+ 'Zastosowanie zastąpi obecną listę proof points.':['Zastosowanie zastąpi obecne dowody wiarygodności.','Applying will replace the current proof points.'],
+ '✧ Fine tune with AI':['✧ Dopracuj z AI','✧ Refine with AI'],
+ 'Słownik sprzedaży':['Słownik sprzedaży','Sales glossary'],
+ 'Grupy tworzysz, przypisując do nich kontakty w Kontaktach lub Discover.':['Listy tworzysz, przypisując do nich osoby w Kontaktach lub Odkrywaniu firm.','Create lists by assigning people in Contacts or Company discovery.'],
+ 'Pozostaw puste, aby usunąć przypisanie do grupy.':['Pozostaw puste, aby usunąć przypisanie do listy.','Leave empty to remove the list assignment.'],
+ 'Szukaj osoby, firmy, adresu lub grupy…':['Szukaj osoby, firmy, adresu lub listy…','Search name, company, email or list…'],
+ 'Przygotowanie obejmuje aktywne kontakty należące do wybranej grupy w chwili generowania.':['Przygotowanie obejmuje aktywne kontakty z wybranej listy w chwili generowania.','Preparation includes active contacts on the selected list at the time of generation.'],
+ 'Adresy wymagają weryfikacji przed wysyłką. Wybrane istniejące kontakty trafią do wskazanej grupy bez zmiany ich statusu.':['Adresy wymagają weryfikacji przed wysyłką. Wybrane istniejące kontakty trafią na wskazaną listę bez zmiany ich statusu.','Verify email addresses before sending. Selected existing contacts are added to the list while keeping their status.'],
+ 'Sygnały sprzedażowe':['Sygnały sprzedażowe','Sales signals'],
+ 'Oferta':['Oferta','Offering'], 'Problemy odbiorców':['Problemy odbiorców','Pain points'],
+ 'Propozycje wartości':['Propozycje wartości','Value propositions'],
+};
+Object.assign(salesTerminology,{
+ 'Grupa docelowa':['Tagi','Tags'], 'Lista kontaktów':['Tagi','Tags'],
+ 'Zapisz grupę':['Zapisz tagi','Save tags'], 'Zmień grupę':['Edytuj tagi','Edit tags'],
+ 'Dodaj wybrane do kontaktów i grupy':['Dodaj kontakty z tagami','Add contacts with tags'],
+ 'Potwierdzam dodanie fikcyjnych kontaktów do listy w symulacji.':['Potwierdzam dodanie fikcyjnych kontaktów z tagami.','I confirm adding fictional contacts with tags.'],
+ 'Zapis w bazie wymaga listy kontaktów. Dane zachowają oznaczenie symulacji i będą pomijane przy rzeczywistej wysyłce.':['Wpisz tagi dla zapisywanych kontaktów. Dane zachowają oznaczenie symulacji i będą pomijane przy rzeczywistej wysyłce.','Enter tags for saved contacts. Records retain their simulation label and are excluded from live sending.'],
+ 'Adresy wymagają weryfikacji przed wysyłką. Wybrane istniejące kontakty trafią do wskazanej grupy bez zmiany ich statusu.':['Adresy wymagają weryfikacji przed wysyłką. Wybrane tagi zostaną dodane do istniejących kontaktów bez zmiany ich statusu.','Verify email addresses before sending. Selected tags are added to existing contacts while preserving their status.'],
+});
+for(const term of Object.values(salesTerminology))salesTerminology[term[0]]??=term;
+const salesGlossaryEntries=[
+ ['Kontakt','Contact','Osoba zapisana w bazie z danymi kontaktowymi. Sam zapis nie oznacza kwalifikacji ani zainteresowania ofertą.','A person stored with contact details. A record alone does not establish qualification or buying interest.'],
+ ['Lead','Lead','Osoba lub firma zidentyfikowana jako potencjalny klient, wymagająca dalszej kwalifikacji.','A person or company identified as a potential customer, requiring further qualification.'],
+ ['Prospekt','Prospect','Lead po kwalifikacji do dalszych działań sprzedażowych. Samo dopasowanie wskazane przez AI nie potwierdza potrzeb, budżetu ani zainteresowania.','A lead qualified for further sales activity. AI-assessed fit alone does not confirm need, budget or interest.'],
+ ['Firma docelowa','Target account','Firma wybrana jako cel działań sprzedażowych. Znaleziony sygnał jest powodem do sprawdzenia firmy, nie potwierdzeniem zakupu.','A company selected for sales outreach. A signal is a reason to research the account, not confirmation of a purchase.'],
+ ['Profil idealnego klienta (ICP)','Ideal customer profile (ICP)','Opis firm, do których kierujesz ofertę, np. branża, wielkość, lokalizacja i potrzeby.','A description of companies you want to target, including industry, size, location and needs.'],
+ ['Tagi','Tags','Etykiety kontaktu rozdzielone średnikiem. Kontakt może mieć wiele tagów. W kampanii wybierasz tagi odbiorców i dopasowanie LUB albo I.','Semicolon-separated contact labels. A contact can have multiple tags. Campaigns select recipient tags using OR or AND matching.'],
+ ['Szansa sprzedażowa','Sales opportunity','Konkretny potencjalny zakup po kwalifikacji i potwierdzeniu możliwości sprzedaży. Sama wzmianka o firmie lub sygnał nie tworzy szansy sprzedażowej.','A specific potential deal after qualification and confirmation of a viable sale. A company mention or signal alone is not an opportunity.'],
+ ['Sygnał sprzedażowy','Sales signal','Zdarzenie wskazujące na możliwą potrzebę lub dobry moment na kontakt. Wymaga sprawdzenia.','An event suggesting a possible need or timely reason to reach out. It requires review.'],
+ ['Sekwencja kontaktu','Outreach sequence','Zaplanowane wiadomości i kolejne kontakty (follow-upy) w ramach kampanii.','Scheduled messages and follow-ups within a campaign.'],
+ ['Propozycja wartości','Value proposition','Korzyść, jaką Twoja oferta może przynieść odbiorcy.','The benefit your offering can deliver to a recipient.'],
+ ['Dowody wiarygodności','Proof points','Dane, wyniki i przykłady wspierające twierdzenia o ofercie. Wymagają źródeł.','Facts, results and examples supporting claims about an offering. They require sources.'],
+];
 function translateUiText(text){
+  const original=text.trim(),languageIndex=uiLanguage==='en'?1:0;
+  if(salesTerminology[original])return text.replace(original,salesTerminology[original][languageIndex]);
+  const navigation=original.match(/^([◫♙↗⚡✉⚙⌕✧\s]+)(.+)$/u);
+  if(navigation&&salesTerminology[navigation[2]])return text.replace(original,navigation[1]+salesTerminology[navigation[2]][languageIndex]);
+  const breadcrumb=original.match(/^Przestrzeń robocza \/ (.+)$/);
+  if(breadcrumb&&salesTerminology[breadcrumb[1]])return (uiLanguage==='en'?'Workspace / ':'Przestrzeń robocza / ')+salesTerminology[breadcrumb[1]][languageIndex];
   if(uiLanguage!=='en')return text;
   const source=text.trim();
   let value=uiEnglish[source];
@@ -249,7 +431,7 @@ function translateUiText(text){
 }
 function isUiText(node){
   const el=node.parentElement;if(!el||el.closest('script,style,textarea,code,pre,[data-no-translate],.message,.mail-preview,#builder-preview-content .preview-material,#builder-campaign-title,.recipient-picker strong,.recipient-picker small,#profile-picker option:not([value=""]),#preview-contact option'))return false;
-  if(el.closest('.prospect-card p,.prospect-card h3,.prospect-card small,.signal-card p,.signal-card strong,.activity,.builder-summary dd,tbody td')&&!el.closest('button,.badge,label,.error')&&!el.matches('.prospect-card p>strong'))return false;
+  if(el.closest('.prospect-card p,.prospect-card h3,.prospect-card small,.signal-card p,.signal-card strong,.activity,.builder-summary dd,tbody td')&&!el.closest('button,.badge,label,.error,summary,.discover-contact-panel .hint,.discover-contact-panel .notice')&&!el.matches('.prospect-card p>strong'))return false;
   return true;
 }
 function localizeUi(){
@@ -301,7 +483,7 @@ document.addEventListener('change',e=>{
 document.addEventListener('DOMContentLoaded',()=>applyUiLanguage(uiLanguage));
 window.addEventListener('hashchange',()=>{
   const next=location.hash.slice(1);
-  if(['dashboard','discover','prospecting','contacts','campaigns','signals','inbox','library','settings'].includes(next)){
+  if(['dashboard','discover','prospecting','contacts','campaigns','signals','inbox','library','settings','administration'].includes(next)){
     view=next;selectedCampaign=null;render();
   }
 });

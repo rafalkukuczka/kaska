@@ -133,7 +133,21 @@ node --check web/app.js
 
 Testy korzystają z osobnej tymczasowej bazy i atrap usług pocztowych. Nie wysyłają prawdziwych wiadomości.
 
+## Grupy docelowe kontaktów
+
+Pod tytułem formularza dodawania kontaktu pole „Grupa docelowa” pozwala wybrać istniejącą nazwę lub wpisać nową. Przypisanie jest opcjonalne i trwałe. W Kontaktach można zmienić grupę, usunąć przypisanie przez wyczyszczenie pola oraz filtrować listę według grupy. Grupy są wspólne dla bazy kontaktów i niezależne od profili nadawcy.
+
+Przy imporcie CSV można wskazać grupę dla całej paczki. Opcjonalna kolumna `target_group` nadpisuje ten wybór dla konkretnego wiersza; istniejące kontakty o tym samym adresie email są pomijane bez zmiany ich grupy.
+
 ## Zakres pierwszej wersji
+
+Kontakty mają **tagi**, np. `produkcja; ERP; Polska`, zamiast pojedynczej listy. W kampanii wybierz **Według tagów**, zaznacz tagi i dopasowanie **LUB** albo **I**. Dotychczasowe listy i kampanie są migrowane automatycznie. Szczegóły: [CONTACT-TAGS.md](CONTACT-TAGS.md).
+
+Interfejs korzysta ze spójnej terminologii PL/EN: kontakty, leady, prospekty, firmy docelowe, ICP i listy kontaktów. Definicje znajdziesz w **Słowniku sprzedaży** w nagłówku oraz w [TERMINOLOGY.md](TERMINOLOGY.md). Ocena dopasowania przez AI nie oznacza potwierdzonego zainteresowania zakupem.
+
+Na **Dashboardzie** kafelek mapy, umieszczony zaraz po Kontaktach, otwiera zbiorczą mapę na cały ekran. Zamknij ją przyciskiem lub klawiszem Esc. Mapa zbiera obszary aktywnego profilu i wszystkich jego monitoringów. Takie same środki z takim samym promieniem są pokazywane raz; mapa dopasowuje widok do całego zasięgu. Nazwy pod mapą przybliżają wybrany obszar. Zmiana profilu zmienia zawartość mapy.
+
+Przy tworzeniu kampanii w kroku **Odbiorcy** wybierz **Z grupy docelowej** i wskaż grupę kontaktów. Kreator pokazuje liczbę aktywnych osób i ogranicza do nich listę podglądu. Grupa zapisuje się w szkicu oraz kampanii; przygotowanie wiadomości obejmuje jej aktywnych członków w chwili generowania. Pusta lub nieistniejąca grupa nie zastępuje wyboru całą bazą. Osoby wstrzymane i wypisane są pomijane. Zapis kampanii nie uruchamia wysyłki.
 
 Gotowe integracje danych: **Google News RSS, GDELT DOC 2.0, Greenhouse Job Board i Lever Postings**. Konfiguracja w **Sygnały → Źródła**; nie trzeba wpisywać adresów API. Dostępność i ograniczenia: [DATA-SOURCES.md](DATA-SOURCES.md).
 

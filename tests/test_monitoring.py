@@ -44,6 +44,56 @@ class MonitoringTests(unittest.TestCase):
         self.assertEqual((monitor['mode'],monitor['offer']),('topic',''))
         self.assertEqual(monitor['plan'][0]['signal_kinds'],[])
 
+    def test_monitoring_areas_are_validated_and_independent_of_profile(self):
+        import shared_profile
+        area={'lat':52.2,'lng':21,'radius_km':50,'label':'Warsaw'}
+        shared_profile.save(app.db,{'search_areas':[area]})
+        inherited=app.signal_monitor.topic({'topic':'ERP'})
+        explicit=app.signal_monitor.topic({'topic':'Automation','search_areas':[]})
+        shared_profile.save(app.db,{'search_areas':[]})
+        monitors={m['id']:m for m in app.signal_monitor.state()['monitors']}
+        self.assertEqual(monitors[inherited['id']]['search_areas'],[area])
+        self.assertEqual(monitors[explicit['id']]['search_areas'],[])
+        with self.assertRaises(ValueError):app.signal_monitor.topic({'topic':'Invalid','search_areas':[dict(area,radius_km=-1)]})
+        self.assertEqual(len(app.signal_monitor.state()['monitors']),2)
+
+    def test_offer_areas_reach_ai_and_can_be_changed_before_activation(self):
+        first={'lat':52.2,'lng':21,'radius_km':50,'label':'Warsaw'}
+        second={'lat':48.85,'lng':2.35,'radius_km':25,'label':'Paris'}
+        with patch('ai_service.generate_json',return_value={'plan':json.dumps([{'topic':'ERP','signal_kinds':[],'reason':'Context'}])}) as generate:
+            draft=app.signal_monitor.propose({'offer':'Services','search_areas':[first]})
+        self.assertEqual(generate.call_args.args[1]['search_areas'],[first])
+        self.assertEqual(draft['search_areas'],[first])
+        with self.assertRaises(ValueError):app.signal_monitor.activate({'id':draft['id'],'search_areas':[dict(first,lat=100)]})
+        self.assertEqual(app.signal_monitor.state()['monitors'],[])
+        app.signal_monitor.activate({'id':draft['id'],'search_areas':[second]})
+        self.assertEqual(app.signal_monitor.state()['monitors'][0]['search_areas'],[second])
+
+    def test_delete_pauses_exclusive_sources_and_preserves_events(self):
+        monitor=app.signal_monitor.topic({'topic':'ERP'})
+        source=app.signal_engine.state()['sources'][0]
+        signal_id=app.signal_engine.record({'scope':'market','topic':'ERP','kind':'erp',
+            'title':'Acme ERP project','evidence':'Acme announced ERP.','url':'https://example.com/erp'},source=source)
+        self.assertEqual(app.signal_monitor.post('delete',{'id':monitor['id']})['paused'],2)
+        self.assertEqual(app.signal_monitor.state()['monitors'],[])
+        self.assertTrue(all(not s['enabled'] for s in app.signal_engine.state()['sources']))
+        with app.db() as c:
+            self.assertIsNotNone(c.execute('SELECT id FROM sales_signals WHERE id=?',(signal_id,)).fetchone())
+        self.assertEqual(app.signal_monitor.delete({'id':monitor['id']})['paused'],0)
+        with self.assertRaises(ValueError):app.signal_monitor.activate({'id':monitor['id']})
+
+    def test_delete_keeps_shared_sources_and_checks_profile_ownership(self):
+        first=app.signal_monitor.topic({'topic':'ERP'})
+        import shared_profile
+        other=shared_profile.create(app.db,{'name':'Other'})
+        second=app.signal_monitor.topic({'topic':'ERP','profile_id':other['id']})
+        with self.assertRaises(ValueError):
+            app.signal_monitor.delete({'id':first['id'],'profile_id':other['id']})
+        self.assertEqual(app.signal_monitor.delete({'id':first['id'],'profile_id':1})['paused'],0)
+        self.assertTrue(all(s['enabled'] for s in app.signal_engine.state()['sources']))
+        self.assertEqual(len(app.signal_monitor.state(other['id'])['monitors']),1)
+        self.assertEqual(app.signal_monitor.delete({'id':second['id'],'profile_id':other['id']})['paused'],2)
+
     def test_plan_selection_and_invalid_input_are_atomic(self):
         result=self.proposal([{'topic':term,'signal_kinds':[],'reason':'Context'} for term in ('NIS2','ERP')])
         for selection in ([],[-1],[99],[True],['0']):
