@@ -14,6 +14,7 @@ import test_app
 import app
 import prospecting
 import languages
+import shared_project
 
 
 class ProspectingTests(unittest.TestCase):
@@ -49,6 +50,46 @@ class ProspectingTests(unittest.TestCase):
         with patch.dict(os.environ, {'HUNTER_API_KEY': 'fixture-key'}), patch('prospecting.Hunter.request', side_effect=self.provider):
             self.manager.verify(run_id)
 
+    def test_add_selected_contacts_without_tags_does_not_create_campaigns(self):
+        run_id=self.setup_run();person=self.search(run_id);self.verify(run_id)
+        result=self.manager.add_contacts({'id':run_id,'candidate_ids':[person['id']]},app.add_contact)
+        self.assertEqual((result['added'],result['existing'],result['paused']),(1,0,0))
+        with app.db() as c:
+            contact=c.execute('SELECT * FROM contacts WHERE email=?',(person['email'],)).fetchone()
+            self.assertEqual(json.loads(contact['tags']),[]);self.assertEqual(contact['status'],'active')
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM campaigns').fetchone()[0],1)
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM messages').fetchone()[0],0)
+            self.assertIsNone(c.execute('SELECT campaign_id FROM prospect_runs WHERE id=?',(run_id,)).fetchone()[0])
+        self.assertIsNotNone(self.manager.state()['candidates'][0]['contact_id'])
+
+    def test_unverified_import_is_paused_and_duplicate_only_merges_optional_tags(self):
+        run_id=self.setup_run();person=self.search(run_id)
+        item={'id':run_id,'candidate_ids':[person['id']],'tags_by_contact':{person['email']:['Manufacturing']}}
+        result=self.manager.add_contacts(item,app.add_contact)
+        self.assertEqual(result['paused'],1)
+        with app.db() as c:c.execute("UPDATE contacts SET status='unsubscribed' WHERE email=?",(person['email'],))
+        item['tags_by_contact'][person['email']]=['Europe']
+        result=self.manager.add_contacts(item,app.add_contact)
+        self.assertEqual((result['added'],result['existing']),(0,1))
+        with app.db() as c:
+            contact=c.execute('SELECT * FROM contacts WHERE email=?',(person['email'],)).fetchone()
+            self.assertEqual(contact['status'],'unsubscribed')
+            self.assertEqual(json.loads(contact['tags']),['Manufacturing','Europe'])
+
+    def test_contact_import_checks_run_ownership_and_simulation_reserved_domains(self):
+        run_id=self.setup_run();person=self.search(run_id)
+        shared_project.create(app.db,{'name':'Private'})
+        with self.assertRaises(ValueError):self.manager.add_contacts({'id':run_id,'candidate_ids':[person['id']]},app.add_contact)
+        languages.save_data_simulation(app.db,{'enabled':True})
+        fake={'contacts':[{'name':'Demo','email':'demo@company.example','company':'Demo company','role':'CEO'}]}
+        result=self.manager.add_contacts(fake,app.add_contact,True)
+        self.assertEqual(result['added'],1)
+        with app.db() as c:
+            contact=c.execute("SELECT * FROM contacts WHERE email='demo@company.example'").fetchone()
+            self.assertEqual((contact['simulated'],contact['status']),(1,'paused'));self.assertEqual(json.loads(contact['tags']),[])
+        fake['contacts'][0]['email']='someone@real-company.com'
+        with self.assertRaises(ValueError):self.manager.add_contacts(fake,app.add_contact,True)
+
     def test_search_languages_are_snapshot_separate_from_message_language_and_used_in_query(self):
         run_id=self.setup_run(search_languages=['en','de','en'],language='fr')
         run=self.manager.get_run(run_id)
@@ -60,13 +101,82 @@ class ProspectingTests(unittest.TestCase):
             return self.provider(endpoint,params,body)
         with patch.dict(os.environ,{'HUNTER_API_KEY':'fixture-key'}),patch('prospecting.Hunter.request',side_effect=provider),patch.object(app.library,'page',return_value={'url':'https://buyer.example/','summary':'Buyer runs online retail shops.'}):
             self.manager.search(run_id)
-        self.assertIn('English, German',calls[0]['query'])
+        self.assertEqual(len(calls),2)
+        self.assertIn('English.',calls[0]['query']);self.assertNotIn('German.',calls[0]['query'])
+        self.assertIn('German.',calls[1]['query']);self.assertNotIn('English.',calls[1]['query'])
         self.assertTrue(calls[0]['query'].startswith('Retail companies in Poland'))
         self.assertNotIn('French',calls[0]['query'])
         with app.db() as c:missing=c.execute('SELECT missing_data FROM prospect_candidates WHERE run_id=?',(run_id,)).fetchone()[0]
         self.assertIn('English',missing)
         for value in ('en',['xx'],[None],['en']*7):
             with self.subTest(value=value),self.assertRaises(ValueError):self.setup_run(search_languages=value)
+
+    def test_language_fanout_preserves_exact_brief_and_areas_and_deduplicates(self):
+        brief='Specific niche: SCADA / MES; 50+ staff.\nOnly factories modernizing production.'
+        area={'lat':52.2297,'lng':21.0122,'radius_km':50,'label':'Warsaw'}
+        run_id=self.setup_run(audience=brief,search_languages=['en','de'],search_areas=[area],titles='CEO, COO',exclusions='competitor.example')
+        calls=[]
+        def provider(endpoint,params=None,body=None):
+            calls.append((endpoint,params,body))
+            if endpoint=='discover':
+                companies=[{'domain':'buyer.example','organization':'Buyer'}]
+                if 'German.' in body['query']:companies.append({'domain':'second.example','organization':'Second'})
+                return {'data':companies,'meta':{'filters':{'language_query':body['query']}}}
+            result=self.provider(endpoint,params,body)
+            if endpoint=='domain-search':result['data']['emails'][0]['value']='anna@'+params['domain']
+            return result
+        with patch.dict(os.environ,{'HUNTER_API_KEY':'fixture-key'}),patch('prospecting.Hunter.request',side_effect=provider),patch.object(app.library,'page',side_effect=ValueError('fixture')):
+            self.manager.search(run_id)
+        discover=[call[2] for call in calls if call[0]=='discover']
+        self.assertEqual(len(discover),2)
+        for body in discover:
+            self.assertTrue(body['query'].startswith(brief))
+            self.assertIn('latitude 52.2297, longitude 21.0122, radius 50',body['query'])
+            self.assertIn('CEO, COO',body['query']);self.assertIn('operations',body['query'])
+            self.assertIn('competitor.example',body['query']);self.assertIn('seller.example',body['query'])
+            self.assertEqual(body['limit'],3)
+        people=[call[1] for call in calls if call[0]=='domain-search']
+        self.assertEqual([row['domain'] for row in people],['buyer.example','second.example'])
+        self.assertTrue(all(row['job_titles']=='CEO, COO' and row['department']=='operations' and row['limit']==2 for row in people))
+        with app.db() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM prospect_candidates WHERE run_id=?',(run_id,)).fetchone()[0],2)
+        filters=json.loads(self.manager.get_run(run_id)['filters'])
+        self.assertEqual([row['language'] for row in filters['requests']],['en','de'])
+        self.assertEqual(filters['search']['audience'],brief)
+
+    def test_partial_language_failure_keeps_successful_results_and_errors(self):
+        run_id=self.setup_run(search_languages=['en','de'])
+        def provider(endpoint,params=None,body=None):
+            if endpoint=='discover' and 'English.' in body['query']:raise ValueError('Fixture language failure')
+            return self.provider(endpoint,params,body)
+        with patch.dict(os.environ,{'HUNTER_API_KEY':'fixture-key'}),patch('prospecting.Hunter.request',side_effect=provider),patch.object(app.library,'page',side_effect=ValueError('fixture')):
+            self.manager.search(run_id)
+        filters=json.loads(self.manager.get_run(run_id)['filters'])
+        self.assertEqual(filters['requests'][0]['error'],'Fixture language failure')
+        self.assertEqual(len(self.manager.state()['candidates']),1)
+
+    def test_candidate_bulk_tags_import_and_delete_keep_saved_contacts(self):
+        run_id=self.setup_run();person=self.search(run_id)
+        item={'id':run_id,'action':'tags','candidate_ids':[person['id']],'tags':['New segment']}
+        self.manager.bulk_candidates(item)
+        self.assertEqual(json.loads(self.manager.state()['candidates'][0]['tags']),['New segment'])
+        self.manager.add_contacts({'id':run_id,'candidate_ids':[person['id']]},app.add_contact)
+        item['tags']=['Priority'];self.manager.bulk_candidates(item)
+        with app.db() as c:
+            self.assertEqual(json.loads(c.execute('SELECT tags FROM contacts WHERE email=?',(person['email'],)).fetchone()[0]),['New segment','Priority'])
+        item['candidate_ids'].append(999999)
+        with self.assertRaises(ValueError):self.manager.bulk_candidates(item)
+        self.assertEqual(len(self.manager.state()['candidates']),1)
+        item['candidate_ids']=[person['id']];item['action']='delete';self.manager.bulk_candidates(item)
+        self.assertEqual(self.manager.state()['candidates'],[])
+        with app.db() as c:self.assertIsNotNone(c.execute('SELECT id FROM contacts WHERE email=?',(person['email'],)).fetchone())
+
+    def test_candidate_bulk_rejects_another_project_and_busy_runs(self):
+        run_id=self.setup_run();person=self.search(run_id)
+        item={'id':run_id,'action':'delete','candidate_ids':[person['id']]}
+        self.manager.update(run_id,status='verifying')
+        with self.assertRaises(ValueError):self.manager.bulk_candidates(item)
+        self.manager.update(run_id,status='ready');shared_project.create(app.db,{'name':'Private'})
+        with self.assertRaises(ValueError):self.manager.bulk_candidates(item)
 
     def test_full_pipeline_creates_review_only_drafts_and_is_idempotent(self):
         run_id = self.setup_run()

@@ -11,6 +11,48 @@ class SequenceTests(unittest.TestCase):
     setUp = test_app.SystemTests.setUp
     tearDown = test_app.SystemTests.tearDown
 
+    def test_positioned_condition_preserves_earlier_email_and_skips_remaining(self):
+        rule=[{'field':'role','operator':'equals','value':'CEO','before_step':1}]
+        with app.db() as c:
+            c.execute('UPDATE campaigns SET conditions=? WHERE id=1',(json.dumps(rule),))
+            c.execute('UPDATE steps SET delay_days=0 WHERE campaign_id=1')
+        app.prepare(1)
+        with app.db() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM messages').fetchone()[0],2)
+            c.execute("UPDATE campaigns SET status='active' WHERE id=1")
+        with patch('app.smtplib.SMTP') as smtp:
+            app.send_one();app.send_one()
+            smtp.return_value.__enter__.return_value.send_message.assert_called_once()
+        with app.db() as c:
+            self.assertEqual([row[0] for row in c.execute('SELECT status FROM messages ORDER BY position')],['sent','cancelled'])
+            self.assertEqual(c.execute('SELECT status FROM contacts WHERE id=1').fetchone()[0],'active')
+            self.assertIn('warunek',c.execute('SELECT error FROM messages WHERE position=1').fetchone()[0])
+            c.execute("UPDATE contacts SET role='CEO' WHERE id=1")
+        with patch('app.smtplib.SMTP') as smtp:
+            app.send_one();smtp.assert_not_called()
+
+    def test_positioned_condition_yes_continues_to_followup(self):
+        rule=[{'field':'company','operator':'equals','value':'Acme','before_step':1}]
+        with app.db() as c:
+            c.execute('UPDATE campaigns SET conditions=? WHERE id=1',(json.dumps(rule),))
+            c.execute('UPDATE steps SET delay_days=0 WHERE campaign_id=1')
+        app.prepare(1)
+        with app.db() as c:c.execute("UPDATE campaigns SET status='active' WHERE id=1")
+        with patch('app.smtplib.SMTP') as smtp:
+            app.send_one();app.send_one()
+            self.assertEqual(smtp.return_value.__enter__.return_value.send_message.call_count,2)
+
+    def test_positioned_rules_validate_and_only_apply_after_their_location(self):
+        rule=[{'field':'company','operator':'equals','value':'Other','before_step':2}]
+        contact={'email':'a@example.com','company':'Acme'}
+        self.assertEqual(conditions.validate(rule),rule)
+        self.assertTrue(conditions.matches(rule,contact))
+        self.assertTrue(conditions.matches(rule,contact,1))
+        self.assertFalse(conditions.matches(rule,contact,2))
+        self.assertTrue(conditions.matches(rule,contact,3,since=2))
+        for position in (-1,7,'1',True):
+            with self.subTest(position=position),self.assertRaises(ValueError):conditions.validate([{**rule[0],'before_step':position}])
+
     def test_conditions_filter_preparation_and_sending(self):
         rule = [{'field': 'role', 'operator': 'contains', 'value': 'CEO'}]
         with app.db() as c:

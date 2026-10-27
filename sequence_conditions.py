@@ -1,4 +1,4 @@
-"""A sequence entry condition: yes continues to email steps, no skips the recipient."""
+"""Entry and positioned conditions: yes continues, no skips remaining messages."""
 import json
 
 FIELDS = ('email', 'company', 'role')
@@ -18,13 +18,18 @@ def validate(value):
         if item['operator'] not in ('is_set', 'is_not_set') and not text.strip():
             raise ValueError('Uzupełnij wartość warunku.')
         result.append({'field': item['field'], 'operator': item['operator'], 'value': text.strip() if item['operator'] not in ('is_set', 'is_not_set') else ''})
+        if 'before_step' in item:
+            if type(item['before_step']) is not int or not 0<=item['before_step']<=6:
+                raise ValueError('Nieprawidłowa pozycja warunku.')
+            result[-1]['before_step']=item['before_step']
     return result
 
 
-def matches(conditions, contact):
+def matches(conditions, contact, position=None, since=None):
     try:
         rules = validate(json.loads(conditions) if isinstance(conditions, str) else conditions)
         for rule in rules:
+            if 'before_step' in rule and (position is None or rule['before_step']>position or (since is not None and rule['before_step']<=since)):continue
             value = str(dict(contact).get(rule['field']) or '').strip().casefold()
             target = rule['value'].casefold()
             ok = {'is_set': bool(value), 'is_not_set': not value,

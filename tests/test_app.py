@@ -15,6 +15,18 @@ import app
 
 
 class SystemTests(unittest.TestCase):
+    def test_reply_sync_cannot_block_outbound_worker(self):
+        with patch('app.threading.Thread') as thread,patch('app.sync_replies',side_effect=TimeoutError) as sync,patch('app.send_one') as send,patch('app.time.sleep',side_effect=StopIteration):
+            with self.assertRaises(StopIteration):app.worker()
+            thread.assert_called_once_with(target=app.reply_worker,daemon=True,name='mail-replies')
+            thread.return_value.start.assert_called_once()
+            sync.assert_not_called();send.assert_called_once()
+
+    def test_reply_worker_retries_after_failure(self):
+        with patch.dict(app.os.environ,{'IMAP_HOST':'imap.test'}),patch('app.sync_replies',side_effect=TimeoutError),patch('app.event') as log,patch('app.time.sleep',side_effect=StopIteration):
+            with self.assertRaises(StopIteration):app.reply_worker()
+            self.assertIn('IMAP',log.call_args.args[0])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.old_db = app.DB

@@ -369,7 +369,7 @@ class Engine:
                         contacts=c.execute("SELECT * FROM contacts WHERE company_key(company)=company_key(?) AND status='active' AND simulated=0 AND contact_pool=? AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.campaign_id=? AND m.contact_id=contacts.id) AND NOT EXISTS(SELECT 1 FROM signal_enrollments e WHERE e.campaign_id=? AND e.contact_id=contacts.id)",(signal['company'],project_scope.contact_pool(c,campaign['project_id']),campaign['id'],campaign['id'])).fetchall()
                     for contact in contacts:
                         if campaign['audience_mode']=='tags' and not contact_tags.matches(contact['tags'],campaign['audience_tags'],campaign['tag_match']):continue
-                        if not sequence_conditions.matches(campaign['conditions'], contact):continue
+                        if not sequence_conditions.matches(campaign['conditions'], contact,0):continue
                         context=dict(contact);context.update(signal_title=signal['title'],signal_evidence=signal['evidence'],signal_url=signal['url'],signal_type=CATALOG[signal['kind']]['label'])
                         messages=[]
                         for step in steps:

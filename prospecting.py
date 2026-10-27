@@ -10,6 +10,7 @@ import urllib.request
 from urllib.parse import urlencode, urlparse
 
 import ai_service
+import contact_tags
 import languages
 import shared_project
 import search_areas
@@ -96,6 +97,8 @@ def init_schema(c):
     if 'project_id' not in columns:c.execute('ALTER TABLE prospect_runs ADD COLUMN project_id INTEGER NOT NULL DEFAULT 1')
     if 'search_languages' not in columns:c.execute("ALTER TABLE prospect_runs ADD COLUMN search_languages TEXT NOT NULL DEFAULT '[]'")
     if 'search_areas' not in columns:c.execute("ALTER TABLE prospect_runs ADD COLUMN search_areas TEXT NOT NULL DEFAULT '[]'")
+    if 'tags' not in {row[1] for row in c.execute('PRAGMA table_info(prospect_candidates)')}:
+        c.execute("ALTER TABLE prospect_candidates ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
     for name in ('language', 'assistant_language'):
         if name not in columns:
             c.execute('ALTER TABLE prospect_runs ADD COLUMN '+name+" TEXT NOT NULL DEFAULT 'pl'")
@@ -118,8 +121,73 @@ class Prospecting:
         project_id=shared_project.get(self.db,project_id)['id']
         with self.db() as c:
             runs = [dict(r) for r in c.execute('SELECT * FROM prospect_runs WHERE project_id=? ORDER BY id DESC LIMIT 50',(project_id,))]
-            candidates = [dict(r) for r in c.execute('SELECT p.* FROM prospect_candidates p WHERE run_id IN (SELECT id FROM prospect_runs WHERE project_id=? ORDER BY id DESC LIMIT 50) ORDER BY id',(project_id,))]
+            candidates = [dict(r) for r in c.execute('SELECT p.*,t.id AS contact_id,t.status AS contact_status,t.tags AS contact_tags FROM prospect_candidates p LEFT JOIN contacts t ON t.email=p.email AND t.contact_pool=? WHERE run_id IN (SELECT id FROM prospect_runs WHERE project_id=? ORDER BY id DESC LIMIT 50) ORDER BY p.id',(project_scope.contact_pool(c,project_id),project_id))]
         return {'runs': runs, 'candidates': candidates, 'hunter': bool(os.getenv('HUNTER_API_KEY', '').strip())}
+
+    def add_contacts(self,item,add_contact,simulated=False):
+        """Import selected people without generating a campaign or changing existing statuses."""
+        with self.mail_lock,self.db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            project_id=project_scope.active(c)
+            if item.get('project_id',project_id)!=project_id:raise ValueError('Zmieniono projekt. Odśwież wyniki.')
+            if simulated:
+                if not languages.data_simulation(self.db):raise ValueError('Włącz symulację, aby zapisać fikcyjne kontakty.')
+                rows=item.get('contacts')
+                if not isinstance(rows,list) or not 1<=len(rows)<=300:raise ValueError('Wybierz od 1 do 300 kontaktów.')
+                for row in rows:
+                    if not isinstance(row,dict) or any(not isinstance(row.get(field,''),str) or len(row.get(field,''))>500 for field in ('name','email','company','role')):raise ValueError('Nieprawidłowy kontakt.')
+                    if not row.get('name','').strip() or not re.fullmatch(r'[^\s@<>]+@(?:[a-z0-9-]+\.)+example',row.get('email','').strip().lower()):raise ValueError('Kontakty z symulacji muszą używać domeny .example.')
+            else:
+                run=c.execute('SELECT * FROM prospect_runs WHERE id=? AND project_id=?',(int(item['id']),project_id)).fetchone()
+                if not run:raise ValueError('Nie znaleziono wyszukiwania w tym projekcie.')
+                if run['status'] in ('searching','verifying','drafting'):raise ValueError('Poczekaj na zakończenie operacji.')
+                ids=item.get('candidate_ids')
+                if not isinstance(ids,list) or not 1<=len(ids)<=300 or any(type(value)!=int or value<=0 for value in ids):raise ValueError('Wybierz od 1 do 300 kontaktów z wyników.')
+                ids=set(ids)
+                rows=[dict(row) for row in c.execute('SELECT * FROM prospect_candidates WHERE run_id=?',(run['id'],)) if row['id'] in ids]
+                if len(rows)!=len(ids):raise ValueError('Wybierz kontakty z tego wyszukiwania.')
+            mapping=item.get('tags_by_contact',{})
+            if not isinstance(mapping,dict) or len(mapping)>300:raise ValueError('Nieprawidłowe tagi kontaktów.')
+            pool=project_scope.contact_pool(c,project_id);added=existing=paused=0
+            for row in rows:
+                email=row['email'].strip().lower()
+                tags=contact_tags.normalize(c,mapping.get(email,item.get('tags',json.loads(row.get('tags','[]')))),project_id)
+                found=c.execute('SELECT id FROM contacts WHERE email=? AND contact_pool=?',(email,pool)).fetchone()
+                if found:
+                    if tags:contact_tags.set_tags(c,found['id'],tags,merge=True,project_id=project_id)
+                    existing+=1;continue
+                verified=not simulated and row['verification_status']=='valid' and row.get('checked_at') and row['checked_at']>time.time()-7*86400 and row.get('verified_at') and row['verified_at']>time.time()-31*86400 and row['qualification']!='rejected'
+                if simulated:notes='Dane symulacyjne z Leadów. Wykluczone z rzeczywistej wysyłki.'
+                else:notes=('Leady / Hunter. Weryfikacja: '+row['verification_status']+'\n'+row['fit_reason']+'\n'+row['why_now']+'\nŹródła: '+', '.join(safe_link(source.get('url','')) for source in json.loads(row['sources'])))[:10000]
+                add_contact(c,{'project_id':project_id,'name':row['name'],'email':email,'company':row['company'],'role':row['role'],'notes':notes,'tags':tags})
+                c.execute('UPDATE contacts SET simulated=?,status=? WHERE email=? AND contact_pool=?',(int(simulated),'active' if verified else 'paused',email,pool))
+                added+=1;paused+=int(not verified)
+        return {'added':added,'existing':existing,'paused':paused,'simulated':simulated}
+
+    def bulk_candidates(self,item):
+        ids=item.get('candidate_ids');action=item.get('action')
+        if action not in ('delete','tags'):raise ValueError('Nieznana operacja na wynikach.')
+        if not isinstance(ids,list) or not 1<=len(ids)<=300 or any(type(value)!=int or value<=0 for value in ids):raise ValueError('Wybierz od 1 do 300 wyników.')
+        with self.mail_lock,self.db() as c:
+            c.execute('BEGIN IMMEDIATE');project_id=project_scope.active(c)
+            if item.get('project_id',project_id)!=project_id:raise ValueError('Zmieniono projekt. Odśwież wyniki.')
+            run=c.execute('SELECT * FROM prospect_runs WHERE id=? AND project_id=?',(int(item['id']),project_id)).fetchone()
+            if not run:raise ValueError('Nie znaleziono wyszukiwania w tym projekcie.')
+            if run['status'] in ('searching','verifying','drafting'):raise ValueError('Poczekaj na zakończenie operacji.')
+            selected=set(ids);rows=[dict(row) for row in c.execute('SELECT * FROM prospect_candidates WHERE run_id=?',(run['id'],)) if row['id'] in selected]
+            if len(rows)!=len(selected):raise ValueError('Wybierz kontakty z tego wyszukiwania.')
+            if action=='delete':
+                c.executemany('DELETE FROM prospect_candidates WHERE id=?',[(row['id'],) for row in rows])
+            else:
+                tags=contact_tags.normalize(c,item.get('tags',[]),project_id)
+                if not tags:raise ValueError('Wybierz co najmniej jeden tag.')
+                contact_tags.register(c,tags,project_scope.contact_pool(c,project_id))
+                for row in rows:
+                    merged=contact_tags.parse(json.loads(row['tags'])+tags)
+                    c.execute('UPDATE prospect_candidates SET tags=? WHERE id=?',(json.dumps(merged,ensure_ascii=False),row['id']))
+                    existing=c.execute('SELECT id FROM contacts WHERE email=? AND contact_pool=?',(row['email'],project_scope.contact_pool(c,project_id))).fetchone()
+                    if existing:contact_tags.set_tags(c,existing['id'],tags,merge=True,project_id=project_id)
+        return {'updated':len(rows)}
 
     def update(self, run_id, **fields):
         allowed = {'status', 'stage', 'error', 'warnings', 'filters', 'offer', 'campaign_id', 'draft_completed', 'draft_total'}
@@ -207,19 +275,35 @@ class Prospecting:
         self.update(run_id, stage='Wyszukiwanie firm w Hunter Discover')
         search_languages=json.loads(run['search_languages'])
         query=run['audience']
+        query+='\nSeller offering (context, not a requirement that buyers sell the same thing): '+run['offer']
+        if run['titles']:query+='\nRequested contact job titles: '+run['titles']
+        if run['department']:query+='\nRequested contact department: '+run['department']
+        query+='\nExclude these company domains (including subdomains): '+', '.join(json.loads(run['exclusions']))
         areas=json.loads(run['search_areas'])
         query+=search_areas.query(areas)
         if areas:warnings.append('Map areas were included in the search criteria. Hunter does not confirm an exact radius match; check company locations before contact.' if run['assistant_language']=='en' else 'Obszary z mapy przekazano jako kryteria. Hunter nie potwierdza dopasowania do dokładnego promienia; sprawdź lokalizację firm przed kontaktem.')
-        if search_languages:
-            query+='\nPreferred languages for business communication (at least one): '+', '.join(languages.SEARCH_LANGUAGE_NAMES[code] for code in search_languages)+'. Prefer companies serving customers in these languages. Language is not a country filter.'
-        result = hunter.request('discover', body={'query': query, 'limit': run['company_limit']})
-        companies = result['data']
-        if not isinstance(companies, list):
-            raise ValueError('Hunter nie zwrócił listy firm.')
-        self.update(run_id, filters=json.dumps(result.get('meta', {}).get('filters', {}), ensure_ascii=False))
+        companies=[];requests=[];successful=0
+        for index,code in enumerate(search_languages or [None]):
+            if index:time.sleep(.22)  # Discover accepts at most five requests per second.
+            language_query=query
+            if code:language_query+='\nPreferred language for business communication: '+languages.SEARCH_LANGUAGE_NAMES[code]+'. Prefer companies serving customers in this language. Language is not a country filter.'
+            body={'query':language_query,'limit':run['company_limit']}
+            entry={'language':code,'request':body}
+            self.update(run_id,stage='Wyszukiwanie firm w Hunter Discover: '+(languages.SEARCH_LANGUAGE_NAMES[code] if code else 'wszystkie języki'))
+            try:
+                result=hunter.request('discover',body=body)
+                if not isinstance(result.get('data'),list):raise ValueError('Hunter nie zwrócił listy firm.')
+                successful+=1;entry['filters']=result.get('meta',{}).get('filters',{})
+                companies.extend(result['data'][:run['company_limit']])
+            except ValueError as exc:
+                entry['error']=str(exc);warnings.append((code or '*')+': '+str(exc))
+            requests.append(entry)
+            self.update(run_id,filters=json.dumps({'requests':requests,'search':{key:run[key] for key in ('audience','titles','department','company_limit','per_company','language','search_languages','search_areas','exclusions')}},ensure_ascii=False),warnings=json.dumps(warnings,ensure_ascii=False))
+        if not successful:raise ValueError('Nie udało się wyszukać firm w żadnym języku. Sprawdź szczegóły zapytań Hunter.')
         seen = set()
-        for company in companies[:run['company_limit']]:
-            domain = clean_domain(company.get('domain', ''))
+        for company in companies:
+            try:domain = clean_domain(company.get('domain', ''))
+            except (ValueError,AttributeError):continue
             if domain in seen or any(domain == d or domain.endswith('.'+d) for d in json.loads(run['exclusions'])):
                 continue
             seen.add(domain)
@@ -438,6 +522,8 @@ class Prospecting:
         return {'campaign_id': campaign_id}
 
     def post(self, path, item):
+        if path == 'candidates/bulk':
+            return self.bulk_candidates(item)
         if path == 'search':
             return self.start(item)
         if path == 'verify':

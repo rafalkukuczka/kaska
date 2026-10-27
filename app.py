@@ -526,7 +526,7 @@ def prepare(campaign_id):
             contacts = [contact for contact in contacts if contact['target_group']==campaign['target_group'] and campaign['target_group']]
         if campaign['audience_mode']=='tags':
             contacts = [contact for contact in contacts if contact_tags.matches(contact['tags'],campaign['audience_tags'],campaign['tag_match'])]
-        contacts = [contact for contact in contacts if sequence_conditions.matches(campaign['conditions'], contact)]
+        contacts = [contact for contact in contacts if sequence_conditions.matches(campaign['conditions'], contact,0)]
         steps = c.execute('SELECT * FROM steps WHERE campaign_id=? ORDER BY position', (campaign_id,)).fetchall()
     if not contacts:
         raise ValueError('Brak aktywnych kontaktów spełniających wybór odbiorców i warunki sekwencji.')
@@ -556,7 +556,7 @@ def send_one():
         last = c.execute('SELECT MAX(sent_at) FROM messages').fetchone()[0] or 0
         if sent >= int(os.getenv('DAILY_SEND_LIMIT', '50')) or time.time() - last < int(os.getenv('SEND_INTERVAL_SECONDS', '60')):
             return
-        msg = c.execute("""SELECT m.*, t.email, p.language FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id
+        eligible = c.execute("""SELECT m.*, t.email,t.company,t.role,p.conditions, p.language FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id
             WHERE m.status='queued' AND m.deleted=0 AND p.status='active' AND t.status='active' AND t.simulated=0 AND m.due<=?
             AND campaign_matches(p.conditions,t.email,t.company,t.role)=1
             AND NOT EXISTS(SELECT 1 FROM messages prev WHERE prev.campaign_id=m.campaign_id AND prev.contact_id=m.contact_id AND prev.position<m.position AND prev.status!='sent')
@@ -565,7 +565,13 @@ def send_one():
                 JOIN steps ms ON ms.campaign_id=m.campaign_id AND ms.position=m.position
                 WHERE prev.campaign_id=m.campaign_id AND prev.contact_id=m.contact_id AND prev.position=m.position-1
                 AND prev.sent_at+(ms.delay_days-ps.delay_days)*86400<=?))
-            ORDER BY m.due,m.id LIMIT 1""", (time.time(), time.time())).fetchone()
+            ORDER BY m.due,m.id LIMIT 200""", (time.time(), time.time())).fetchall()
+        msg=None
+        for candidate in eligible:
+            if not sequence_conditions.matches(candidate['conditions'],candidate,candidate['position'],candidate['position']-1):
+                c.execute("UPDATE messages SET status='cancelled',error='Pominięto odbiorcę: niespełniony warunek sekwencji.' WHERE campaign_id=? AND contact_id=? AND position>=? AND status='queued'",(candidate['campaign_id'],candidate['contact_id'],candidate['position']))
+                continue
+            msg=candidate;break
         if not msg:
             return
         message_id = make_msgid()
@@ -638,16 +644,23 @@ def sync_replies():
     event('Zsynchronizowano odpowiedzi z poczty')
 
 
-def worker():
-    last_sync = 0
+def reply_worker():
     while True:
         try:
-            if os.getenv('IMAP_HOST') and time.time() - last_sync > 60:
-                last_sync = time.time()
+            if os.getenv('IMAP_HOST'):
                 sync_replies()
+        except Exception:
+            event('Błąd odczytu odpowiedzi. Sprawdź konfigurację IMAP.')
+        time.sleep(60)
+
+
+def worker():
+    threading.Thread(target=reply_worker,daemon=True,name='mail-replies').start()
+    while True:
+        try:
             send_one()
         except Exception:
-            event('Błąd integracji pocztowej. Sprawdź konfigurację SMTP/IMAP.')
+            event('Błąd kolejki wysyłki. Sprawdź konfigurację SMTP.')
         time.sleep(5)
 
 
@@ -800,6 +813,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path.startswith('/api/signals/'):
                 return self.respond(signal_engine.post(self.path[len('/api/signals/'):], item))
             elif self.path.startswith('/api/prospecting/'):
+                if self.path in ('/api/prospecting/contacts/add','/api/prospecting/contacts/add-simulation'):
+                    return self.respond(prospector.add_contacts(item,add_contact,self.path.endswith('add-simulation')))
                 if self.path == '/api/prospecting/search':item=shared_project.resolve(db,item)
                 return self.respond(prospector.post(self.path[len('/api/prospecting/'):], item))
             elif self.path == '/api/preferences':
@@ -823,7 +838,7 @@ class Handler(BaseHTTPRequestHandler):
                     library.validate_campaign(c,item)
                     contact=c.execute("SELECT * FROM contacts WHERE id=? AND status='active'",(int(item['preview_contact_id']),)).fetchone()
                 if not contact:raise ValueError('Wybierz aktywny kontakt do podglądu')
-                if not sequence_conditions.matches(conditions, contact):raise ValueError('Wybrany kontakt nie spełnia warunków sekwencji.')
+                if not sequence_conditions.matches(conditions, contact,int(item.get('preview_step',0))):raise ValueError('Wybrany kontakt nie spełnia warunków sekwencji.')
                 campaign=dict(item)
                 campaign['material_ids']=json.dumps(item.get('material_ids',[]))
                 subject,body=ai_copy(contact,campaign,item['steps'][int(item.get('preview_step',0))],use_ai=False)

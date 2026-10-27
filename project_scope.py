@@ -44,7 +44,7 @@ def guard_request(c,path,item):
     if path in ('/api/campaigns','/api/campaign/preview'):
         for contact_id in item.get('contact_ids',[]):require_contact(c,contact_id)
         if item.get('preview_contact_id'):require_contact(c,item['preview_contact_id'])
-    if path in ('/api/prospecting/verify','/api/prospecting/draft'):
+    if path in ('/api/prospecting/verify','/api/prospecting/draft','/api/prospecting/contacts/add','/api/prospecting/candidates/bulk'):
         row=c.execute('SELECT project_id FROM prospect_runs WHERE id=?',(int(item['id']),)).fetchone()
         if not row or row[0]!=active(c):raise ValueError('Nie znaleziono wyszukiwania w tym projekcie.')
     if path=='/api/signals/rules' and item.get('campaign_id'):require_campaign(c,item['campaign_id'])

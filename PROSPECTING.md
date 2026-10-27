@@ -1,4 +1,8 @@
-# Pierwszy etap: od opisu odbiorców do szkiców
+# Leady: od opisu odbiorców do kontaktów
+
+Wyszukiwanie wysyła pełną, niezmienioną treść pola **Opis wyszukiwania** do Hunter Discover, razem z kontekstem oferty, stanowiskami, działem, wykluczeniami i obszarami z mapy. Dla każdego zaznaczonego języka powstaje osobne zapytanie; bez zaznaczeń powstaje jedno zapytanie bez ograniczenia językowego. Limit firm obowiązuje osobno dla każdego języka. Wyniki są łączone w jednym widoku: powtórzone domeny są odpytywane o kontakty tylko raz, a adresy email nie powtarzają się w wynikach. Błąd jednego języka nie usuwa wyników pozostałych. Sekcja **Oferta i zastosowane filtry wyszukiwarki** zawiera wysłane zapytania, filtry dostawcy i ewentualne błędy dla każdego języka. Hunter interpretuje opis przy użyciu własnych obsługiwanych filtrów; język rozmowy i dokładny promień mapy wymagają potwierdzenia.
+
+Wyniki są stronicowane po 10, 25 lub 50 kontaktów, z grupowaniem według firmy na danej stronie. Checkbox zaznacza kontakty z bieżącej strony; wybór jest zachowany przy zmianie strony. **Operacje zbiorcze** pozwalają dopisać tagi lub usunąć zaznaczone wyniki. Usunięcie wyniku nie usuwa zapisanych kontaktów. Tagi wyników zapisują się w bazie i są używane przy późniejszym imporcie; jeśli osoba jest już kontaktem, tagi dopisują się również do jej kontaktu bez zmiany statusu. Wyniki i operacje symulacyjne zachowują się analogicznie, ale pozostają oznaczone jako fikcyjne.
 
 Pod opisem firm znajduje się rozwijana lista **Szukaj w językach** z checkboxami dla polskiego, angielskiego, niemieckiego, francuskiego, hiszpańskiego i włoskiego. Można wybrać kilka języków; brak zaznaczeń oznacza brak ograniczenia. Wybór zapisuje się w projekcie, jest dostępny również w edycji projektu Discover i trafia jako preferencja języka rozmowy do zapytania Hunter oraz oceny dopasowania. Historia wyszukiwania zachowuje własną listę wybranych języków. Język wiadomości jest oddzielnym ustawieniem. Język kontaktu z firmą wymaga potwierdzenia — kraj siedziby, domena ani sam wynik wyszukiwarki go nie potwierdzają.
 
@@ -8,10 +12,10 @@ Pod opisem firm znajduje się rozwijana lista **Szukaj w językach** z checkboxa
 2. W **Integracje → Hunter** podaj własny klucz API z konta Hunter. Przycisk sprawdza dostęp przez `/v2/account`, a następnie zapisuje klucz w lokalnym `.env`. Nie udostępnia klucza przeglądarce. Dostęp do Discover zależy od planu konta; poprawny klucz nie gwarantuje dostępu do każdej funkcji.
 3. Opcjonalnie podłącz OpenAI. Bez niego wyszukiwanie i weryfikacja nadal działają, ocena pozostaje „Do ręcznej oceny”, a wiadomości korzystają z szablonów.
 4. Otwórz **Znajdź klientów**, wybierz język wiadomości, podaj stronę nadawcy, ofertę i opis firm: branżę, kraj, wielkość i inne kryteria. Jeżeli oferta jest pusta, pobieramy opis z publicznego HTML strony nadawcy. Język Kaśki ustawisz niezależnie w nagłówku lub Integracjach; nowe oceny powstają po polsku albo angielsku. Wiadomości obsługują polski, angielski, niemiecki, francuski, hiszpański i włoski. Bez OpenAI ofertę wpisz w docelowym języku.
-5. Wybierz dział lub wpisz stanowiska, limit firm (1–10), osób na firmę (1–3) i wykluczone domeny. Domyślnie skan obejmuje do 3 firm i 2 osób na firmę.
+5. Wybierz dział lub wpisz stanowiska, limit firm na język (1–10), osób na firmę (1–3) i wykluczone domeny. Domyślnie skan obejmuje do 3 firm na każdy wybrany język i 2 osób na firmę.
 6. Uruchom wyszukiwanie. Wyniki i postęp zapisują się w bazie. Możesz przejść do innej zakładki i wrócić. To nie uruchamia poczty.
 7. Przejrzyj źródła, daty, uzasadnienie oraz braki w danych. Kliknij **Zweryfikuj adresy email**. Dostawca może zwrócić także `pending`, `accept_all` lub `unknown`; takie wyniki nie dopuszczają do kampanii. Weryfikację można ponowić ręcznie.
-8. Zaznacz osoby, których dopasowanie sprawdziłeś, i kliknij **Utwórz szkice dla wybranych**. Powstaje kampania w stanie `draft` z dwoma wiadomościami na osobę: dzień 0 i 3. Przejrzyj lub edytuj wiadomości w kampanii. Wysyłkę uruchamiasz osobno.
+8. Rozwiń firmę, zaznacz osoby i opcjonalnie wybierz lub dodaj tagi przy każdym kontakcie. Kliknij **Dodaj wybrane do kontaktów**. Osoby bez aktualnej, poprawnej weryfikacji trafiają do kontaktów jako wstrzymane. Powtórny zapis dopisuje tagi do istniejących osób bez zmiany ich statusu. Ta operacja nie tworzy kampanii ani wiadomości; kampanie przygotowujesz osobno w zakładce **Kampanie**.
 
 Bezpośredni adres ekranu: `http://localhost:8787/#prospecting`.
 

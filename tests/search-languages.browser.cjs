@@ -24,6 +24,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('[name=search_language][value=de]').check();
   assert.equal(await page.locator('[data-search-languages-summary]').textContent(),'English, Deutsch');
   await page.locator('nav [data-view=prospecting]').click();
+  await page.locator('#prospect-advanced>summary').click();
   await page.locator('#prospect-language').selectOption('fr');
   const requestPromise=page.waitForRequest(r=>r.url().endsWith('/api/prospecting/search'));
   await page.locator('#prospect-search').click();

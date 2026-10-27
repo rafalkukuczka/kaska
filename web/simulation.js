@@ -11,6 +11,13 @@ function simulationResultId(){
 try{simulationResults=JSON.parse(sessionStorage.getItem('kaska-data-simulation-results')||'{}')}catch{}
 const simulatedFetchPaths=new Set(['discover/contacts/search','prospecting/search','prospecting/verify','signals/scan','signals/discovery/start','signals/discovery/cancel','signals/monitoring/companies','research','ai/proof-points','library/discover','library/add','sync']);
 function shouldSimulateRequest(path,data){
+ if(path==='prospecting/candidates/bulk'&&String(data?.id).startsWith('sim-')){
+  if(!monitoringSimulation)throw Error('Włącz symulację, aby zmieniać fikcyjne wyniki.');return true;
+ }
+ if(path==='prospecting/contacts/add'&&String(data?.id).startsWith('sim-')){
+  if(!monitoringSimulation)throw Error('Włącz symulację, aby dodać fikcyjne kontakty.');
+  return true;
+ }
  if(monitoringSimulation&&path==='campaign/status')return true;
  if(path==='contacts/tags/bulk'&&Array.isArray(data?.ids)&&data.ids.length&&data.ids.every(id=>Number.isInteger(id)&&id<0)){
   if(!monitoringSimulation)throw Error('Włącz symulację, aby zmieniać fikcyjne kontakty.');
@@ -107,8 +114,28 @@ async function simulationApi(path,data={}){
   result={ok:true,simulated:true};
  }else if(path==='prospecting/search'){
   const id=simulationResultId();
-  results.runs.unshift({...data,id,simulated:true,project_id:state.seller_project.id,status:'ready',stage:'Wyniki symulacji pobierania danych',warnings:'["Dane fikcyjne. Nie można użyć ich do rzeczywistej kampanii."]',filters:'{}',error:''});
-  for(let i=1;i<=Math.min(3,Number(data.company_limit)||3);i++)results.candidates.push({id:id+'-'+i,run_id:id,simulated:true,name:`Osoba Testowa ${i}`,company:`Klient Demo ${i}`,email:`kontakt${i}@przyklad.example`,role:data.titles||'Operations Manager',qualification:'uncertain',fit_reason:'Przykładowy wynik dla podanych kryteriów.',missing_data:'Fikcyjne dane',why_now:'Przykładowe zdarzenie',verification_status:'unverified',sources:'[]',evidence:JSON.stringify({company_summary:'Firma demonstracyjna',retrieved:now})});result={id};
+  const searchLanguages=data.search_languages?.length?data.search_languages:[null],limit=Math.max(1,Math.min(10,Number(data.company_limit)||3));
+  const requests=searchLanguages.map(language=>({language,request:{query:data.audience,limit},search_areas:data.search_areas||[],filters:{simulated:true}}));
+  results.runs.unshift({...data,id,simulated:true,project_id:state.seller_project.id,status:'ready',stage:'Wyniki symulacji pobierania danych',warnings:'["Dane fikcyjne. Nie można użyć ich do rzeczywistej kampanii."]',filters:JSON.stringify({requests}),error:''});
+  for(let i=1;i<=limit*searchLanguages.length;i++)results.candidates.push({id:id+'-'+i,run_id:id,simulated:true,tags:[],name:`Osoba Testowa ${i}`,company:`Klient Demo ${i}`,email:`kontakt${i}@przyklad.example`,role:data.titles||'Operations Manager',qualification:'uncertain',fit_reason:'Przykładowy wynik dla podanych kryteriów.',missing_data:'Fikcyjne dane',why_now:'Przykładowe zdarzenie',verification_status:'unverified',sources:'[]',evidence:JSON.stringify({company_summary:'Firma demonstracyjna',retrieved:now})});result={id};
+ }else if(path==='prospecting/candidates/bulk'){
+  const selected=new Set(data.candidate_ids),rows=results.candidates.filter(row=>row.run_id===data.id&&selected.has(row.id));
+  if(!selected.size||rows.length!==selected.size)throw Error('Wybierz kontakty z tego wyszukiwania.');
+  if(data.action==='delete')results.candidates=results.candidates.filter(row=>row.run_id!==data.id||!selected.has(row.id));
+  else if(data.action==='tags'){
+   const tags=contactTags(data.tags);if(!tags.length)throw Error('Wybierz co najmniej jeden tag.');
+   const updates=rows.map(row=>({row,tags:contactTags([...contactTags(row.tags||[]),...tags])}));
+   if(updates.some(update=>update.tags.length>30||update.tags.some(tag=>tag.length>100||/[;\u0000-\u001f\u007f]/.test(tag))))throw Error('Nieprawidłowe tagi.');
+   const contacts=state.contacts.filter(contact=>contact.id>0&&rows.some(row=>row.email.toLowerCase()===contact.email.toLowerCase()));
+   if(contacts.length)await api('contacts/tags/bulk',{ids:contacts.map(contact=>contact.id),tags});
+   updates.forEach(update=>update.row.tags=update.tags);
+  }else throw Error('Nieznana operacja na wynikach.');
+  result={updated:rows.length,simulated:true};
+ }else if(path==='prospecting/contacts/add'){
+  if(!Array.isArray(data.candidate_ids)||!data.candidate_ids.length)throw Error('Wybierz kontakty z wyników.');
+  const selected=[...new Set(data.candidate_ids)],rows=results.candidates.filter(row=>row.run_id===data.id&&selected.includes(row.id));
+  if(rows.length!==selected.length)throw Error('Wybierz kontakty z tego wyszukiwania.');
+  result=await api('prospecting/contacts/add-simulation',{project_id:state.seller_project.id,contacts:rows.map(({name,email,company,role})=>({name,email,company,role})),tags_by_contact:data.tags_by_contact||{}});
  }else if(path==='prospecting/verify'){
   for(const candidate of results.candidates.filter(c=>c.run_id===data.id))Object.assign(candidate,{verification_status:'unknown',checked_at:now,error:'Symulowany odczyt nie potwierdza adresu.'});result={simulated:true};
  }else if(path==='signals/scan'){result={created:state.signals.sources.filter(s=>s.enabled&&(!data.id||s.id===data.id)).length*3,enrolled:0,errors:[],simulated:true};

@@ -130,11 +130,35 @@ function updateRecipientHint(){
 function decorateBuilderSteps(){
  const steps=[...document.querySelectorAll('#steps .step')];
  steps.forEach((s,i)=>{s.querySelector('h3').textContent=`✉ Email · krok ${i+1}`;if(!s.querySelector('[data-builder=remove-step]'))s.insertAdjacentHTML('beforeend','<button type="button" class="link" data-builder="remove-step">Usuń krok</button>')});
+ steps.forEach(step=>{if(!step.querySelector('[data-builder=step-preview]'))step.querySelector('[data-builder=remove-step]').insertAdjacentHTML('beforebegin','<button type="button" class="secondary step-preview-button" data-builder="step-preview">Podgląd</button>')});
  renderSequenceMap();
  const value=$('#preview-step')?.value||0;if($('#preview-step')){$('#preview-step').innerHTML=steps.map((_,i)=>`<option value="${i}">Wiadomość ${i+1}</option>`).join('');$('#preview-step').value=Math.min(Number(value),steps.length-1)}
 }
+async function previewBuilderStep(step){
+ const form=$('#campaign-form'),projectId=state.seller_project.id,index=[...form.querySelectorAll('.step')].indexOf(step);
+ if(index<0)return;
+ const data=builderData(),selected=new Set(data.contact_ids);
+ const options=[...$('#preview-contact').options].filter(option=>option.value&&(data.audience_mode!=='selected'||selected.has(Number(option.value))));
+ modal(`<section data-step-preview><h2><span>Podgląd wiadomości</span> · ${index+1}</h2><label for="step-preview-contact">Kontakt</label><select id="step-preview-contact">${options.map(option=>`<option value="${esc(option.value)}" ${option.value===$('#preview-contact').value?'selected':''} data-no-translate>${esc(option.textContent)}</option>`).join('')}</select><button type="button" class="secondary" data-step-preview-refresh>Odśwież podgląd</button><p class="hint" data-step-preview-status role="status"></p><div data-step-preview-message></div></section>`);
+ const host=$('[data-step-preview]'),contact=host.querySelector('select'),status=host.querySelector('[data-step-preview-status]'),message=host.querySelector('[data-step-preview-message]');let request=0;
+ if(!options.length){contact.disabled=true;host.querySelector('button').disabled=true;status.textContent=translateUiText('Brak aktywnych kontaktów');return}
+ const load=async()=>{
+  const token=++request;status.textContent=translateUiText('Wczytuję podgląd…');message.replaceChildren();
+  try{
+   if(!step.isConnected||$('#campaign-form')!==form||state.seller_project.id!==projectId)return;
+   const current=builderData(),position=[...form.querySelectorAll('.step')].indexOf(step);
+   const result=await api('campaign/preview',{...current,preview_contact_id:contact.value,preview_step:position});
+   if(!host.isConnected||!$('#modal').open||request!==token)return;
+   status.textContent='';
+   message.innerHTML=`<div class="mail-preview"><div><span>Temat</span><strong data-no-translate>${esc(result.subject)}</strong></div><p data-no-translate>${esc(result.body)}</p></div>${result.material?`<div class="preview-material"><strong data-no-translate>${esc(result.material.title)}</strong><small data-no-translate>${esc(result.material.url)}</small></div>`:''}`;
+   syncLanguages();
+  }catch(error){if(host.isConnected&&request===token)status.textContent=error.message}
+ };
+ contact.onchange=load;host.querySelector('button').onclick=event=>run(event.currentTarget,load);await load();
+}
 function showBuilderStage(stage){
  builderStep=Math.max(0,Math.min(3,stage));renderAssistantButtons();renderSequenceMap();$('.builder-preview').dataset.stageIndex=builderStep;document.querySelectorAll('[data-stage]').forEach(s=>s.hidden=Number(s.dataset.stage)!==builderStep);
+ $('.builder-preview').hidden=builderStep<2;$('.builder-layout').dataset.stageIndex=builderStep;
  document.querySelectorAll('[data-builder-step]').forEach(b=>{b.classList.toggle('selected',Number(b.dataset.builderStep)===builderStep);b.setAttribute('aria-current',Number(b.dataset.builderStep)===builderStep?'step':'false')});
  $('#builder-stage-count').textContent=`Krok ${builderStep+1} z 4`;document.querySelector('[data-builder=prev]').disabled=builderStep===0;document.querySelector('[data-builder=next]').hidden=builderStep===3;
  document.querySelector('[data-builder=header-next]').textContent=builderStep===3?'Zapisz kampanię':'Zapisz i przejdź dalej';
@@ -155,11 +179,12 @@ document.addEventListener('click',e=>{
   if(action==='save-draft'){showBuilderStage(3);$('#campaign-form').requestSubmit()}
   if(action==='prev')showBuilderStage(builderStep-1);
   if(action==='import-project')importCampaignProject();
+  if(action==='step-preview')await previewBuilderStep(b.closest('.step'));
   if(action==='website-shortcut')await assistantPitch('website');
   if(action==='materials-shortcut')await assistantPitch('stories');
   if(action==='preview-shortcut'){showBuilderStage(2);$('#preview-contact').focus()}
   if(action==='add-step'){addStep();decorateBuilderSteps();persistBuilder()}
-  if(action==='remove-step'){if(document.querySelectorAll('#steps .step').length===1)throw Error('Sekwencja musi mieć co najmniej jeden krok');b.closest('.step').remove();decorateBuilderSteps();persistBuilder()}
+  if(action==='remove-step'){const steps=[...document.querySelectorAll('#steps .step')];if(steps.length===1)throw Error('Sekwencja musi mieć co najmniej jeden krok');const index=steps.indexOf(b.closest('.step'));for(const condition of builderConditions)if(condition.before_step>index)condition.before_step--;sequenceInsertAt=null;b.closest('.step').remove();decorateBuilderSteps();persistBuilder()}
   if(action==='discover'){const website=$('#company-url').value;if(!website)throw Error('Podaj stronę firmy');$('#research-status').textContent='Odczytuję stronę i podstrony…';const result=await api('library/discover',{website});$('#company-url').value=result.website;$('#build-offer').value=result.offer;await refresh();renderBuilderMaterials();$('#research-status').textContent=`Odczytano ${result.added} stron. Nieudane odczyty: ${result.errors.length}. Sprawdź ofertę i materiały przed wysyłką.`;persistBuilder()}
   if(action==='improve-step')await assistantStep('improve');
   if(action==='first-touch')await assistantStep('first_touch');

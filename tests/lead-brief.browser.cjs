@@ -1,0 +1,84 @@
+const {chromium}=require('playwright');
+const {spawn}=require('node:child_process');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ const data=fs.mkdtempSync(path.resolve('test-results/lead-brief-'));
+ const server=spawn('python',['tests/browser_server.py'],{env:{...process.env,APP_PORT:'8809',APP_DATA_DIR:data,SMTP_HOST:'',SMTP_FROM:'',IMAP_HOST:'',OPENAI_API_KEY:'',HUNTER_API_KEY:'browser-fixture-only'},stdio:'pipe'});
+ let browser;
+ try{
+  await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
+  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[],aiRequests=[],searches=[];let watch=false,writes=0,fail=false;
+  page.on('pageerror',e=>errors.push(e.message));
+  page.on('request',request=>{if(watch&&request.method()==='POST'&&request.url().endsWith('/api/seller-project'))writes++});
+  await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
+  await page.route('https://tile.openstreetmap.org/**',r=>r.abort());
+  await page.route('**/api/ai/suggest-audience',route=>{aiRequests.push(route.request().postDataJSON());return fail?route.fulfill({status:400,json:{error:'AI fixture failure'}}):route.fulfill({json:{audience:'Manufacturing companies in Germany with 50+ employees that could use production software services.'}})});
+  await page.route('**/api/prospecting/search',route=>{searches.push(route.request().postDataJSON());return route.fulfill({json:{id:999}})});
+  await page.goto('http://localhost:8809');await page.waitForFunction(()=>state?.seller_project);
+  await page.evaluate(async()=>{await api('seller-project',{offer:'Production software services',audience:'Germany, 50+ employees',website:'alpha.example'});await refresh()});
+  const original=await page.evaluate(()=>({...state.seller_project}));watch=true;
+  await page.locator('nav [data-view=prospecting]').click();
+  assert.ok((await page.locator('#prospect-lead-brief').inputValue()).includes(original.offer));
+  assert.ok((await page.locator('#prospect-lead-brief').inputValue()).includes(original.audience));
+  await page.evaluate(()=>state.integrations.ai=true);
+  await page.locator('#formulate-lead-brief').click();
+  await page.waitForFunction(()=>document.querySelector('#lead-brief-status').textContent.includes('Opis gotowy'));
+  assert.equal(aiRequests[0].offer,original.offer);assert.equal(aiRequests[0].audience,original.audience);
+  await page.locator('#prospect-lead-brief').fill('My edited search brief: manufacturing in Germany with at least 50 employees.');
+  await page.locator('#prospect-search').click();
+  await page.waitForFunction(()=>document.querySelector('#prospect-search').disabled===false);
+  assert.equal(searches[0].audience,'My edited search brief: manufacturing in Germany with at least 50 employees.');
+  assert.equal(searches[0].offer,original.offer);assert.equal('lead_brief' in searches[0],false);
+  await page.reload();await page.locator('#prospect-lead-brief').waitFor();
+  assert.equal(await page.locator('#prospect-lead-brief').inputValue(),searches[0].audience);
+  await page.evaluate(async()=>chooseSellerProject('seller-projects/create',{name:'Other'}));
+  assert.equal(await page.locator('#prospect-lead-brief').inputValue(),'');
+  await page.evaluate(async()=>chooseSellerProject('seller-projects/select',{project_id:1}));
+  assert.equal(await page.locator('#prospect-lead-brief').inputValue(),searches[0].audience);
+  fail=true;await page.evaluate(()=>state.integrations.ai=true);await page.locator('#formulate-lead-brief').click();
+  await page.getByText('AI fixture failure',{exact:true}).first().waitFor();
+  assert.equal(await page.locator('#prospect-lead-brief').inputValue(),searches[0].audience);
+  const after=await page.evaluate(async()=>(await(await fetch('/api/state')).json()).seller_project);
+  assert.equal(after.offer,original.offer);assert.equal(after.audience,original.audience);assert.equal(after.revision,original.revision);assert.equal('lead_brief' in after,false);assert.equal(writes,0);
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await page.locator('#ui-language').selectOption('en');await page.getByText('Search brief',{exact:true}).waitFor();
+  assert.equal(await page.locator('#prospect-lead-brief').inputValue(),searches[0].audience);
+  // Dashboard starts exactly one search with the freshly entered criteria.
+  watch=false;
+  await page.locator('nav [data-view=dashboard]').click();
+  await page.locator('#dashboard-audience').fill('Logistics companies in Austria with 100+ employees');
+  await page.evaluate(()=>{
+   const form=document.querySelector('#dashboard-search-form');
+   form.requestSubmit(form.querySelector('button[type=submit]'));
+   form.requestSubmit(form.querySelector('button[type=submit]'));
+  });
+  await page.waitForFunction(()=>view==='prospecting'&&document.querySelector('#prospect-search')?.disabled===false);
+  assert.equal(searches.length,2);
+  assert.ok(searches[1].audience.includes('Logistics companies in Austria with 100+ employees'));
+  assert.ok(searches[1].audience.includes(original.offer));
+  assert.equal(searches[1].project_id,original.id);
+  assert.equal(searches[1].offer,original.offer);
+  // Empty Dashboard input reuses the current project criteria.
+  await page.locator('nav [data-view=dashboard]').click();
+  await page.locator('#dashboard-search-form button[type=submit]').click();
+  await page.waitForFunction(()=>view==='prospecting'&&document.querySelector('#prospect-search')?.disabled===false);
+  assert.equal(searches.length,3);
+  assert.equal(searches[2].audience,searches[1].audience);
+  // Missing integration opens Leads with an actionable explanation, without a request.
+  await page.locator('nav [data-view=dashboard]').click();
+  await page.evaluate(()=>state.prospecting.hunter=false);
+  await page.locator('#dashboard-search-form button[type=submit]').click();
+  await page.waitForFunction(()=>view==='prospecting'&&document.querySelector('#prospect-feedback')?.textContent.includes('Connect Hunter'));
+  assert.equal(searches.length,3);
+  // An existing operation must not launch another search.
+  await page.locator('nav [data-view=dashboard]').click();
+  await page.evaluate(()=>{state.prospecting.hunter=true;state.prospecting.runs.push({id:1000,status:'searching',audience:'Existing search',stage:'Searching',warnings:'[]',filters:'{}'})});
+  await page.locator('#dashboard-search-form button[type=submit]').click();
+  await page.waitForFunction(()=>view==='prospecting'&&document.querySelector('#prospect-feedback')?.textContent.includes('already running'));
+  assert.equal(searches.length,3);
+  assert.deepEqual(errors,[]);
+  console.log('Lead brief QA passed: local brief, AI, project isolation, Dashboard automatic search, duplicate prevention, existing criteria, missing integration and busy operation, English and mobile.');
+ }finally{if(browser)await browser.close();server.kill()}
+})().catch(e=>{console.error(e);process.exitCode=1});

@@ -41,20 +41,21 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(canonical.steps[0].body,'User message text');
   // Simulation replaces acquisition only. User input and canonical records stay in place.
   await page.locator('nav [data-view=prospecting]').click();
+  await page.locator('#prospect-advanced>summary').click();
   await page.locator('#prospect-titles').fill('My custom role');
   await page.locator('#prospect-search').click();
-  await page.locator('.prospect-card').first().waitFor();
-  assert.equal(await page.locator('.prospect-card').count(),3);
+  await page.locator('.lead-person').first().waitFor({state:'attached'});
+  assert.equal(await page.locator('.lead-person').count(),3);
   assert.equal(posts.some(url=>url.endsWith('/prospecting/search')),false);
   await page.locator('[data-prospect-action=verify]').click();
   await page.waitForFunction(()=>state.prospecting.candidates.every(c=>c.verification_status==='unknown'));
-  assert.equal(await page.locator('[data-prospect-id]:enabled').count(),0);
+  assert.equal(await page.locator('[data-prospect-id]:enabled').count(),3);
   await page.evaluate(async()=>{sellerPending.offer='Edited while fetching simulation';await flushSellerProject()});
   await page.locator('#app-simulation').uncheck();
   await page.waitForFunction(()=>!monitoringSimulation&&!document.querySelector('#app-simulation').disabled);
   assert.equal(await page.evaluate(()=>sellerProject().offer),'Edited while fetching simulation');
   assert.equal(await page.locator('#prospect-titles').inputValue(),'My custom role');
-  assert.equal(await page.locator('.prospect-card').count(),0);
+  assert.equal(await page.locator('.lead-person').count(),0);
   assert.equal(await page.evaluate(()=>state.contacts[0].name),'User Contact');
   assert.equal(await page.evaluate(()=>state.campaigns[0].offer),'User campaign offer');
   await page.locator('#app-simulation').check();
