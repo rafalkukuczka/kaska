@@ -169,3 +169,5 @@ button.link.danger,button.secondary.danger{color:#b34759}button.primary.danger{b
 .monitor-source-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;border-bottom:1px solid var(--border,#e4def1)}
 .monitor-source-row>div{min-width:0;overflow-wrap:anywhere}.monitor-source-row button{flex-shrink:0}.monitor-source-row p{margin:5px 0 0}
 @media(max-width:450px){.monitor-source-row{align-items:flex-start;flex-wrap:wrap}}
+.profile-lines{white-space:pre-line}#discover-profile summary{cursor:pointer}#seller-profile-form{margin-top:20px}
+.discover-company blockquote{margin:12px 0;padding-left:12px;border-left:3px solid #d7c8f5}

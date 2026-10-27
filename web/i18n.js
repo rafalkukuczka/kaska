@@ -2,6 +2,21 @@
 let uiLanguage='pl';
 try{uiLanguage=localStorage.getItem('kaska-ui-language')==='en'?'en':'pl'}catch{}
 const uiEnglish={
+ 'Ocena dotyczy wcześniejszej wersji profilu. Oceń ponownie, aby uwzględnić zmiany.':'This assessment uses an earlier profile. Reassess to include your changes.',
+ 'Discover':'Discover', 'Odkrywaj firmy, dla których Twoja oferta może być przydatna.':'Discover companies that may benefit from your offer.',
+ 'Profil':'Profile', 'Oferta, problemy i wartości są wspólne dla Discover i Znajdź klientów.':'Your offer, pain points and value propositions are shared by Discover and Find customers.',
+ 'Zapisywanie profilu…':'Saving profile…', 'Nie zapisano zmian. Spróbuj ponownie.':'Changes were not saved. Try again.',
+ 'Profil zapisany.':'Profile saved.', 'Zapisz profil':'Save profile',
+ 'Firmy warte uwagi':'Companies worth exploring',
+ 'Dlaczego mogą potrzebować Twoich usług — na podstawie zdarzeń i wspólnej oferty.':'Why they may need your services, based on events and your shared offer.',
+ 'Oceń firmy z nowych zdarzeń':'Assess companies from new events', 'Oceniono zdarzeń:':'Events assessed:',
+ 'Przerwij ocenianie':'Stop assessment', 'zdarzeń':'events',
+ 'AI wskazuje firmy wymienione w dowodach. Dopasowanie do oferty to hipoteza do sprawdzenia. Jedno kliknięcie ocenia do 10 zdarzeń przez płatne OpenAI API.':'AI identifies companies named in the evidence. Offer relevance is a hypothesis to review. One click assesses up to 10 events using the paid OpenAI API.',
+ 'Jeszcze nie ma firm do oceny':'No companies to review yet',
+ 'Uruchom monitoring poniżej, pobierz zdarzenia i oceń wymienione w nich firmy. Oferta i punkty wartości pochodzą z profilu.':'Start monitoring below, fetch events and assess the companies named in them. Your offer and value points come from the profile.',
+ 'Kaśka dobierze tematy i typy sygnałów do wspólnej oferty, problemów i propozycji wartości.':'Kaśka will match topics and signal types to your shared offer, pain points and value propositions.',
+ 'Najpierw uzupełnij wspólną ofertę.':'Fill in your shared offer first.', 'Skorzystamy z profilu firmy.':'We will use your company profile.',
+ 'Edytuj profil':'Edit profile',
  'Źródła monitoringu':'Monitoring sources', 'W tym monitoringu nie ma już źródeł.':'This monitor has no sources left.',
  'To źródło jest używane przez kilka monitoringów. Usunięcie zatrzyma je we wszystkich.':'This source is shared by several monitors. Deleting it will stop it in all of them.',
  'Monitoring':'Monitoring', 'Jak chcesz szukać okazji?':'How do you want to find opportunities?',
@@ -253,7 +268,7 @@ document.addEventListener('change',e=>{
 document.addEventListener('DOMContentLoaded',()=>applyUiLanguage(uiLanguage));
 window.addEventListener('hashchange',()=>{
   const next=location.hash.slice(1);
-  if(['dashboard','prospecting','contacts','campaigns','signals','inbox','library','settings'].includes(next)){
+  if(['dashboard','discover','prospecting','contacts','campaigns','signals','inbox','library','settings'].includes(next)){
     view=next;selectedCampaign=null;render();
   }
 });

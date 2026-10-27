@@ -99,7 +99,6 @@ const assert=require('node:assert/strict');
     await page.getByRole('cell',{name:'Signal QA campaign Wszystkie aktywne kontakty'}).waitFor();
     await page.locator('nav [data-view="signals"]').click();
     await page.getByRole('heading',{name:'Sygnały sprzedażowe'}).waitFor();
-    await page.getByRole('heading',{name:'Jak chcesz szukać okazji?'}).waitFor();
     await page.getByRole('tab',{name:'Zdarzenia',exact:true}).click();
     // A market event can be saved with no company and filtered independently.
     await page.getByRole('button',{name:'+ Dodaj sygnał'}).click();

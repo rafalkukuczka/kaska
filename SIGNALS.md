@@ -2,9 +2,13 @@
 
 ## Dwa sposoby rozpoczęcia monitoringu
 
-Domyślny widok **Sygnały → Monitoring** pozwala wybrać:
+Widok **Discover**, nad „Znajdź klientów” w nawigacji, pokazuje firmy warte uwagi, ich powiązanie z ofertą i cytaty ze zdarzeń. Monitoring rynku jest teraz częścią tego ekranu. Przycisk oceny analizuje maksymalnie 10 nowych zdarzeń przez OpenAI; można zatrzymać kolejne analizy po bieżącym zapytaniu. Pusta lista firm nie jest uzupełniana wymyślonymi wynikami.
 
-- **Na podstawie oferty** — wpisz ofertę i opcjonalnie odbiorców albo wybierz profil z Biblioteki. Jedno zapytanie OpenAI proponuje do pięciu tematów, typy sygnałów oraz uzasadnienia. Plan nie jest faktem o rynku: wybierz interesujące tematy i uruchom je osobnym przyciskiem. Dopiero wtedy powstają źródła Google News i GDELT. Nie potrzebujesz firm w Kontaktach.
+Oferta, strona, odbiorcy, pain points, value propositions i proof points tworzą jeden **wspólny profil** dla Discover i Znajdź klientów. Edycje oraz zastosowane propozycje AI zapisują się automatycznie do SQLite; lokalny szkic chroni zmiany oczekujące na zapis. Profil można edytować w obu ekranach. Przy pierwszej migracji przenosimy ostatnie wyszukiwanie klientów, a gdy go nie ma — ostatni profil z Biblioteki. Zapisany profil nie jest ponownie nadpisywany przez migrację. Zmiana profilu oznacza starsze oceny firm jako wymagające ponownej oceny; nie wykonuje płatnych zapytań automatycznie.
+
+Discover pozwala wybrać:
+
+- **Na podstawie oferty** — wykorzystuje wspólną ofertę, odbiorców, problemy i propozycje wartości. Jedno zapytanie OpenAI proponuje do pięciu tematów, typy sygnałów oraz uzasadnienia. Plan nie jest faktem o rynku: wybierz interesujące tematy i uruchom je osobnym przyciskiem. Dopiero wtedy powstają źródła Google News i GDELT. Nie potrzebujesz firm w Kontaktach.
 - **Monitoring tematu** — wpisz własną frazę i opcjonalnie typy sygnałów. Źródła powstają bez AI, oferty i firmy. Pusta lista typów oznacza wszystkie zdarzenia pasujące do tematu.
 
 Każdy zapisany monitoring ma listę tematów i przycisk **Zobacz zdarzenia**, filtrujący zdarzenia po jego źródłach i wybranych typach. Te same tematy mogą współdzielić źródła: wykrywane typy są sumą potrzeb monitoringów (pusty filtr oznacza wszystkie). Zachowywane są istniejące ustawienia wstrzymania i akceptacji. Nowe źródła wymagają ręcznej akceptacji. Skanowanie odbywa się w tle; można też użyć „Skanuj źródła”. Błędy i ograniczenia dostawców są widoczne przy źródłach.

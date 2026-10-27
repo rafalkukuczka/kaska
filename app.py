@@ -35,6 +35,7 @@ import languages
 import sequence_conditions
 import source_discovery
 import signal_monitoring
+import shared_profile
 
 ROOT = Path(__file__).resolve().parent
 for line in (ROOT / '.env').read_text(encoding='utf-8-sig').splitlines() if (ROOT / '.env').exists() else []:
@@ -84,6 +85,7 @@ def init():
         languages.init_schema(c)
         source_discovery.init_schema(c)
         signal_monitoring.init_schema(c)
+        shared_profile.init_schema(c)
         # A process interrupted during SMTP may already have delivered a message.
         c.execute("UPDATE messages SET status='uncertain',error='Przerwano proces podczas wysyłki. Sprawdź skrzynkę przed ponowieniem.' WHERE status='sending'")
 
@@ -621,6 +623,7 @@ class Handler(BaseHTTPRequestHandler):
             result['signals'] = signal_engine.state()
             result['signals']['discovery'] = discovery_snapshot
             result['signals']['monitoring'] = signal_monitor.state()
+            result['seller_profile'] = shared_profile.get(db)
             result['library'] = library.state()
             result['prospecting'] = prospector.state()
             result['preferences'] = languages.preferences(db)
@@ -634,7 +637,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond('<html lang="pl"><meta charset="utf-8"><title>Rezygnacja</title><h1>Rezygnacja z wiadomości</h1><form method="post" action="/unsubscribe"><input type="hidden" name="id" value="'+html.escape(contact_id, quote=True)+'"><input type="hidden" name="token" value="'+sign(contact_id)+'"><button>Potwierdzam rezygnację</button></form></html>', content_type='text/html; charset=utf-8')
         if path.path == '/assets/kaska.png':
             return self.respond((ROOT / 'web' / 'assets' / 'kaska.png').read_bytes(), content_type='image/png')
-        files = {'/monitoring.js': ('monitoring.js', 'text/javascript'), '/sequence.js': ('sequence.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'), '/ai-settings.js': ('ai-settings.js', 'text/javascript'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/signals.js': ('signals.js', 'text/javascript'), '/builder.js': ('builder.js', 'text/javascript'), '/builder.css': ('builder.css', 'text/css'), '/theme.css': ('theme.css', 'text/css'), '/style.css': ('style.css', 'text/css')}
+        files = {'/seller-profile.js': ('seller-profile.js', 'text/javascript'), '/monitoring.js': ('monitoring.js', 'text/javascript'), '/sequence.js': ('sequence.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'), '/ai-settings.js': ('ai-settings.js', 'text/javascript'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/signals.js': ('signals.js', 'text/javascript'), '/builder.js': ('builder.js', 'text/javascript'), '/builder.css': ('builder.css', 'text/css'), '/theme.css': ('theme.css', 'text/css'), '/style.css': ('style.css', 'text/css')}
         if path.path in files:
             name, mime = files[path.path]
             return self.respond((ROOT / 'web' / name).read_text(encoding='utf-8'), content_type=mime+'; charset=utf-8')
@@ -659,6 +662,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond({'error': 'Odśwież stronę aplikacji'}, 403)
         try:
             item = json.loads(self.rfile.read(size))
+            if self.path == '/api/seller-profile':
+                return self.respond(shared_profile.save(db,item))
             if self.path.startswith('/api/signals/monitoring/'):
                 return self.respond(signal_monitor.post(self.path[len('/api/signals/monitoring/'):],item))
             if self.path == '/api/signals/discovery/start':
@@ -668,6 +673,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path.startswith('/api/signals/'):
                 return self.respond(signal_engine.post(self.path[len('/api/signals/'):], item))
             elif self.path.startswith('/api/prospecting/'):
+                if self.path == '/api/prospecting/search':item=shared_profile.resolve(db,item)
                 return self.respond(prospector.post(self.path[len('/api/prospecting/'):], item))
             elif self.path == '/api/preferences':
                 return self.respond(languages.save_preferences(db, item))
