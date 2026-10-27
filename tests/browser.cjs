@@ -20,7 +20,7 @@ const assert=require('node:assert/strict');
   await page.addInitScript(()=>{if(!localStorage.getItem('kaska-monitoring-simulation'))localStorage.setItem('kaska-monitoring-simulation','off')});
     await page.goto('http://localhost:8788');
     await page.waitForFunction(()=>typeof state!=='undefined'&&state?.csrf);
-    await page.getByRole('heading',{name:'Mniej rutyny. Więcej rozmów.'}).waitFor();
+    await page.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();
     await page.screenshot({path:'test-results/dashboard.png',fullPage:true});
     await page.locator('nav [data-view="contacts"]').click();
     await page.getByRole('button',{name:'Dodaj kontakt'}).click();

@@ -2,6 +2,11 @@
 let uiLanguage='pl';
 try{uiLanguage=localStorage.getItem('kaska-ui-language')==='en'?'en':'pl'}catch{}
 const uiEnglish={
+ 'Dobrze Cię widzieć!':'Welcome back!', 'Kogo dziś szukamy?':'Who should we target today?',
+ 'Opis firm, do których chcesz dotrzeć':'Describe the companies you want to reach',
+ 'np. firmy produkcyjne w Niemczech, ponad 50 pracowników':'e.g. manufacturers in Germany with 50+ employees',
+ 'Przejdź do leadów':'Get started', 'Użyj kryteriów projektu lub wpisz nowe.':'Use your project criteria or enter new ones.',
+ 'Odkryj firmy':'Discover companies', 'Twoje kontakty':'Your contacts', 'Zobacz raporty':'View reports',
  'Współdziel monitoringi':'Share monitoring',
  'Projekty z tą opcją korzystają ze wspólnych monitoringów. Dodanie lub usunięcie monitoringu jest widoczne we wszystkich tych projektach.':'Projects with this option use the same monitors. Adding or deleting a monitor affects all these projects.',
  'Monitoringi: współdzielone':'Monitoring: shared',
@@ -528,6 +533,7 @@ function applyUiLanguage(language){
   if(changed&&typeof renderDashboardActivity==='function')renderDashboardActivity();
   if(changed&&typeof dashboardFlowPanel==='function'){const flow=document.querySelector('.dashboard-flow');if(flow)flow.outerHTML=dashboardFlowPanel()}
   if(changed&&typeof renderReports==='function'&&view==='reports')renderReports();
+  if(changed&&typeof render==='function'&&view==='dashboard'&&state)render();
   localizeUi();
 }
 function syncLanguages(){
