@@ -1,0 +1,68 @@
+const {chromium}=require('playwright');
+const {spawn}=require('node:child_process');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ fs.mkdirSync('test-results',{recursive:true});
+ const data=fs.mkdtempSync(path.resolve('test-results/coverage-'));
+ const server=spawn('python',['tests/browser_server.py'],{env:{...process.env,APP_PORT:'8800',APP_DATA_DIR:data,SMTP_HOST:'',SMTP_FROM:'',IMAP_HOST:'',OPENAI_API_KEY:'',HUNTER_API_KEY:'browser-fixture-only'},stdio:'pipe'});
+ let browser;
+ try{
+  await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
+  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.route('https://tile.openstreetmap.org/**',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')}));
+  await page.goto('http://localhost:8800');await page.waitForFunction(()=>state?.seller_profile);
+  assert.equal(await page.locator('#profile-coverage-map').count(),0);
+  assert.ok((await page.locator('nav [data-view=dashboard]').innerText()).includes('Dashboard'));
+  assert.equal(await page.locator('.dashboard-stats>.stat').nth(1).getAttribute('class'),'stat profile-coverage-tile');
+  const tileLayout=await page.evaluate(()=>{
+   const stats=document.querySelector('.dashboard-stats'),gap=parseFloat(getComputedStyle(stats).gap);
+   const normal=stats.querySelector('.stat').getBoundingClientRect(),map=stats.querySelector('.profile-coverage-tile').getBoundingClientRect();
+   return {widthDifference:Math.abs(map.width-(normal.width*2+gap)),heightDifference:Math.abs(map.height-(normal.height*2+gap))};
+  });
+  assert.ok(tileLayout.widthDifference<2);assert.ok(tileLayout.heightDifference<2);
+  await page.screenshot({path:'test-results/dashboard-map-four-tiles.png',fullPage:true});
+  await page.evaluate(async()=>{
+   const first={lat:52.23,lng:21.01,radius_km:40,label:'Warsaw'},second={lat:50.06,lng:19.94,radius_km:60,label:'Krakow'};
+   await api('seller-profile',{profile_id:state.seller_profile.id,revision:state.seller_profile.revision,search_areas:[first]});await refresh();
+   await api('signals/monitoring/topic',{topic:'Regional market',search_areas:[first,second]});await refresh();
+  });
+  await page.locator('#profile-coverage-preview.leaflet-container').waitFor();
+  assert.equal(await page.locator('#profile-coverage-map').count(),0);
+  await page.locator('[data-open-profile-map]').click();
+  await page.locator('#profile-coverage-map.leaflet-container').waitFor();
+  const full=await page.locator('.profile-map-fullscreen').boundingBox();assert.equal(full.width,1440);assert.equal(full.height,1000);
+  assert.equal(await page.locator('[data-coverage-area]').count(),2);
+  assert.equal(await page.locator('#profile-coverage-map path.leaflet-interactive').count(),2);
+  assert.equal(await page.evaluate(()=>document.querySelector('#profile-coverage-map')._coverageAreas[0].sources.length),2);
+  const containsAll=await page.evaluate(()=>{const canvas=document.querySelector('#profile-coverage-map');return canvas._coverageAreas.every(a=>canvas._coverageMap.getBounds().contains([a.lat,a.lng]))});assert.equal(containsAll,true);
+  await page.locator('[data-coverage-area="1"]').click();
+  await page.evaluate(async()=>refresh());
+  assert.equal(await page.locator('#profile-coverage-map path.leaflet-interactive').count(),2);
+  await page.keyboard.press('Escape');await page.locator('.profile-map-fullscreen').waitFor({state:'detached'});
+  await page.locator('nav [data-view=discover]').click();
+  assert.equal(await page.getByRole('heading',{name:'Jak chcesz szukać okazji?'}).count(),0);
+  assert.equal(await page.locator('[data-discover-review]').count(),0);
+  assert.equal(await page.locator('[data-monitor-topic]').count(),1);
+  await page.evaluate(async()=>{await api('seller-profiles/create',{name:'Empty profile'});await refresh()});
+  await page.locator('nav [data-view=dashboard]').click();
+  assert.equal(await page.locator('#profile-coverage-map').count(),0);
+  await page.locator('[data-open-profile-map]').click();
+  await page.getByText('Brak wybranych obszarów. Dodaj je w Profilu lub podczas tworzenia monitoringu.',{exact:true}).waitFor();
+  await page.locator('.coverage-map-close').click();
+  await page.evaluate(async()=>{await api('seller-profiles/select',{profile_id:1});await refresh()});
+  await page.locator('[data-open-profile-map]').click();
+  await page.locator('#profile-coverage-map.leaflet-container').waitFor();
+  assert.equal(await page.locator('[data-coverage-area]').count(),2);
+  await page.setViewportSize({width:390,height:844});
+  const mobile=await page.locator('.profile-map-fullscreen').boundingBox();assert.equal(mobile.width,390);assert.equal(mobile.height,844);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await page.screenshot({path:'test-results/profile-coverage-mobile.png',fullPage:true});
+  await page.locator('.coverage-map-close').click();
+  await page.locator('[data-open-profile-map]').click();await page.locator('#profile-coverage-map.leaflet-container').waitFor();
+  assert.deepEqual(errors,[]);
+  console.log('Profile coverage QA passed: empty state, combined profile/monitor areas, deduplication, circles, fit bounds, refresh, removed controls, profile isolation and mobile.');
+ }finally{if(browser)await browser.close();server.kill()}
+})().catch(e=>{console.error(e);process.exitCode=1});
