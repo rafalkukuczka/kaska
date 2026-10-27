@@ -1,0 +1,66 @@
+const {chromium}=require('playwright');
+const {spawn}=require('node:child_process');
+const {selectContactTags}=require('./tag-picker-helper.cjs');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ fs.mkdirSync('test-results',{recursive:true});
+ const data=fs.mkdtempSync(path.resolve('test-results/bulk-tags-'));
+ const server=spawn('python',['tests/browser_server.py'],{env:{...process.env,APP_PORT:'8803',APP_DATA_DIR:data,SMTP_HOST:'',SMTP_FROM:'',IMAP_HOST:'',OPENAI_API_KEY:'',HUNTER_API_KEY:'browser-fixture-only'},stdio:'pipe'});
+ let browser;
+ try{
+  await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
+  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
+  await page.goto('http://localhost:8803');await page.waitForFunction(()=>state?.seller_project);
+  await page.evaluate(async()=>{
+   for(const [name,tags] of [['Anna','ERP'],['Bob','Polska'],['Cara','Other']])await api('contacts',{name,email:name.toLowerCase()+'@bulk.example',tags});await refresh();
+   await api('contact/status',{id:state.contacts.find(c=>c.name==='Bob').id,status:'unsubscribed'});await refresh();
+  });
+  await page.locator('nav [data-view=contacts]').click();
+  assert.equal(await page.locator('[data-contact-bulk-id]').count(),0);
+  await page.locator('[data-contact-bulk-toggle]').click();
+  assert.equal(await page.locator('[data-contact-bulk-id]').count(),3);
+  assert.equal(await page.locator('[data-contact-bulk-apply]').isDisabled(),true);
+  await page.locator('#search').fill('Anna');await page.locator('[data-contact-bulk-all]').check();
+  assert.equal(await page.locator('#contact-bulk-count').innerText(),'1');
+  await page.locator('#search').fill('Bob');await page.locator('[data-contact-bulk-all]').check();
+  assert.equal(await page.locator('#contact-bulk-count').innerText(),'2');
+  await page.locator('#search').fill('');
+  assert.equal(await page.locator('[data-contact-bulk-all]').evaluate(node=>node.indeterminate),true);
+  await selectContactTags(page.locator('#contact-bulk-panel'),'ERP; VIP');
+  await page.route('**/api/contacts/tags/bulk',route=>route.fulfill({status:400,json:{error:'Bulk retry fixture'}}));
+  await page.locator('[data-contact-bulk-apply]').click();await page.getByRole('status').filter({hasText:'Bulk retry fixture'}).waitFor();
+  assert.equal(await page.locator('#contact-bulk-count').innerText(),'2');
+  await page.unroute('**/api/contacts/tags/bulk');
+  await page.locator('[data-contact-bulk-apply]').click();
+  await page.waitForFunction(()=>state.contacts.find(c=>c.name==='Bob').tags.includes('VIP'));
+  const people=await page.evaluate(()=>state.contacts);
+  assert.ok(people.find(c=>c.name==='Anna').tags.includes('ERP'));
+  assert.ok(people.find(c=>c.name==='Bob').tags.includes('Polska'));assert.equal(people.find(c=>c.name==='Bob').status,'unsubscribed');
+  assert.deepEqual(people.find(c=>c.name==='Cara').tags,['Other']);
+  assert.equal(await page.locator('#contact-bulk-count').innerText(),'0');
+  assert.equal(await page.evaluate(()=>state.messages.length),0);
+  await page.locator('[data-contact-bulk-all]').check();assert.equal(await page.locator('#contact-bulk-count').innerText(),'3');
+  await page.locator('[data-contact-bulk-clear]').click();assert.equal(await page.locator('#contact-bulk-count').innerText(),'0');
+  await page.locator('[data-contact-bulk-toggle]').click();assert.equal(await page.locator('[data-contact-bulk-id]').count(),0);
+  await page.locator('[data-contact-bulk-toggle]').click();
+  await page.evaluate(async()=>{
+   await saveSimulationMode(true,state.csrf);monitoringSimulation=true;
+   const found=await api('discover/contacts/search',{company:'Demo Bulk',limit:1});
+   await api('discover/contacts/add',{id:found.id,selected:[0],confirm_company:true,tags:['Demo']});await refresh();
+  });
+  const mixedIds=await page.evaluate(()=>[state.contacts.find(c=>c.id<0).id,state.contacts.find(c=>c.name==='Anna').id]);
+  const postedIds=[];page.on('request',request=>{if(request.url().endsWith('/api/contacts/tags/bulk'))postedIds.push(...request.postDataJSON().ids)});
+  for(const id of mixedIds)await page.locator(`[data-contact-bulk-id="${id}"]`).check();
+  await selectContactTags(page.locator('#contact-bulk-panel'),'Mixed');
+  await page.locator('[data-contact-bulk-apply]').click();
+  await page.waitForFunction(()=>state.contacts.filter(c=>c.tags.includes('Mixed')).length===2);
+  assert.deepEqual(postedIds,[mixedIds[1]]);
+  assert.ok(await page.evaluate(()=>state.contacts.find(c=>c.id<0).tags.includes('Demo')));
+  await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await page.screenshot({path:'test-results/bulk-contact-tags-mobile.png',fullPage:true});
+  assert.deepEqual(errors,[]);
+  console.log('Bulk contact tags QA passed: mode toggle, filtered selection, select all, additive tags, retry, preserved statuses, no messages, clear and mobile.');
+ }finally{if(browser)await browser.close();server.kill()}
+})().catch(e=>{console.error(e);process.exitCode=1});

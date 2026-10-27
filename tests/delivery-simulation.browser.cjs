@@ -1,0 +1,52 @@
+const {chromium}=require('playwright');
+const {spawn}=require('node:child_process');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ fs.mkdirSync('test-results',{recursive:true});const data=fs.mkdtempSync(path.resolve('test-results/delivery-simulation-'));
+ const server=spawn('python',['tests/browser_server.py'],{env:{...process.env,APP_PORT:'8805',APP_DATA_DIR:data,SMTP_HOST:'',SMTP_FROM:'',IMAP_HOST:'',OPENAI_API_KEY:'',HUNTER_API_KEY:''},stdio:'pipe'});
+ let browser;
+ try{
+  await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
+  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[],writes=[];page.on('pageerror',e=>errors.push(e.message));
+  page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/campaign/status'))writes.push(r.url())});
+  await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
+  await page.goto('http://localhost:8805');await page.waitForFunction(()=>state?.seller_project);
+  await page.evaluate(async()=>{
+   for(let i=1;i<=2;i++)await api('contacts',{name:'Demo Person '+i,email:`demo${i}@delivery.example`});
+   await api('campaigns',{name:'Delivery demo',offer:'User offer',audience:'ICP',language:'pl',steps:[{delay_days:0,subject:'Hello',body:'User first message'},{delay_days:3,subject:'Follow-up',body:'User follow-up'}]});await refresh();
+   await api('campaign/prepare',{id:state.campaigns[0].id});await refresh();
+  });
+  await page.locator('#app-simulation').check();await page.waitForFunction(()=>monitoringSimulation&&!document.querySelector('#app-simulation').disabled);
+  await page.locator('nav [data-view=campaigns]').click();await page.locator('[data-action=campaign]').click();
+  await page.locator('[data-action=campaign-status][data-status=active]').click();
+  await page.locator('.message-delivery-sending').first().waitFor();
+  await page.locator('[data-action=campaign-status][data-status=paused]').click();
+  await page.waitForFunction(()=>deliverySimulationRuns()[selectedCampaign].status==='paused');
+  await page.waitForFunction(()=>!document.querySelector('.message-delivery-sending'));
+  assert.equal(await page.locator('.message-delivery-sending').count(),0);
+  await page.locator('[data-action=campaign-status][data-status=active]').click();
+  await page.locator('.message-delivery-sent').first().waitFor();
+  await page.waitForFunction(()=>state.replies.some(reply=>reply.delivery_simulated));
+  assert.ok(await page.evaluate(()=>deliverySimulationRuns()[selectedCampaign].messages.some(m=>m.status==='cancelled')));
+  assert.equal(writes.length,0);
+  await page.locator('nav [data-view=inbox]').click();await page.locator('.badge').filter({hasText:'Symulowana odpowiedź'}).first().waitFor();
+  assert.ok((await page.locator('.message').first().innerText()).includes('Dziękuję'));
+  const canonical=await page.evaluate(async()=>await(await fetch('/api/state')).json());
+  assert.equal(canonical.replies.length,0);assert.ok(canonical.messages.every(m=>m.status==='queued'));assert.equal(canonical.campaigns[0].status,'draft');
+  assert.ok(canonical.messages.some(m=>m.body==='User first message'));
+  await page.reload();await page.waitForFunction(()=>state?.replies.some(r=>r.delivery_simulated));
+  await page.locator('#app-simulation').uncheck();await page.waitForFunction(()=>!monitoringSimulation&&!document.querySelector('#app-simulation').disabled);
+  assert.equal(await page.locator('.message').count(),0);
+  await page.locator('#app-simulation').check();await page.waitForFunction(()=>monitoringSimulation&&!document.querySelector('#app-simulation').disabled);
+  await page.locator('.badge').filter({hasText:'Symulowana odpowiedź'}).first().waitFor();
+  await page.evaluate(async()=>chooseSellerProject('seller-projects/create',{name:'Other demo project'}));
+  assert.equal(await page.locator('.message').count(),0);
+  await page.locator('#active-project').selectOption('1');await page.waitForFunction(()=>!sellerSwitchBusy&&state.seller_project.id===1);
+  await page.locator('.badge').filter({hasText:'Symulowana odpowiedź'}).first().waitFor();
+  await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await page.screenshot({path:'test-results/delivery-simulation-replies.png',fullPage:true});
+  assert.deepEqual(errors,[]);
+  console.log('Delivery simulation QA passed: sending, pause/resume, replies, follow-up cancellation, reload, mode/project isolation and no real sends or reply writes.');
+ }finally{if(browser)await browser.close();server.kill()}
+})().catch(e=>{console.error(e);process.exitCode=1});

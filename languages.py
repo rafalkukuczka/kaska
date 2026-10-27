@@ -50,6 +50,19 @@ def preferences(db):
     return {'ui_language': stored.get('ui_language', 'pl'), 'message_language': stored.get('message_language', 'pl')}
 
 
+def data_simulation(db):
+    with db() as c:
+        row=c.execute("SELECT value FROM app_preferences WHERE key='data_simulation'").fetchone()
+    return None if row is None else row[0]=='on'
+
+
+def save_data_simulation(db,item):
+    if type(item.get('enabled')) is not bool:raise ValueError('Nieprawidłowe ustawienie symulacji.')
+    with db() as c:
+        c.execute("INSERT INTO app_preferences(key,value) VALUES('data_simulation',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",('on' if item['enabled'] else 'off',))
+    return {'enabled':item['enabled']}
+
+
 def save_preferences(db, item):
     if not isinstance(item, dict) or not item or not set(item) <= {'ui_language', 'message_language'}:
         raise ValueError('Nieprawidłowe ustawienia języka')

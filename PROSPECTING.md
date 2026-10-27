@@ -1,6 +1,6 @@
 # Pierwszy etap: od opisu odbiorców do szkiców
 
-Pod opisem firm znajduje się rozwijana lista **Szukaj w językach** z checkboxami dla polskiego, angielskiego, niemieckiego, francuskiego, hiszpańskiego i włoskiego. Można wybrać kilka języków; brak zaznaczeń oznacza brak ograniczenia. Wybór zapisuje się w profilu, jest dostępny również w edycji profilu Discover i trafia jako preferencja języka rozmowy do zapytania Hunter oraz oceny dopasowania. Historia wyszukiwania zachowuje własną listę wybranych języków. Język wiadomości jest oddzielnym ustawieniem. Język kontaktu z firmą wymaga potwierdzenia — kraj siedziby, domena ani sam wynik wyszukiwarki go nie potwierdzają.
+Pod opisem firm znajduje się rozwijana lista **Szukaj w językach** z checkboxami dla polskiego, angielskiego, niemieckiego, francuskiego, hiszpańskiego i włoskiego. Można wybrać kilka języków; brak zaznaczeń oznacza brak ograniczenia. Wybór zapisuje się w projekcie, jest dostępny również w edycji projektu Discover i trafia jako preferencja języka rozmowy do zapytania Hunter oraz oceny dopasowania. Historia wyszukiwania zachowuje własną listę wybranych języków. Język wiadomości jest oddzielnym ustawieniem. Język kontaktu z firmą wymaga potwierdzenia — kraj siedziby, domena ani sam wynik wyszukiwarki go nie potwierdzają.
 
 ## Uruchomienie
 
@@ -31,7 +31,7 @@ Przy **Ofercie** i **Opisie firm** znajdziesz przycisk **Fine tune with AI**. Re
 
 - Hunter Discover interpretuje opis firm i zwraca kandydatów. Zastosowane filtry zapisujemy i pokazujemy w wynikach. Samo znalezienie firmy nie potwierdza wszystkich kryteriów ICP.
 - Domain Search pobiera osobiste, publicznie znalezione adresy osób oznaczonych przez Hunter jako decydenci. Wymagamy imienia i nazwiska oraz publicznego źródła. Nie zgadujemy emaili, nie importujemy adresów `inferred` ani skrzynek ogólnych.
-- Opis firmy pochodzi z jej strony HTTPS, pobieranej z ochroną przed dostępem do prywatnych adresów. Jeżeli odczyt się nie uda, pokazujemy ostrzeżenie. Nie zamieniamy braku danych w wymyślony profil.
+- Opis firmy pochodzi z jej strony HTTPS, pobieranej z ochroną przed dostępem do prywatnych adresów. Jeżeli odczyt się nie uda, pokazujemy ostrzeżenie. Nie zamieniamy braku danych w wymyślony projekt.
 - Z OpenAI kandydaci otrzymują ocenę `matched`, `uncertain` lub `rejected` i uzasadnienie na podstawie dostępnych danych. To sugestia wymagająca przeglądu. Dane ze stron i dostawcy traktowane są jako nieufny kontekst, nie instrukcje.
 - Pole „Dlaczego teraz” wykorzystuje wyłącznie zaakceptowane sygnały z ostatnich 30 dni, których URL należy do domeny firmy. Brak sygnału jest jawnie pokazywany. Nie wykonujemy w tym etapie automatycznego pełnego researchu mediów ani nie przypisujemy artykułów do firm na podstawie samej nazwy.
 - Własna domena, jej subdomeny, podane wykluczenia i emaile już obecne w Kontaktach są pomijane. Przed zapisem kampanii ponownie sprawdzamy, czy kontakt nie pojawił się w bazie podczas generowania.
@@ -48,6 +48,14 @@ Do Hunter trafiają kryteria wyszukiwania firm, domeny, filtry stanowisk i adres
 Ręczna konfiguracja: `HUNTER_API_KEY=...` w `.env`, następnie restart aplikacji.
 
 Dokumentacja dostawcy: [Hunter API](https://hunter.io/api-documentation).
+
+## Obszary na mapie
+
+Pod opisem odbiorców checkbox „Pokaż mapę” odsłania mapę Leaflet/OpenStreetMap. Kliknięcie wybiera współrzędne; promień 1–1000 km i opcjonalna nazwa pozwalają dodać do 10 obszarów. Można też wpisać współrzędne ręcznie. Wybrane koła tworzą sumę obszarów. Ukrycie mapy nie usuwa filtra. Obszary można usuwać pojedynczo lub wyczyścić wszystkie; są zapisywane per projekt w `search_areas`, wspólne dla Discover i wyszukiwania, niezależne od opisu odbiorców i języków.
+
+Każde wyszukiwanie zapisuje własną kopię obszarów. Współrzędne, nazwy i promienie są przekazywane w opisie zapytania do Hunter. Obecne API dostawcy nie potwierdza dokładnego filtrowania po promieniu: wynik z wybranymi obszarami wymaga potwierdzenia lokalizacji, a ocena AI nie może oznaczyć go jako w pełni dopasowany wyłącznie na podstawie wyszukiwarki. Nie dodajemy wymyślonych lokalizacji ani adresów firm.
+
+Leaflet 1.9.4 jest dostarczany lokalnie z licencją w `web/vendor/leaflet`; podkład OSM pobierany jest bezpośrednio przez przeglądarkę dopiero po pokazaniu mapy, z widoczną atrybucją i bez prefetch/offline. Nie wymaga klucza map. Bez podkładu nadal działają ręczne współrzędne i obszary. Test mapy przechwytuje obrazy kafelków, więc automatyczne testy nie obciążają serwisu OSM.
 
 ## Weryfikacja implementacji
 

@@ -10,7 +10,8 @@ from urllib.parse import urlencode, urlparse
 
 import ai_service
 import languages
-import shared_profile
+import shared_project
+import search_areas
 from sales_signals import public_url
 
 DEPARTMENTS = ('executive', 'it', 'finance', 'management', 'sales', 'legal', 'support', 'hr',
@@ -91,8 +92,9 @@ def init_schema(c):
         UNIQUE(run_id,email));
     ''')
     columns = {row[1] for row in c.execute('PRAGMA table_info(prospect_runs)')}
-    if 'profile_id' not in columns:c.execute('ALTER TABLE prospect_runs ADD COLUMN profile_id INTEGER NOT NULL DEFAULT 1')
+    if 'project_id' not in columns:c.execute('ALTER TABLE prospect_runs ADD COLUMN project_id INTEGER NOT NULL DEFAULT 1')
     if 'search_languages' not in columns:c.execute("ALTER TABLE prospect_runs ADD COLUMN search_languages TEXT NOT NULL DEFAULT '[]'")
+    if 'search_areas' not in columns:c.execute("ALTER TABLE prospect_runs ADD COLUMN search_areas TEXT NOT NULL DEFAULT '[]'")
     for name in ('language', 'assistant_language'):
         if name not in columns:
             c.execute('ALTER TABLE prospect_runs ADD COLUMN '+name+" TEXT NOT NULL DEFAULT 'pl'")
@@ -111,11 +113,11 @@ class Prospecting:
         self.db, self.library, self.ai_copy, self.mail_lock = db, library, ai_copy, mail_lock
         self.lock = threading.Lock()
 
-    def state(self,profile_id=None):
-        profile_id=shared_profile.get(self.db,profile_id)['id']
+    def state(self,project_id=None):
+        project_id=shared_project.get(self.db,project_id)['id']
         with self.db() as c:
-            runs = [dict(r) for r in c.execute('SELECT * FROM prospect_runs WHERE profile_id=? ORDER BY id DESC LIMIT 50',(profile_id,))]
-            candidates = [dict(r) for r in c.execute('SELECT p.* FROM prospect_candidates p WHERE run_id IN (SELECT id FROM prospect_runs WHERE profile_id=? ORDER BY id DESC LIMIT 50) ORDER BY id',(profile_id,))]
+            runs = [dict(r) for r in c.execute('SELECT * FROM prospect_runs WHERE project_id=? ORDER BY id DESC LIMIT 50',(project_id,))]
+            candidates = [dict(r) for r in c.execute('SELECT p.* FROM prospect_candidates p WHERE run_id IN (SELECT id FROM prospect_runs WHERE project_id=? ORDER BY id DESC LIMIT 50) ORDER BY id',(project_id,))]
         return {'runs': runs, 'candidates': candidates, 'hunter': bool(os.getenv('HUNTER_API_KEY', '').strip())}
 
     def update(self, run_id, **fields):
@@ -126,8 +128,9 @@ class Prospecting:
             c.execute('UPDATE prospect_runs SET ' + ','.join(k+'=?' for k in fields) + ',updated=? WHERE id=?', (*fields.values(), time.time(), run_id))
 
     def start(self, item):
-        profile=shared_profile.get(self.db,item.get('profile_id'));profile_id=profile['id']
-        search_languages=languages.validate_search_languages(item.get('search_languages',profile['search_languages']))
+        project=shared_project.get(self.db,item.get('project_id'));project_id=project['id']
+        search_languages=languages.validate_search_languages(item.get('search_languages',project['search_languages']))
+        areas=search_areas.validate(item.get('search_areas',project['search_areas']))
         Hunter()  # Fail before inserting a run when the integration is missing.
         website = str(item.get('website', '')).strip()
         if '://' not in website:
@@ -158,13 +161,14 @@ class Prospecting:
             now = time.time()
             with self.db() as c:
                 c.execute('BEGIN IMMEDIATE')
-                if not c.execute('SELECT 1 FROM seller_profiles WHERE id=? AND deleted=0',(profile_id,)).fetchone():raise ValueError('Profil został usunięty.')
+                if not c.execute('SELECT 1 FROM seller_projects WHERE id=? AND deleted=0',(project_id,)).fetchone():raise ValueError('Projekt został usunięty.')
                 run_id = c.execute('INSERT INTO prospect_runs(website,offer,audience,titles,department,company_limit,per_company,exclusions,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',
                     (website, str(item.get('offer', '')).strip()[:10000], audience, str(item.get('titles', '')).strip()[:500], department,
                      company_limit, per_company, json.dumps(exclusions), now, now)).lastrowid
                 c.execute('UPDATE prospect_runs SET language=?,assistant_language=? WHERE id=?', (message_language, prefs['ui_language'], run_id))
-                c.execute('UPDATE prospect_runs SET profile_id=? WHERE id=?',(profile_id,run_id))
+                c.execute('UPDATE prospect_runs SET project_id=? WHERE id=?',(project_id,run_id))
                 c.execute('UPDATE prospect_runs SET search_languages=? WHERE id=?',(json.dumps(search_languages),run_id))
+                c.execute('UPDATE prospect_runs SET search_areas=? WHERE id=?',(json.dumps(areas,ensure_ascii=False),run_id))
                 c.execute('UPDATE prospect_runs SET pain_points=?,value_props=? WHERE id=?', (points['pain_points'], points['value_props'], run_id))
                 c.execute('UPDATE prospect_runs SET proof_points=? WHERE id=?', (points['proof_points'], run_id))
             threading.Thread(target=self.execute, args=(run_id, 'search'), daemon=True).start()
@@ -202,6 +206,9 @@ class Prospecting:
         self.update(run_id, stage='Wyszukiwanie firm w Hunter Discover')
         search_languages=json.loads(run['search_languages'])
         query=run['audience']
+        areas=json.loads(run['search_areas'])
+        query+=search_areas.query(areas)
+        if areas:warnings.append('Map areas were included in the search criteria. Hunter does not confirm an exact radius match; check company locations before contact.' if run['assistant_language']=='en' else 'Obszary z mapy przekazano jako kryteria. Hunter nie potwierdza dopasowania do dokładnego promienia; sprawdź lokalizację firm przed kontaktem.')
         if search_languages:
             query+='\nPreferred languages for business communication (at least one): '+', '.join(languages.SEARCH_LANGUAGE_NAMES[code] for code in search_languages)+'. Prefer companies serving customers in these languages. Language is not a country filter.'
         result = hunter.request('discover', body={'query': query, 'limit': run['company_limit']})
@@ -276,11 +283,14 @@ class Prospecting:
                         'Samo zwrócenie firmy przez wyszukiwarkę nie potwierdza wszystkich kryteriów. '
                         'Preferowane języki rozmowy są preferencją kontaktu. Nie wyciągaj wniosków o języku z kraju, nazwiska ani domeny. '
                         'Jeśli nie ma dowodu języka rozmowy, wskaż ten brak w missing_data.',
-                        {'audience': run['audience'], 'preferred_conversation_languages':search_languages,'requested_titles': run['titles'], 'offer': run['offer'], 'pain_points_hypotheses': run['pain_points'], 'value_props': run['value_props'], 'person': {'name': person_name, 'role': role}, 'evidence': evidence},
+                        {'audience': run['audience'], 'geographic_areas':areas, 'preferred_conversation_languages':search_languages,'requested_titles': run['titles'], 'offer': run['offer'], 'pain_points_hypotheses': run['pain_points'], 'value_props': run['value_props'], 'person': {'name': person_name, 'role': role}, 'evidence': evidence},
                         ('qualification', 'fit_reason', 'missing_data'))
                     if assessment['qualification'] not in ('matched', 'uncertain', 'rejected'):
                         assessment['qualification'] = 'uncertain'
                 why_now = 'No confirmed signal justifies contacting this company right now.' if english else 'Brak potwierdzonego sygnału uzasadniającego kontakt właśnie teraz.'
+                if areas:
+                    if assessment['qualification']=='matched':assessment['qualification']='uncertain'
+                    assessment['missing_data']+=(' Location inside the selected map areas requires confirmation.' if english else ' Lokalizacja wewnątrz wybranych obszarów mapy wymaga potwierdzenia.')
                 if signals:
                     why_now = ('Review before contacting: ' if english else 'Do sprawdzenia przed kontaktem: ') + '; '.join(s['title'] for s in signals)
                 with self.db() as c:

@@ -38,7 +38,7 @@ def tokens(text):return set(re.findall(r'[a-z0-9#+.]{3,}',norm(text)))-STOP
 
 def init_schema(c):
     c.executescript('''
-    CREATE TABLE IF NOT EXISTS content_profiles(id INTEGER PRIMARY KEY,website TEXT NOT NULL UNIQUE,name TEXT NOT NULL,offer TEXT NOT NULL,updated REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS content_projects(id INTEGER PRIMARY KEY,website TEXT NOT NULL UNIQUE,name TEXT NOT NULL,offer TEXT NOT NULL,updated REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS materials(id INTEGER PRIMARY KEY,website TEXT NOT NULL,url TEXT NOT NULL UNIQUE,title TEXT NOT NULL,summary TEXT NOT NULL,tags TEXT NOT NULL,kind TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,fetched REAL NOT NULL);
     ''')
     columns={r[1] for r in c.execute('PRAGMA table_info(campaigns)')}
@@ -52,7 +52,7 @@ class Library:
     def __init__(self,db):self.db=db
 
     def state(self):
-        with self.db() as c:return {'profiles':[dict(r) for r in c.execute('SELECT * FROM content_profiles ORDER BY updated DESC')],'materials':[dict(r) for r in c.execute('SELECT * FROM materials ORDER BY id DESC LIMIT 2000')]}
+        with self.db() as c:return {'projects':[dict(r) for r in c.execute('SELECT * FROM content_projects ORDER BY updated DESC')],'materials':[dict(r) for r in c.execute('SELECT * FROM materials ORDER BY id DESC LIMIT 2000')]}
 
     def page(self,url):
         content,final=fetch_public(url)
@@ -88,7 +88,7 @@ class Library:
                 rows.append(row)
             except Exception:errors.append({'url':url,'error':'Nie udało się odczytać tej podstrony'})
         with self.db() as c:
-            c.execute('INSERT INTO content_profiles(website,name,offer,updated) VALUES(?,?,?,?) ON CONFLICT(website) DO UPDATE SET name=excluded.name,offer=excluded.offer,updated=excluded.updated',
+            c.execute('INSERT INTO content_projects(website,name,offer,updated) VALUES(?,?,?,?) ON CONFLICT(website) DO UPDATE SET name=excluded.name,offer=excluded.offer,updated=excluded.updated',
                 (website,domain(website),root['summary'],time.time()))
             for row in rows:self.store(c,website,row)
         return {'website':website,'offer':root['summary'],'added':len(rows),'errors':errors}
@@ -126,7 +126,7 @@ class Library:
     def validate_campaign(self,c,item):
         mode=item.get('audience_mode','all'); material_mode=item.get('material_mode','none')
         ids=item.get('contact_ids',[]);materials=item.get('material_ids',[])
-        if mode not in ('all','selected','signals') or material_mode not in ('none','auto','manual'):raise ValueError('Nieprawidłowy tryb odbiorców lub materiałów')
+        if mode not in ('all','selected','signals','group','tags') or material_mode not in ('none','auto','manual'):raise ValueError('Nieprawidłowy tryb odbiorców lub materiałów')
         if not isinstance(ids,list) or not isinstance(materials,list):raise ValueError('Lista kontaktów i materiałów musi być tablicą')
         ids=list(dict.fromkeys(int(i) for i in ids));materials=list(dict.fromkeys(int(i) for i in materials))
         if mode=='selected' and not ids:raise ValueError('Wybierz co najmniej jednego odbiorcę')

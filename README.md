@@ -28,13 +28,17 @@ Nie ma demonstracyjnych kontaktów, wygenerowanych statystyk ani pozorowanej wys
 
 ## Uniwersalny kreator i biblioteka treści
 
-Aplikacja nie ma domyślnego klienta, domeny ani branży. Można działać bez strony internetowej, opisując ofertę ręcznie, albo podać dowolną publiczną stronę HTTPS. Każda kampania zapisuje stronę nadawcy, ofertę, problemy klientów, argumenty, język PL/EN i opcjonalne wezwanie do działania z linkiem. Jest to jedna lokalna przestrzeń robocza z profilami firm — nie wdrożono kont wielu organizacji ani izolacji użytkowników SaaS.
+Aplikacja nie ma domyślnego klienta, domeny ani branży. Można działać bez strony internetowej, opisując ofertę ręcznie, albo podać dowolną publiczną stronę HTTPS. Każda kampania zapisuje stronę nadawcy, ofertę, problemy klientów, argumenty, język PL/EN i opcjonalne wezwanie do działania z linkiem. Jest to jedna lokalna przestrzeń robocza z projektami firm — nie wdrożono kont wielu organizacji ani izolacji użytkowników SaaS.
+
+Projekt edytuje się na osobnej stronie **Szczegóły**, dostępnej pod listą projektów w pasku bocznym (`#project`). Oferta, problemy, propozycje wartości, dowody, opis odbiorców, języki wyszukiwania i obszary są wspólne dla Odkrywania firm i Pozyskiwania leadów. Te widoki nie powielają formularza projektu. Przycisk **+** tworzy projekt i otwiera jego edycję, a ikona kosza usuwa projekt po potwierdzeniu. Kampania może pobrać te treści przyciskiem **Importuj z projektu**.
+
+Wiadomości w kampanii mają paginację z wyborem 10/25/50/100 pozycji. Checkbox **Operacje zbiorcze** włącza wybieranie wiadomości i usuwanie zaznaczonych; wybór pozostaje przy zmianie strony, a checkbox w nagłówku obejmuje tylko bieżącą stronę. Usuwanie wymaga wstrzymania aktywnej kampanii i potwierdzenia. Usunięcie oczekującego kroku anuluje późniejsze oczekujące kroki tej osoby. Rekordy wysłanych wiadomości pozostają w bazie dla historii doręczeń, dopasowania odpowiedzi i limitów wysyłki, a usunięte pozycje znikają z listy.
 
 Kreator ma panel pomocy z działającymi skrótami, edytor sekwencji i podgląd dla wybranego aktywnego kontaktu. Panel pomocy jest przewodnikiem, a nie pozorowanym czatem AI. Podgląd personalizuje szablon bez wywoływania modelu; generowanie AI odbywa się podczas przygotowania wiadomości, jeśli skonfigurowano model. Odpowiedzi i rezygnacje zatrzymują sekwencję; ta wersja nie ma graficznego edytora dowolnych rozgałęzień ani wysyłki LinkedIn.
 
 Niezapisany formularz jest zachowywany w localStorage tej przeglądarki i przywracany po ponownym otwarciu kreatora. Nie jest to szkic zapisany na serwerze. Finalny przycisk zapisuje kampanię w SQLite. Sam zapis nie uruchamia wysyłki.
 
-**Biblioteka → Dodaj stronę firmy** odczytuje stronę główną i do 10 podstron opisujących usługi, produkty, artykuły, realizacje lub case studies. Są to publiczne treści HTML — bez logowania, wykonywania JavaScript i odczytu plików PDF. Można dodać konkretną podstronę z tej samej domeny. Treści trafiają do profilu danej domeny; można wyłączyć materiał z dalszego doboru. Opisy pochodzą z meta description lub fragmentu odczytanej strony i wymagają sprawdzenia. Import może potrwać do kilkudziesięciu sekund zależnie od liczby i szybkości stron.
+**Biblioteka → Dodaj stronę firmy** odczytuje stronę główną i do 10 podstron opisujących usługi, produkty, artykuły, realizacje lub case studies. Są to publiczne treści HTML — bez logowania, wykonywania JavaScript i odczytu plików PDF. Można dodać konkretną podstronę z tej samej domeny. Treści trafiają do projektu danej domeny; można wyłączyć materiał z dalszego doboru. Opisy pochodzą z meta description lub fragmentu odczytanej strony i wymagają sprawdzenia. Import może potrwać do kilkudziesięciu sekund zależnie od liczby i szybkości stron.
 
 W kampanii wybierz sposób użycia materiałów:
 
@@ -133,7 +137,21 @@ node --check web/app.js
 
 Testy korzystają z osobnej tymczasowej bazy i atrap usług pocztowych. Nie wysyłają prawdziwych wiadomości.
 
+## Grupy docelowe kontaktów
+
+Pod tytułem formularza dodawania kontaktu pole „Grupa docelowa” pozwala wybrać istniejącą nazwę lub wpisać nową. Przypisanie jest opcjonalne i trwałe. W Kontaktach można zmienić grupę, usunąć przypisanie przez wyczyszczenie pola oraz filtrować listę według grupy. Grupy są wspólne dla bazy kontaktów i niezależne od projektów nadawcy.
+
+Przy imporcie CSV można wskazać grupę dla całej paczki. Opcjonalna kolumna `target_group` nadpisuje ten wybór dla konkretnego wiersza; istniejące kontakty o tym samym adresie email są pomijane bez zmiany ich grupy.
+
 ## Zakres pierwszej wersji
+
+Kontakty mają **tagi**, np. `produkcja; ERP; Polska`, zamiast pojedynczej listy. W kampanii wybierz **Według tagów**, zaznacz tagi i dopasowanie **LUB** albo **I**. Dotychczasowe listy i kampanie są migrowane automatycznie. Szczegóły: [CONTACT-TAGS.md](CONTACT-TAGS.md).
+
+Interfejs korzysta ze spójnej terminologii PL/EN: kontakty, leady, prospekty, firmy docelowe, ICP i listy kontaktów. Definicje znajdziesz w **Słowniku sprzedaży** w nagłówku oraz w [TERMINOLOGY.md](TERMINOLOGY.md). Ocena dopasowania przez AI nie oznacza potwierdzonego zainteresowania zakupem.
+
+Na **Dashboardzie** kafelek mapy, umieszczony zaraz po Kontaktach, otwiera zbiorczą mapę na cały ekran. Zamknij ją przyciskiem lub klawiszem Esc. Mapa zbiera obszary aktywnego projektu i wszystkich jego monitoringów. Takie same środki z takim samym promieniem są pokazywane raz; mapa dopasowuje widok do całego zasięgu. Nazwy pod mapą przybliżają wybrany obszar. Zmiana projektu zmienia zawartość mapy.
+
+Przy tworzeniu kampanii w kroku **Odbiorcy** wybierz **Z grupy docelowej** i wskaż grupę kontaktów. Kreator pokazuje liczbę aktywnych osób i ogranicza do nich listę podglądu. Grupa zapisuje się w szkicu oraz kampanii; przygotowanie wiadomości obejmuje jej aktywnych członków w chwili generowania. Pusta lub nieistniejąca grupa nie zastępuje wyboru całą bazą. Osoby wstrzymane i wypisane są pomijane. Zapis kampanii nie uruchamia wysyłki.
 
 Gotowe integracje danych: **Google News RSS, GDELT DOC 2.0, Greenhouse Job Board i Lever Postings**. Konfiguracja w **Sygnały → Źródła**; nie trzeba wpisywać adresów API. Dostępność i ograniczenia: [DATA-SOURCES.md](DATA-SOURCES.md).
 

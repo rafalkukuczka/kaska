@@ -1,6 +1,12 @@
 const backgroundRequests=new Map();
 let backgroundRequestId=0,backgroundJobs=[],backgroundPolling=false,backgroundTimer;
 const backgroundLabels={
+ 'campaign/messages/delete':'Usuwanie wiadomości',
+ 'contacts/tags/bulk':'Przypisywanie tagów do kontaktów',
+ 'discover/contacts/search':'Wyszukiwanie kontaktów firmy', 'discover/contacts/add':'Dodawanie kontaktów do grupy', 'discover/contacts/add-simulation':'Zapisywanie kontaktów z symulacji',
+ 'contact/group':'Zapisywanie grupy kontaktu',
+ 'ai/suggest-audience':'Przygotowywanie filtra wyszukiwania',
+ 'signals/monitoring/delete':'Usuwanie monitoringu',
  'research':'Odczyt strony i oferty','ai/refine':'Poprawianie tekstu z AI',
  'ai/selling-points':'Przygotowywanie problemów i wartości','ai/proof-points':'Odczyt dowodów ze strony',
  'ai/step-prompt':'Przygotowywanie kroku kampanii','signals/scan':'Skanowanie źródeł',
@@ -11,9 +17,9 @@ const backgroundLabels={
  'integrations/openai':'Sprawdzanie OpenAI','integrations/gmail':'Sprawdzanie Gmail','sync':'Odczyt odpowiedzi'
 };
 function beginBackgroundRequest(path){
- if(path==='seller-profile')return null;
+ if(path==='seller-project')return null;
  const id=++backgroundRequestId;
- backgroundRequests.set(id,{id:'request-'+id,path,label:backgroundLabels[path]||'Trwa operacja…',profile_name:state?.seller_profile?.name,started:Date.now()});
+ backgroundRequests.set(id,{id:'request-'+id,path,label:backgroundLabels[path]||'Trwa operacja…',project_name:state?.seller_project?.name,started:Date.now()});
  renderBackgroundProgress();return id;
 }
 function endBackgroundRequest(id){if(id!==null)backgroundRequests.delete(id);renderBackgroundProgress();scheduleBackgroundPoll()}
@@ -39,7 +45,7 @@ function renderBackgroundProgress(){
    const total=Number(row.total),counted=Number.isFinite(total)&&total>0,completed=counted?Math.min(total,Math.max(0,Number(row.completed)||0)):0;
    const label=row.label||(row.kind==='discovery'?'Konfiguracja źródeł z AI':({searching:'Szukanie klientów',verifying:'Weryfikacja emaili',drafting:'Tworzenie szkiców'}[row.status]||'Trwa operacja…'));
    const percent=counted?Math.floor(completed/total*100):null;
-   return `<div class="background-progress-row" role="status" data-background-task="${esc(row.id)}"><div class="background-progress-heading"><strong>${esc(translateUiText(label))}</strong>${counted?`<span>${completed} / ${total} · ${percent}%</span>`:'<span class="background-working">W trakcie…</span>'}</div>${row.stage||row.profile_name?`<p><span>${esc(row.stage||'')}</span>${row.profile_name?` · <span data-no-translate>${esc(row.profile_name)}</span>`:''}</p>`:''}<progress aria-label="${esc(translateUiText(label))}" ${counted?`max="${total}" value="${completed}"`:''}></progress></div>`;
+   return `<div class="background-progress-row" role="status" data-background-task="${esc(row.id)}"><div class="background-progress-heading"><strong>${esc(translateUiText(label))}</strong>${counted?`<span>${completed} / ${total} · ${percent}%</span>`:'<span class="background-working">W trakcie…</span>'}</div>${row.stage||row.project_name?`<p><span>${esc(row.stage||'')}</span>${row.project_name?` · <span data-no-translate>${esc(row.project_name)}</span>`:''}</p>`:''}<progress aria-label="${esc(translateUiText(label))}" ${counted?`max="${total}" value="${completed}"`:''}></progress></div>`;
  }).join('');
 }
 function scheduleBackgroundPoll(){clearTimeout(backgroundTimer);backgroundTimer=setTimeout(()=>pollBackgroundProgress().catch(()=>{}),0)}

@@ -10,8 +10,9 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
   const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
   page.on('pageerror',e=>errors.push(e.message));
-  let jobs=[{id:'prospect-1',kind:'prospecting',status:'drafting',stage:'Generating messages',profile_name:'Another profile',completed:2,total:6}];
+  let jobs=[{id:'prospect-1',kind:'prospecting',status:'drafting',stage:'Generating messages',project_name:'Another project',completed:2,total:6}];
   await page.route('**/api/background',route=>route.fulfill({json:{jobs}}));
   await page.goto('http://localhost:8792');
   await page.locator('#background-progress').waitFor();

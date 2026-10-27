@@ -21,7 +21,7 @@ class LibraryTests(unittest.TestCase):
         result.update(kwargs);return result
 
     def test_no_default_customer_industry_or_materials(self):
-        self.assertEqual(app.library.state(),{'profiles':[],'materials':[]})
+        self.assertEqual(app.library.state(),{'projects':[],'materials':[]})
 
     def test_discovery_for_unrelated_industries_and_upsert(self):
         pages={
@@ -33,8 +33,8 @@ class LibraryTests(unittest.TestCase):
             app.library.discover('https://baker.example')
         state=app.library.state()
         self.assertEqual(len(state['materials']),2)
-        self.assertEqual(state['profiles'][0]['website'],'https://baker.example/')
-        self.assertIn('bakery',state['profiles'][0]['offer'])
+        self.assertEqual(state['projects'][0]['website'],'https://baker.example/')
+        self.assertIn('bakery',state['projects'][0]['offer'])
         self.assertNotIn('rabbitmq',json.dumps(state).lower())
 
     def test_auto_selection_is_scoped_to_sender_domain(self):
