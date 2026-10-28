@@ -50,24 +50,41 @@ function renderInbox(){
 }
 function renderTop(title,sub,action=''){if(title==='Integracje')action='<button class="primary" data-action="connect-gmail">Podłącz Gmail</button>';return `<div class="topline"><div><h1>${title}</h1><p class="muted">${sub}</p></div>${action}</div>${monitoringSimulation?'<p class="notice app-simulation-notice">Symulowane są pobieranie danych, wysyłka i odpowiedzi. Twoje wpisy i konfiguracja są zapisywane normalnie. Wiadomości nie są wysyłane do klientów.</p>':''}`}
 const dashboardSearchDrafts=new Map();
-function dashboardWelcomePanel(){
- const project=sellerProject(),draft=dashboardSearchDrafts.get(project.id)||'';
- return `<section class="hero dashboard-welcome"><div class="welcome-decoration welcome-decoration-left" aria-hidden="true"></div><div class="welcome-decoration welcome-decoration-right" aria-hidden="true"></div><div class="welcome-content"><div class="welcome-intro"><img src="/assets/kaska.png" alt="" class="welcome-avatar"><div><p class="welcome-greeting">Dobrze Cię widzieć!</p><h2>Kogo dziś szukamy?</h2></div></div><form id="dashboard-search-form" data-project-id="${project.id}"><label class="welcome-search-label" for="dashboard-audience">Opis firm, do których chcesz dotrzeć</label><div class="welcome-search"><input id="dashboard-audience" value="${esc(draft)}" maxlength="3000" placeholder="np. firmy produkcyjne w Niemczech, ponad 50 pracowników"><button type="submit" class="primary" ${draft.trim()?'':'disabled'}>Szukaj <span aria-hidden="true">↗</span></button></div><p class="hint">Wpisz opis firm, których szukasz.</p></form><div class="welcome-shortcuts"><button type="button" class="secondary" data-view="discover">Odkryj firmy</button><button type="button" class="secondary" data-view="contacts">Twoje kontakty</button><button type="button" class="secondary" data-view="reports">Zobacz raporty</button><button type="button" class="secondary" data-action="new-campaign">Nowa kampania</button></div><p class="welcome-project"><span>Bieżący projekt:</span> <strong data-no-translate>${esc(project.name)}</strong></p></div></section>`;
+function searchRefinement(project){
+ const cached=dashboardSearchDrafts.get(project.id);
+ if(cached?.source===leadBriefSource(project))return cached.text;
+ try{const saved=JSON.parse(sessionStorage.getItem('kaska-search-refinement:'+project.id)||'null');if(saved?.source===leadBriefSource(project))return saved.text||''}catch{}
+ return '';
+}
+function setSearchRefinement(project,text){
+ const value={source:leadBriefSource(project),text};dashboardSearchDrafts.set(project.id,value);
+ try{sessionStorage.setItem('kaska-search-refinement:'+project.id,JSON.stringify(value))}catch{}
+}
+function refinedLeadBrief(project,refinement){
+ return [projectLeadBrief(project),refinement?translateUiText('Doprecyzowanie tego wyszukiwania:')+'\n'+refinement:''].filter(Boolean).join('\n\n');
+}
+function dashboardCanSearch(project,refinement=''){
+ return [project.offer,project.audience,refinement].some(value=>String(value||'').trim().length>=10);
+}
+function dashboardWelcomePanel(leads=false){
+ const project=sellerProject(),draft=searchRefinement(project);
+ return `<section class="hero dashboard-welcome"><div class="welcome-decoration welcome-decoration-left" aria-hidden="true"></div><div class="welcome-decoration welcome-decoration-right" aria-hidden="true"></div><div class="welcome-content"><div class="welcome-intro"><img src="/assets/kaska.png" alt="" class="welcome-avatar"><div><p class="welcome-greeting">Dobrze Cię widzieć!</p><h2>Kogo dziś szukamy?</h2></div></div><${leads?'div':'form'} id="dashboard-search-form" data-project-id="${project.id}" data-search-view="${leads?'leads':'dashboard'}"><label class="welcome-search-label" for="dashboard-audience">Doprecyzuj wyszukiwanie (opcjonalnie)</label><div class="welcome-search"><input id="dashboard-audience" value="${esc(draft)}" maxlength="3000" placeholder="np. tym razem tylko producenci żywności"><button type="submit" class="primary" ${leads?'id="prospect-search" form="prospect-form"':''} ${dashboardCanSearch(project,draft)?'':'disabled'}>Szukaj <span aria-hidden="true">↗</span></button></div><p class="hint dashboard-search-context"><span>Korzystasz z kryteriów projektu</span> <strong data-no-translate>${esc(project.name)}</strong> <button type="button" class="link" data-view="project">Zmień kryteria</button></p><p class="hint">Puste pole oznacza wyszukiwanie według projektu. Doprecyzowanie dotyczy tylko tego wyszukiwania.</p></${leads?'div':'form'}><div class="welcome-shortcuts"><button type="button" class="secondary" data-view="discover">Odkryj firmy</button><button type="button" class="secondary" data-view="contacts">Twoje kontakty</button><button type="button" class="secondary" data-view="reports">Zobacz raporty</button><button type="button" class="secondary" data-action="new-campaign">Nowa kampania</button></div><p class="welcome-project"><span>Bieżący projekt:</span> <strong data-no-translate>${esc(project.name)}</strong></p></div></section>`;
 }
 function bindDashboardWelcome(){
  const form=$('#dashboard-search-form');if(!form)return;
- const projectId=state.seller_project.id,input=$('#dashboard-audience');let submitting=false;
- const button=form.querySelector('button[type=submit]'),sync=()=>{button.disabled=submitting||!input.value.trim()};
- input.oninput=()=>{dashboardSearchDrafts.set(projectId,input.value);sync()};sync();
- form.onsubmit=event=>{event.preventDefault();if(submitting||!input.value.trim())return;submitting=true;run(event.submitter,async()=>{try{
-  const audience=input.value.trim();await flushSellerProject();
+ const projectId=state.seller_project.id,input=$('#dashboard-audience'),leads=form.dataset.searchView==='leads';let submitting=false;
+ const button=form.querySelector('button[type=submit]'),sync=()=>{button.disabled=submitting||!dashboardCanSearch(sellerProject(),input.value)||(leads&&($('#prospect-form')?.dataset.searching==='true'||$('#prospect-form')?.dataset.translating==='true'||!state.prospecting?.hunter||state.prospecting.runs.some(r=>['searching','verifying','drafting'].includes(r.status))||leadImportBusy.size>0))};
+ input.oninput=()=>{const project=sellerProject();setSearchRefinement(project,input.value);if(leads){const brief=refinedLeadBrief(project,input.value.trim());$('#prospect-lead-brief').value=brief;cacheLeadBrief(project,brief);$('#prospect-lead-brief').oninput()}sync()};sync();
+ if(leads){input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();if(!button.disabled)$('#prospect-form').requestSubmit(button)}};return}
+ form.onsubmit=event=>{event.preventDefault();if(submitting||!dashboardCanSearch(sellerProject(),input.value))return;submitting=true;run(event.submitter||button,async()=>{try{
+  const refinement=input.value.trim();await flushSellerProject();
   if(state.seller_project.id!==projectId)return;
-  if(audience){
-   const current=sellerProject(),saved=await api('seller-project',{project_id:projectId,revision:current.revision,audience});
-   if(state.seller_project.id!==projectId)return;
-   state.seller_project=saved;sellerBase=saved;
-  }
-  dashboardSearchDrafts.delete(projectId);view='prospecting';render();syncLanguages();
+  const project=sellerProject();
+  const brief=refinedLeadBrief(project,refinement);
+  if(brief.length>3000)throw Error(translateUiText('Opis wyszukiwania jest za długi. Skróć doprecyzowanie lub kryteria projektu.'));
+  cacheLeadBrief(project,brief);
+  setSearchRefinement(project,refinement);view='prospecting';render();syncLanguages();
+  $('#prospect-lead-brief').value=brief;
   const search=$('#prospect-search');
   if(search.disabled){
    const message=translateUiText(!state.prospecting?.hunter?'Podłącz Hunter w Integracjach.':'Operacja już trwa. Poczekaj na jej zakończenie.');
@@ -160,12 +177,15 @@ function contactGroupForm(id){
  modal(`<h2>Tagi kontaktu</h2><p data-no-translate>${esc(contact.name)} · ${esc(contact.email)}</p><form id="contact-group-form">${contactTagsControl(contact.tags||'')}<p class="hint">Pozostaw puste, aby usunąć wszystkie tagi kontaktu.</p><div class="actions"><button class="primary">Zapisz tagi</button><button type="button" class="secondary close">Anuluj</button></div></form>`);
  $('#contact-group-form').onsubmit=e=>{e.preventDefault();run(e.submitter,async()=>{await api('contact/tags',{id,tags:e.target.elements.tags.value});$('#modal').close();await refresh();toast('Tagi kontaktu zapisane.')})};
 }
+function bulkContactTagsPanel({id,count,tags,tagId,clearAttribute,applyAttribute,extra=''}){
+ return `<div id="${id}" class="contact-bulk-panel"><div class="actions"><span><span>Zaznaczono kontaktów:</span> <strong id="${id==='contact-bulk-panel'?'contact-bulk-count':'lead-bulk-count'}">${count}</strong></span><button type="button" class="link" ${clearAttribute}>Odznacz wszystkie</button></div>${contactTagsControl(tags,tagId)}<p class="hint">Tagi zostaną dodane do zaznaczonych osób. Dotychczasowe tagi i statusy pozostaną zachowane. Checkbox w nagłówku zaznacza tylko widoczne kontakty.</p><button type="button" class="primary" ${applyAttribute}>Przypisz tagi do zaznaczonych</button>${extra}</div>`;
+}
 function renderContactsView(){
  const scope=state.seller_project.id+':'+monitoringSimulation;
  if(contactBulkScope!==scope){contactBulkSelected.clear();contactBulkScope=scope}
  const known=new Set(state.contacts.map(contact=>contact.id));for(const id of contactBulkSelected)if(!known.has(id))contactBulkSelected.delete(id);
  if(document.activeElement?.closest('#contact-bulk-panel')?.querySelector('[data-contact-tag-select]')&&document.activeElement.matches('input,select'))return;
- $('#content').innerHTML=renderTop('Kontakty','Twoja baza. Twoje relacje.',`<div class="actions"><button class="secondary" data-action="import">Import CSV</button><button class="primary" data-action="new-contact">+ Dodaj kontakt</button></div>`)+`<section class="panel"><div class="filters"><input id="search" class="search" value="${esc(contactSearch)}" placeholder="Szukaj osoby, firmy, adresu lub tagu…" aria-label="Szukaj kontaktu"><select id="contact-group-filter" aria-label="Filtr tagów"><option value="all">Wszystkie tagi</option><option value="ungrouped">Bez tagów</option>${(state.contact_tags||[]).map(tag=>`<option value="${esc('group:'+tag)}" data-no-translate>${esc(tag)}</option>`).join('')}</select></div><label class="contact-bulk-toggle"><input type="checkbox" data-contact-bulk-toggle ${contactBulkMode?'checked':''} ${contactBulkBusy?'disabled':''}><span>Operacje zbiorcze</span></label>${contactBulkMode?`<div id="contact-bulk-panel"><div class="actions"><span><span>Zaznaczono kontaktów:</span> <strong id="contact-bulk-count">${contactBulkSelected.size}</strong></span><button type="button" class="link" data-contact-bulk-clear>Odznacz wszystkie</button></div>${contactTagsControl(contactBulkTags,'bulk-contact-tags')}<p class="hint">Tagi zostaną dodane do zaznaczonych osób. Dotychczasowe tagi i statusy pozostaną zachowane. Checkbox w nagłówku zaznacza tylko widoczne kontakty.</p><button type="button" class="primary" data-contact-bulk-apply>Przypisz tagi do zaznaczonych</button></div>`:''}<div class="table-wrap"><table><thead><tr>${contactBulkMode?`<th class="contact-bulk-check"><input type="checkbox" data-contact-bulk-all aria-label="${esc(translateUiText('Zaznacz wszystkie widoczne kontakty'))}" ${contactBulkBusy?'disabled':''}></th>`:''}<th>Osoba</th><th>Firma / stanowisko</th><th>Tagi</th><th>Status</th><th>Działanie</th></tr></thead><tbody id="contacts-body"></tbody></table></div></section>`;
+ $('#content').innerHTML=renderTop('Kontakty','Twoja baza. Twoje relacje.',`<div class="actions"><button class="secondary" data-action="import">Import CSV</button><button class="primary" data-action="new-contact">+ Dodaj kontakt</button></div>`)+`<section class="panel"><div class="filters"><input id="search" class="search" value="${esc(contactSearch)}" placeholder="Szukaj osoby, firmy, adresu lub tagu…" aria-label="Szukaj kontaktu"><select id="contact-group-filter" aria-label="Filtr tagów"><option value="all">Wszystkie tagi</option><option value="ungrouped">Bez tagów</option>${(state.contact_tags||[]).map(tag=>`<option value="${esc('group:'+tag)}" data-no-translate>${esc(tag)}</option>`).join('')}</select></div><label class="contact-bulk-toggle"><input type="checkbox" data-contact-bulk-toggle ${contactBulkMode?'checked':''} ${contactBulkBusy?'disabled':''}><span>Operacje zbiorcze</span></label>${contactBulkMode?bulkContactTagsPanel({id:'contact-bulk-panel',count:contactBulkSelected.size,tags:contactBulkTags,tagId:'bulk-contact-tags',clearAttribute:'data-contact-bulk-clear',applyAttribute:'data-contact-bulk-apply'}):''}<div class="table-wrap"><table><thead><tr>${contactBulkMode?`<th class="contact-bulk-check"><input type="checkbox" data-contact-bulk-all aria-label="${esc(translateUiText('Zaznacz wszystkie widoczne kontakty'))}" ${contactBulkBusy?'disabled':''}></th>`:''}<th>Osoba</th><th>Firma / stanowisko</th><th>Tagi</th><th>Status</th><th>Działanie</th></tr></thead><tbody id="contacts-body"></tbody></table></div></section>`;
  $('#contact-group-filter').value=contactGroupFilter;if($('#contact-group-filter').selectedIndex<0){contactGroupFilter='all';$('#contact-group-filter').value='all'}
  renderContacts(contactSearch);
  $('#search').oninput=event=>{contactSearch=event.target.value;renderContacts(contactSearch)};
@@ -310,29 +330,71 @@ function apiKeyFormData(form){
   return data;
 }
 const leadBriefSource=project=>JSON.stringify([project.offer,project.audience,project.pain_points,project.value_props]);
-function cacheLeadBrief(project,text){try{sessionStorage.setItem('kaska-lead-brief:'+project.id,JSON.stringify({source:leadBriefSource(project),text}))}catch{}}
+function cacheLeadBrief(project,text,language=''){try{sessionStorage.setItem('kaska-lead-brief:'+project.id,JSON.stringify({source:leadBriefSource(project),text,language}))}catch{}}
+function searchBriefLanguage(project){try{return sessionStorage.getItem('kaska-search-language:'+project.id)||state.preferences.message_language}catch{return state.preferences.message_language}}
+function markBriefLanguage(form,language){const text=form.elements.lead_brief;text.dataset.briefLanguage=language;text.dataset.translatedText=text.value;cacheLeadBrief(sellerProject(),text.value,language)}
+function translateLeadBrief(form){
+ const text=form.elements.lead_brief,select=form.elements.language,project=sellerProject(),source=text.value,language=select.value,status=$('#lead-brief-status');
+ if(!source.trim()||(text.dataset.briefLanguage===language&&text.dataset.translatedText===source))return Promise.resolve(true);
+ if(!state.integrations.ai){status.textContent=translateUiText('Automatyczne tłumaczenie wymaga OpenAI. Możesz wpisać opis w wybranym języku ręcznie.');return Promise.resolve(true)}
+ const previous=form._briefTranslation;
+ if(previous?.source===source&&previous.language===language)return previous.promise;
+ previous?.controller.abort();
+ const task={source,language,controller:new AbortController()},scope=leadBriefSource(project),epoch=simulationEpoch;
+ form._briefTranslation=task;form.dataset.translating='true';
+ status.textContent=translateUiText('Tłumaczę opis wyszukiwania…');
+ task.promise=(async()=>{
+  try{
+   const result=await api('ai/translate-search-brief',{text:source,language},task.controller.signal);
+   if(!form.isConnected||form._briefTranslation!==task||sellerProject().id!==project.id||leadBriefSource(sellerProject())!==scope||simulationEpoch!==epoch||text.value!==source||select.value!==language)return false;
+   text.value=result.text;markBriefLanguage(form,language);
+   status.textContent=translateUiText('Opis przetłumaczony. Sprawdź go przed wyszukiwaniem.');return true;
+  }catch(error){if(form._briefTranslation===task&&form.isConnected)status.textContent=translateUiText('Nie udało się przetłumaczyć opisu. Treść pozostaje bez zmian.')+' '+error.message;if(error.name==='AbortError')return false;throw error}
+  finally{if(form._briefTranslation===task){delete form._briefTranslation;delete form.dataset.translating;if(form.isConnected)renderProspecting()}}
+ })();return task.promise;
+}
+function scheduleBriefTranslation(form){
+ clearTimeout(form._briefTimer);
+ if($('#prospect-advanced')?.open)form._briefTimer=setTimeout(()=>{if(form.isConnected&&document.activeElement!==form.elements.lead_brief)translateLeadBrief(form).catch(()=>{})},600);
+}
 function initialLeadBrief(project){
  try{const cached=JSON.parse(sessionStorage.getItem('kaska-lead-brief:'+project.id)||'null');if(cached?.source===leadBriefSource(project)&&typeof cached.text==='string')return cached.text}catch{}
- if(!project.offer?.trim()||!project.audience?.trim())return project.audience||'';
+ return projectLeadBrief(project);
+}
+function projectLeadBrief(project){
+ if(!project.offer?.trim()||!project.audience?.trim())return project.audience?.trim()||project.offer?.trim().slice(0,3000)||'';
  const combined=translateUiText('Szukamy firm, które mogą skorzystać z tej oferty:')+'\n'+project.offer.trim()+'\n\n'+translateUiText('Kryteria odbiorców:')+'\n'+project.audience.trim();
  return combined.length<=3000?combined:project.audience;
+}
+function prospectSearchAreas(){
+ let areas=sellerProject().search_areas||[];
+ try{if(typeof areas==='string')areas=JSON.parse(areas)}catch{areas=[]}
+ if(!Array.isArray(areas))areas=[];
+ return `<strong>Obszary wyszukiwania</strong><div class="prospect-area-list">${areas.length?areas.map((area,index)=>`<span class="badge gray">${area.label?`<span data-no-translate>${esc(area.label)}</span>`:`<span>Obszar</span> ${index+1}`} · <span data-no-translate>${esc(area.radius_km)} km</span></span>`).join(''):'<span>Cały świat</span>'}</div><button type="button" class="link" data-view="project">Zmień obszary w projekcie</button>`;
 }
 function leadBriefControls(){return `<section class="lead-brief"><div class="lead-brief-heading"><label for="prospect-lead-brief">Opis wyszukiwania</label><button type="button" class="secondary" id="formulate-lead-brief">✧ Sformułuj z AI</button></div><textarea id="prospect-lead-brief" name="lead_brief" rows="6" maxlength="3000" data-no-translate></textarea><p class="hint" role="status" id="lead-brief-status"></p></section>`}
 function bindLeadBrief(form){
  const project=sellerProject(),text=$('#prospect-lead-brief'),button=$('#formulate-lead-brief'),status=$('#lead-brief-status');
  form.dataset.sellerProjectId=String(project.id);text.value=initialLeadBrief(project);
- text.oninput=()=>cacheLeadBrief(sellerProject(),text.value);
+ form.elements.language.value=searchBriefLanguage(project);
+ try{const saved=JSON.parse(sessionStorage.getItem('kaska-lead-brief:'+project.id)||'null');if(saved?.source===leadBriefSource(project)&&saved.text===text.value&&saved.language){text.dataset.briefLanguage=saved.language;text.dataset.translatedText=saved.text}}catch{}
+ text.oninput=()=>{delete text.dataset.briefLanguage;cacheLeadBrief(sellerProject(),text.value);scheduleBriefTranslation(form)};
+ text.onblur=event=>{clearTimeout(form._briefTimer);if(text.value.trim()&&event.relatedTarget!==button)translateLeadBrief(form).catch(()=>{})};
+ form.elements.language.onchange=()=>{try{sessionStorage.setItem('kaska-search-language:'+sellerProject().id,form.elements.language.value)}catch{}translateLeadBrief(form).catch(()=>{})};
+ $('#prospect-advanced').addEventListener('toggle',()=>{if($('#prospect-advanced')?.open)translateLeadBrief(form).catch(()=>{})});
  button.onclick=()=>run(button,async()=>{
+  clearTimeout(form._briefTimer);form._briefTranslation?.controller.abort();
   if(!state.integrations.ai)throw Error(translateUiText('Podłącz OpenAI w Integracjach.'));
   await flushSellerProject();const source=sellerProject(),previous=text.value;
   if(!source.offer?.trim())throw Error(translateUiText('Najpierw uzupełnij ofertę.'));
   status.textContent=translateUiText('Formułuję opis wyszukiwania…');
   try{
-   const result=await api('ai/suggest-audience',{offer:source.offer,audience:source.audience,pain_points:source.pain_points,value_props:source.value_props,search_languages:source.search_languages,language:state.preferences.ui_language});
+   const language=form.elements.language.value;
+   const result=await api('ai/suggest-audience',{offer:source.offer,audience:previous||source.audience,pain_points:source.pain_points,value_props:source.value_props,search_languages:source.search_languages,language});
    const current=sellerProject();
    if(!form.isConnected||current.id!==source.id)return;
-   if(text.value!==previous||leadBriefSource(current)!==leadBriefSource(source)){status.textContent=translateUiText('Dane zmieniły się podczas generowania. Sformułuj opis ponownie.');return}
-   text.value=result.audience;cacheLeadBrief(current,text.value);
+   if(text.value!==previous||form.elements.language.value!==language||leadBriefSource(current)!==leadBriefSource(source)){status.textContent=translateUiText('Dane zmieniły się podczas generowania. Sformułuj opis ponownie.');return}
+   text.value=result.audience;markBriefLanguage(form,language);
    status.textContent=translateUiText('Opis gotowy. Sprawdź go przed wyszukiwaniem.');
   }catch(error){if(status.isConnected)status.textContent=error.message;throw error}
  });
@@ -348,7 +410,10 @@ function leadResultPagination(p,total){
  const pages=Math.max(1,Math.ceil(total/p.size));
  return `<nav class="discover-company-pagination" aria-label="${esc(translateUiText('Strony wyników'))}"><span class="hint">${total?((p.page-1)*p.size+1):0}–${Math.min(total,p.page*p.size)} / ${total}</span><label><span>Wyników na stronie</span><select data-lead-page-size>${[10,25,50].map(size=>`<option ${p.size===size?'selected':''}>${size}</option>`).join('')}</select></label><div class="actions"><button type="button" class="secondary" data-lead-page="1" ${p.page===1?'disabled':''}>« <span>Pierwsza</span></button><button type="button" class="secondary" data-lead-page="${p.page-1}" ${p.page===1?'disabled':''}>‹ <span>Poprzednia</span></button><span class="hint"><span>Strona</span> ${p.page} / ${pages}</span><button type="button" class="secondary" data-lead-page="${p.page+1}" ${p.page===pages?'disabled':''}><span>Następna</span> ›</button><button type="button" class="secondary" data-lead-page="${pages}" ${p.page===pages?'disabled':''}><span>Ostatnia</span> »</button></div></nav>`;
 }
-function leadBulkPanel(p,busy){return `<label class="contact-bulk-toggle"><input type="checkbox" data-lead-bulk-toggle ${p.bulk?'checked':''} ${busy?'disabled':''}><span>Operacje zbiorcze</span></label>${p.bulk?`<div id="lead-bulk-panel">${contactTagsControl(p.tags,'lead-bulk-tags')}<div class="actions"><button type="button" class="secondary" data-lead-bulk-action="tags">Przypisz tagi do zaznaczonych</button><button type="button" class="secondary danger" data-lead-bulk-action="delete">Usuń zaznaczone wyniki</button><button type="button" class="link" data-lead-clear>Odznacz wszystkie</button></div><p class="hint">Usuwanie dotyczy tylko wyników wyszukiwania. Kontakty zapisane w bazie pozostają zachowane.</p></div><label class="check"><input type="checkbox" data-lead-all ${busy?'disabled':''}><span>Zaznacz wszystkie widoczne kontakty</span></label>`:''}`}
+function leadBulkPanel(p,busy){
+ const extra='<div class="bulk-panel-extra"><button type="button" class="secondary danger" data-lead-bulk-action="delete">Usuń zaznaczone wyniki</button><p class="hint">Usuwanie dotyczy tylko wyników wyszukiwania. Kontakty zapisane w bazie pozostają zachowane.</p></div>';
+ return `<label class="contact-bulk-toggle"><input type="checkbox" data-lead-bulk-toggle ${p.bulk?'checked':''} ${busy?'disabled':''}><span>Operacje zbiorcze</span></label>${p.bulk?bulkContactTagsPanel({id:'lead-bulk-panel',count:prospectSelected.size,tags:p.tags,tagId:'lead-bulk-tags',clearAttribute:'data-lead-clear',applyAttribute:'data-lead-bulk-action="tags"',extra})+`<label class="contact-bulk-toggle lead-select-all"><input type="checkbox" data-lead-all ${busy?'disabled':''}><span>Zaznacz wszystkie widoczne kontakty</span></label>`:''}`;
+}
 async function bulkLeadResults(button,record){
  const key=leadRunKey(record),projectId=state.seller_project.id,p=leadResultPage(record),action=button.dataset.leadBulkAction;
  const rows=state.prospecting.candidates.filter(row=>row.run_id===record.id&&prospectSelected.has(row.id));
@@ -382,7 +447,7 @@ function syncLeadImportControls(){
   document.querySelectorAll('[data-lead-bulk-action]').forEach(control=>control.disabled=busy||!prospectSelected.size||(control.dataset.leadBulkAction==='tags'&&!p.tags.length));
   if(busy)$('#prospect-search').disabled=true;
  }
- const count=$('#lead-selected-count');if(count)count.textContent=prospectSelected.size;
+ document.querySelectorAll('#lead-selected-count,#lead-bulk-count').forEach(count=>count.textContent=prospectSelected.size);
 }
 document.addEventListener('toggle',event=>{const panel=event.target;if(!panel.matches?.('[data-lead-company]')||!panel.isConnected)return;panel.open?leadCompanyPanels.add(panel.dataset.leadCompany):leadCompanyPanels.delete(panel.dataset.leadCompany)},true);
 document.addEventListener('input',event=>{
@@ -396,23 +461,23 @@ document.addEventListener('input',event=>{
 function renderProspecting(){
   const data=state.prospecting||{runs:[],candidates:[],hunter:false};
   if(!$('#prospect-form')){
-    $('#content').innerHTML=renderTop('Znajdź klientów','Znajdź firmy i osoby, sprawdź wyniki i dodaj wybrane kontakty.')+`
+    $('#content').innerHTML=renderTop('Znajdź klientów','Znajdź firmy i osoby, sprawdź wyniki i dodaj wybrane kontakty.')+dashboardWelcomePanel(true)+`
       <div class="notice" id="prospect-integrations"></div>
-      <section class="panel"><span class="section-label">01 / TWOJA FIRMA I ODBIORCY</span><h2>Kogo ma znaleźć Kaśka?</h2>
-        ${projectContextLink()}<form id="prospect-form">${leadBriefControls()}<details class="prospect-advanced" id="prospect-advanced"><summary>Szukanie zaawansowane</summary><label for="prospect-language">J\u0119zyk wiadomo\u015bci</label><select id="prospect-language" name="language">${messageLanguageOptions(state.preferences.message_language)}</select><p class="hint">Bez AI wpisz ofert\u0119 i w\u0142asne szablony w wybranym j\u0119zyku. Tre\u015bci wpisane przez Ciebie nie s\u0105 automatycznie t\u0142umaczone.</p>          <div class="row"><div><label for="prospect-titles">Stanowiska (opcjonalnie, oddziel przecinkami)</label><input id="prospect-titles" name="titles" maxlength="500" placeholder="CEO, Head of Operations"></div><div><label for="prospect-department">Dział</label><select id="prospect-department" name="department"><option value="">Wszyscy decydenci</option>${[['executive','Zarząd'],['it','IT'],['finance','Finanse'],['sales','Sprzedaż'],['marketing','Marketing'],['hr','HR'],['operations','Operacje'],['procurement','Zakupy'],['product','Produkt']].map(([v,t])=>`<option value="${v}">${t}</option>`).join('')}</select></div></div>
+      <section class="panel prospect-search-options"><form id="prospect-form"><details class="prospect-advanced" id="prospect-advanced"><summary>Szukanie zaawansowane</summary><section id="prospect-search-areas" class="prospect-search-areas">${prospectSearchAreas()}</section>${leadBriefControls()}<label for="prospect-language">J\u0119zyk wyszukiwania</label><select id="prospect-language" name="language">${messageLanguageOptions(state.preferences.message_language)}</select><p class="hint">Opis wyszukiwania jest tłumaczony na wybrany język przez OpenAI. Dane projektu pozostają bez zmian.</p>          <div class="row"><div><label for="prospect-titles">Stanowiska (opcjonalnie, oddziel przecinkami)</label><input id="prospect-titles" name="titles" maxlength="500" placeholder="CEO, Head of Operations"></div><div><label for="prospect-department">Dział</label><select id="prospect-department" name="department"><option value="">Wszyscy decydenci</option>${[['executive','Zarząd'],['it','IT'],['finance','Finanse'],['sales','Sprzedaż'],['marketing','Marketing'],['hr','HR'],['operations','Operacje'],['procurement','Zakupy'],['product','Produkt']].map(([v,t])=>`<option value="${v}">${t}</option>`).join('')}</select></div></div>
           <div class="row"><div><label for="prospect-company-limit">Maksymalnie firm na język</label><input id="prospect-company-limit" name="company_limit" type="number" min="1" max="10" value="3" required></div><div><label for="prospect-people-limit">Osób na firmę</label><input id="prospect-people-limit" name="per_company" type="number" min="1" max="3" value="2" required></div></div>
           <label for="prospect-exclusions">Wyklucz domeny klientów i konkurentów</label><input id="prospect-exclusions" name="exclusions" placeholder="klient.pl, konkurent.com"><p class="hint">Pomijamy własną domenę i adresy już obecne w Kontaktach. Wyszukiwanie może zużyć kredyty Hunter oraz OpenAI, jeśli jest podłączone. Wyniki wymagają przeglądu; nie wysyłamy wiadomości.</p>
-          </details><button class="primary" id="prospect-search">Znajdź firmy i osoby</button><p id="prospect-feedback" class="hint" role="status"></p>
+          </details><p id="prospect-feedback" class="hint" role="status"></p>
         </form></section>
       <section class="panel"><div class="panel-head"><h2>Firmy/Instytucje</h2><button class="secondary" id="prospect-refresh">Odśwież wyniki</button></div><div id="prospect-results"></div></section>`;
-    bindLeadBrief($('#prospect-form'));
+    bindLeadBrief($('#prospect-form'));bindDashboardWelcome();
     $('#prospect-advanced').addEventListener('invalid',()=>{$('#prospect-advanced').open=true},true);
-    $('#prospect-form').onsubmit=e=>{e.preventDefault();run(e.submitter,async()=>{await flushSellerProject();const project=sellerProject(),data={...Object.fromEntries(new FormData(e.target))};for(const field of ['website','offer','pain_points','value_props','proof_points','search_languages','search_areas'])data[field]=project[field];data.audience=e.target.elements.lead_brief.value.trim()||project.audience;delete data.lead_brief;data.website=normalizeWebsite(data.website);if(!data.website||!data.audience?.trim()||data.audience.trim().length<10){editSellerProject();throw Error(translateUiText('Uzupełnij stronę firmy i opis odbiorców w projekcie.'))}const result=await api('prospecting/search',data);prospectRunId=result.id;prospectSelected.clear();$('#prospect-feedback').textContent='Wyszukiwanie uruchomione. Postęp pojawi się poniżej.';await refresh()})};
+    $('#prospect-form').onsubmit=e=>{e.preventDefault();const form=e.currentTarget,button=e.submitter||$('#prospect-search');if(form.dataset.searching==='true'||button.disabled)return;form.dataset.searching='true';run(button,async()=>{await flushSellerProject();clearTimeout(form._briefTimer);const projectId=sellerProject().id;if(!await translateLeadBrief(form))throw Error(translateUiText('Opis lub j?zyk zmieni? si? podczas t?umaczenia. Wyszukaj ponownie.'));if(!form.isConnected||sellerProject().id!==projectId)return;const project=sellerProject(),data={...Object.fromEntries(new FormData(form))};for(const field of ['website','offer','pain_points','value_props','proof_points','search_languages','search_areas'])data[field]=project[field];data.audience=e.target.elements.lead_brief.value.trim()||project.audience;delete data.lead_brief;if(data.audience.length>3000)throw Error(translateUiText('Opis wyszukiwania jest za długi. Skróć doprecyzowanie lub kryteria projektu.'));data.website=normalizeWebsite(data.website);if(!data.website||!data.audience?.trim()||data.audience.trim().length<10){editSellerProject();throw Error(translateUiText('Uzupełnij stronę firmy i opis odbiorców w projekcie.'))}const result=await api('prospecting/search',data);prospectRunId=result.id;prospectSelected.clear();$('#prospect-feedback').textContent='Wyszukiwanie uruchomione. Postęp pojawi się poniżej.';await refresh()}).finally(()=>{delete form.dataset.searching;if(form.isConnected)renderProspecting()})};
     $('#prospect-refresh').onclick=e=>run(e.currentTarget,()=>refresh());
   }
+  const areasMarkup=prospectSearchAreas(),areasRoot=$('#prospect-search-areas');if(areasRoot._markup!==areasMarkup){areasRoot.innerHTML=areasMarkup;areasRoot._markup=areasMarkup}
   $('#prospect-integrations').innerHTML=`${data.hunter?'✓ Hunter podłączony.':'Podłącz Hunter, aby wyszukiwać klientów.'} ${state.integrations.ai?'✓ OpenAI ocenia dopasowanie firm.':'Bez OpenAI wyniki wymagają ręcznej oceny.'} <button class="link" data-view="settings">Otwórz Integracje →</button>`;
   const busy=data.runs.some(r=>['searching','verifying','drafting'].includes(r.status))||leadImportBusy.size>0;
-  $('#prospect-search').disabled=!data.hunter||busy;
+  $('#prospect-search').disabled=$('#prospect-form').dataset.searching==='true'||$('#prospect-form').dataset.translating==='true'||!data.hunter||busy||!dashboardCanSearch(sellerProject(),$('#dashboard-audience').value);
   if(!data.runs.some(r=>r.id===prospectRunId))prospectRunId=data.runs[0]?.id;
   const selectedRun=data.runs.find(r=>r.id===prospectRunId),root=$('#prospect-results');
   if(!selectedRun){root.innerHTML=empty('Zacznij od opisu odbiorców','Firmy i kontakty zostaną znalezione w Hunter. Nie tworzymy fikcyjnych wyników.');return}
@@ -433,7 +498,7 @@ function renderProspecting(){
   const redraw=()=>{document.activeElement?.blur();renderProspecting();syncLanguages()};
   root.querySelectorAll('[data-lead-page]').forEach(button=>button.onclick=()=>{pagination.page=Number(button.dataset.leadPage);redraw()});
   root.querySelectorAll('[data-lead-page-size]').forEach(select=>select.onchange=()=>{pagination.size=Number(select.value);pagination.page=1;redraw()});
-  $('[data-lead-bulk-toggle]').onchange=event=>{pagination.bulk=event.target.checked;redraw()};
+  $('[data-lead-bulk-toggle]').onchange=event=>{pagination.bulk=event.target.checked;prospectSelected.clear();redraw()};
   const selectAll=$('[data-lead-all]');if(selectAll)selectAll.onchange=event=>{for(const row of pageRows)event.target.checked?prospectSelected.add(row.id):prospectSelected.delete(row.id);redraw()};
   const clear=$('[data-lead-clear]');if(clear)clear.onclick=()=>{prospectSelected.clear();redraw()};
   root.querySelectorAll('[data-lead-bulk-action]').forEach(button=>button.onclick=()=>run(button,()=>bulkLeadResults(button,selectedRun)));

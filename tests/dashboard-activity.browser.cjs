@@ -114,11 +114,13 @@ with sqlite3.connect(sys.argv[1]) as c:
   await page.evaluate(async()=>{await api('seller-project',{website:'dashboard.example',offer:'Production software services'});await refresh()});
   await page.locator('nav [data-view=dashboard]').click();
   await page.getByRole('heading',{name:'Kogo dziś szukamy?',exact:true}).waitFor();
+  const savedAudience=await page.evaluate(()=>state.seller_project.audience);
   await page.locator('#dashboard-audience').fill('Firmy produkcyjne w Niemczech, ponad 50 pracownikow');
   await page.evaluate(async()=>refresh());
   assert.equal(await page.locator('#dashboard-audience').inputValue(),'Firmy produkcyjne w Niemczech, ponad 50 pracownikow');
   await page.getByRole('button',{name:'Szukaj',exact:false}).click();
-  await page.waitForFunction(()=>view==='prospecting'&&state.seller_project.audience==='Firmy produkcyjne w Niemczech, ponad 50 pracownikow');
+  await page.waitForFunction(()=>view==='prospecting');
+  assert.equal(await page.evaluate(()=>state.seller_project.audience),savedAudience);
   await page.waitForFunction(()=>state.prospecting.runs.some(run=>String(run.id).startsWith('sim-')&&run.audience.includes('Firmy produkcyjne w Niemczech, ponad 50 pracownikow')));
   await page.evaluate(async()=>chooseSellerProject('seller-projects/select',{project_id:1}));
   assert.notEqual(await page.evaluate(()=>state.seller_project.audience),'Firmy produkcyjne w Niemczech, ponad 50 pracownikow');

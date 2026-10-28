@@ -17,6 +17,29 @@ class OpenAITests(unittest.TestCase):
     setUp = test_app.SystemTests.setUp
     tearDown = test_app.SystemTests.tearDown
 
+    def test_translate_search_brief_preserves_scope_without_writing_project(self):
+        with patch('app.ai_service.ready', return_value=True), patch('app.ai_service.generate_json', return_value={'text': 'Hersteller in Berlin, mindestens 50 Mitarbeiter; keine Agenturen.'}) as generate:
+            result = app.translate_search_brief({'text': 'Manufacturers in Berlin, 50+ employees; exclude agencies.', 'language': 'de'})
+        self.assertEqual(result['language'], 'de')
+        self.assertIn('50', result['text'])
+        self.assertIn('German', generate.call_args.args[0])
+        self.assertIn('Preserve every constraint', generate.call_args.args[0])
+        self.assertEqual(generate.call_args.args[1]['text'], 'Manufacturers in Berlin, 50+ employees; exclude agencies.')
+
+    def test_translate_search_brief_rejects_invalid_input_and_results(self):
+        with patch('app.ai_service.ready', return_value=True), patch('app.ai_service.generate_json') as generate:
+            for item in ({'text': '', 'language': 'en'}, {'text': 'x'*3001, 'language': 'en'}, {'text': [], 'language': 'de'}, {'text': 'Test', 'language': 'invalid'}):
+                with self.assertRaises(ValueError): app.translate_search_brief(item)
+            generate.assert_not_called()
+            for text in ('', 'x'*3001, None):
+                generate.return_value={'text': text}
+                with self.assertRaises(ValueError): app.translate_search_brief({'text': 'Original criteria', 'language': 'en'})
+
+    def test_translate_search_brief_requires_connected_ai(self):
+        with patch('app.ai_service.ready', return_value=False), patch('app.ai_service.generate_json') as generate:
+            with self.assertRaises(ValueError): app.translate_search_brief({'text': 'Original criteria', 'language': 'en'})
+            generate.assert_not_called()
+
     def response(self, content, status='completed'):
         return io.BytesIO(json.dumps({'status': status, 'output': [
             {'type': 'reasoning', 'summary': []},

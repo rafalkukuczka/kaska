@@ -107,6 +107,12 @@ Przełączanie interfejsu nie tłumaczy ani nie nadpisuje wpisanej oferty, wiado
 
 ## Znajdowanie klientów i zapisywanie kontaktów
 
+Dashboard korzysta z oferty i kryteriów bieżącego projektu. Pole **Doprecyzuj wyszukiwanie (opcjonalnie)** dodaje warunek tylko do danego wyszukiwania. Puste pole uruchamia wyszukiwanie według projektu. Doprecyzowanie pozostaje w roboczym opisie w Leadach i nie zmienia projektu. Link **Zmień kryteria** otwiera jego szczegóły.
+
+Dashboard i Leady pokazują ten sam panel wyszukiwania. Doprecyzowanie jest zachowane przy przejściu i odświeżeniu strony, osobno dla każdego projektu. W Leadach pełny opis i przycisk **Sformułuj z AI** znajdują się w domyślnie zwiniętym wyszukiwaniu zaawansowanym.
+
+W wyszukiwaniu zaawansowanym **Język wyszukiwania** steruje tłumaczeniem opisu i językiem propozycji **Sformułuj z AI**. Przy otwarciu panelu, zmianie języka i przed wyszukiwaniem podłączone OpenAI tłumaczy opis roboczy, zachowując kryteria. Opis i wybrany język pozostają w sesji przeglądarki, osobno dla projektu. Błąd tłumaczenia nie usuwa tekstu; bez OpenAI opis można wpisać ręcznie w wybranym języku. Projekt nie jest zmieniany.
+
 W zakładce **Leady** opis wyszukiwania łączy ofertę i kryteria projektu, a przycisk **Sformułuj z AI** proponuje jego treść. Opis roboczy pozostaje w sesji przeglądarki. Hunter wyszukuje firmy i osoby, zapisuje źródła oraz sprawdza adresy email. Wyniki są pogrupowane w rozwijane firmy podobnie jak w Odkrywaj. Wybierz osoby, opcjonalnie dodaj tagi przy każdej z nich i kliknij **Dodaj wybrane do kontaktów**. Nie powstaje kampania ani wiadomości. Kontakty bez aktualnej weryfikacji zapisujemy jako wstrzymane; istniejące kontakty zachowują status, a nowe tagi są dopisywane. W symulacji można zapisać fikcyjne kontakty bez tagów; pozostają oznaczone i wykluczone z rzeczywistej wysyłki. Kampanie tworzysz osobno w zakładce Kampanie, wybierając kontakty lub ich tagi. Własny klucz Hunter podłączysz w Integracjach. Instrukcja, koszty i ograniczenia: [PROSPECTING.md](PROSPECTING.md).
 
 ## Opcjonalna personalizacja AI

@@ -1,6 +1,7 @@
 const backgroundRequests=new Map();
 let backgroundRequestId=0,backgroundJobs=[],backgroundPolling=false,backgroundTimer;
 const backgroundLabels={
+ 'ai/translate-search-brief':'Tłumaczenie opisu wyszukiwania',
  'campaign/edit-data':'Wczytywanie kampanii','campaign/update':'Zapisywanie zmian kampanii',
  'campaign/messages/delete':'Usuwanie wiadomości',
  'contacts/tags/bulk':'Przypisywanie tagów do kontaktów',

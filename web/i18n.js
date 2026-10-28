@@ -2,6 +2,21 @@
 let uiLanguage='pl';
 try{uiLanguage=localStorage.getItem('kaska-ui-language')==='en'?'en':'pl'}catch{}
 const uiEnglish={
+ 'Automatyczne tłumaczenie wymaga OpenAI. Możesz wpisać opis w wybranym języku ręcznie.':'Automatic translation requires OpenAI. You can enter the brief in the selected language manually.',
+ 'Tłumaczę opis wyszukiwania…':'Translating the search brief…',
+ 'Tłumaczenie opisu wyszukiwania':'Translating search brief',
+ 'Opis przetłumaczony. Sprawdź go przed wyszukiwaniem.':'Brief translated. Review it before searching.',
+ 'Nie udało się przetłumaczyć opisu. Treść pozostaje bez zmian.':'Translation failed. The brief remains unchanged.',
+ 'Opis lub język zmienił się podczas tłumaczenia. Wyszukaj ponownie.':'The brief or language changed during translation. Search again.',
+ 'Opis wyszukiwania jest tłumaczony na wybrany język przez OpenAI. Dane projektu pozostają bez zmian.':'OpenAI translates the search brief into the selected language. Project data remains unchanged.',
+ 'Język wyszukiwania':'Search language',
+ 'Obszary wyszukiwania':'Search areas', 'Zmień obszary w projekcie':'Edit areas in project',
+ 'Doprecyzuj wyszukiwanie (opcjonalnie)':'Refine your search (optional)',
+ 'np. tym razem tylko producenci żywności':'e.g. only food manufacturers this time',
+ 'Korzystasz z kryteriów projektu':'Using criteria from project', 'Zmień kryteria':'Edit criteria',
+ 'Puste pole oznacza wyszukiwanie według projektu. Doprecyzowanie dotyczy tylko tego wyszukiwania.':'Leave empty to search using project criteria. Your refinement applies only to this search.',
+ 'Doprecyzowanie tego wyszukiwania:':'Refinement for this search:',
+ 'Opis wyszukiwania jest za długi. Skróć doprecyzowanie lub kryteria projektu.':'The search brief is too long. Shorten your refinement or project criteria.',
  'Edytuj kampanię':'Edit campaign', 'EDYCJA KAMPANII':'EDIT CAMPAIGN',
  'Zapisano zmiany kampanii. Wysyłka nie została uruchomiona.':'Campaign changes saved. Sending has not been started.',
  'Zapis zmian wstrzyma aktywną kampanię. Wysłane kroki pozostają zablokowane. Zmienione oczekujące wiadomości zostaną odświeżone według szablonów. Po zmianie szkicu przygotuj wiadomości ponownie.':'Saving changes pauses an active campaign. Sent steps remain locked. Changed queued messages are refreshed from templates. After editing a draft, prepare its messages again.',
