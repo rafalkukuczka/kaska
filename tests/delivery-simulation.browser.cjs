@@ -19,14 +19,15 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   });
   await page.locator('#app-simulation').check();await page.waitForFunction(()=>monitoringSimulation&&!document.querySelector('#app-simulation').disabled);
   await page.locator('nav [data-view=campaigns]').click();await page.locator('[data-action=campaign]').click();
+  await page.locator('[data-campaign-review]').click();
   await page.locator('[data-action=campaign-status][data-status=active]').click();
-  await page.locator('.message-delivery-sending').first().waitFor();
+  await page.locator('#campaign-messages .message-delivery-sending').first().waitFor();
   await page.locator('[data-action=campaign-status][data-status=paused]').click();
   await page.waitForFunction(()=>deliverySimulationRuns()[selectedCampaign].status==='paused');
   await page.waitForFunction(()=>!document.querySelector('.message-delivery-sending'));
   assert.equal(await page.locator('.message-delivery-sending').count(),0);
   await page.locator('[data-action=campaign-status][data-status=active]').click();
-  await page.locator('.message-delivery-sent').first().waitFor();
+  await page.locator('#campaign-messages .message-delivery-sent').first().waitFor();
   await page.waitForFunction(()=>state.replies.some(reply=>String(reply.id).startsWith('sim-reply-')));
   assert.ok(await page.evaluate(()=>deliverySimulationRuns()[selectedCampaign].messages.some(m=>m.status==='cancelled')));
   assert.equal(writes.length,0);
