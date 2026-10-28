@@ -41,7 +41,7 @@ def guard_request(c,path,item):
         require_contact(c,item['id'])
     if path=='/api/contacts/tags/bulk':
         for contact_id in item.get('ids',[]):require_contact(c,contact_id)
-    if path in ('/api/campaigns','/api/campaign/preview'):
+    if path in ('/api/campaigns','/api/campaign/preview','/api/campaign/update'):
         for contact_id in item.get('contact_ids',[]):require_contact(c,contact_id)
         if item.get('preview_contact_id'):require_contact(c,item['preview_contact_id'])
     if path in ('/api/prospecting/verify','/api/prospecting/draft','/api/prospecting/contacts/add','/api/prospecting/candidates/bulk'):

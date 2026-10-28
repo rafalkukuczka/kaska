@@ -30,6 +30,7 @@ function insertSequenceCondition(position=sequenceInsertAt??document.querySelect
  persistBuilder();renderSequenceMap();openConditionPanel(position);
 }
 function insertSequenceEmail(position){
+ if(builderEditing?.protected_position!==null&&builderEditing?.protected_position!==undefined&&position<=builderEditing.protected_position)return toast('Wstaw nowe kroki po wysłanych wiadomościach.');
  const rows=[...document.querySelectorAll('#steps .step')];if(rows.length>=6)return toast('Maksymalnie 6 kroków');
  const previous=position?Number(rows[position-1].querySelector('[name=delay]').value)||0:-1;
  const day=Math.max(0,previous+(rows[position]?1:3)),shift=rows[position]?Math.max(0,day-Number(rows[position].querySelector('[name=delay]').value)+1):0;
@@ -52,7 +53,7 @@ function openSequenceInsert(button){
 function renderAssistantButtons(){
   const root=$('.assistant-shortcuts');if(!root)return;
   root.innerHTML=builderStep===2?'<button type="button" data-builder="improve-step">Popraw treść tego kroku z AI</button><button type="button" data-builder="first-touch">Napisz pierwszą wiadomość z AI</button>':'<button type="button" data-builder="website-shortcut">Stwórz ofertę z naszej strony</button><button type="button" data-builder="materials-shortcut">Zbuduj ofertę z historii sukcesu</button>';
-  root.querySelectorAll('button').forEach(button=>button.disabled=builderAssistantBusy);
+  root.querySelectorAll('button').forEach(button=>{const protectedStep=builderEditing?.protected_position;button.disabled=builderAssistantBusy||(protectedStep!==undefined&&protectedStep!==null&&((button.dataset.builder==='improve-step'&&builderSelectedStep<=protectedStep)||(button.dataset.builder==='first-touch'&&protectedStep>=0)))});
   syncWebsiteActions($('#campaign-form'));
   if(!$('#assistant-step-note'))root.insertAdjacentHTML('afterend','<label class="assistant-step-note" id="assistant-note-label" hidden>Uwagi do AI<textarea id="assistant-step-note" rows="3" maxlength="2000" placeholder="Jak poprawić wiadomość?"></textarea></label>');
   $('#assistant-note-label').hidden=builderStep!==2;
@@ -66,6 +67,7 @@ function renderSequenceMap(){
   const stage=root.closest('[data-stage]');stage.dataset.sequenceView=sequenceView;
   $('.builder-layout').classList.toggle('sequence-wide',builderStep===2&&sequenceView==='tree');
   root.querySelectorAll('[data-sequence-view]').forEach(button=>{const selected=button.dataset.sequenceView===sequenceView;button.classList.toggle('selected',selected);button.setAttribute('aria-pressed',String(selected))});
+  root.querySelector('[data-sequence-templates]').disabled=builderEditing?.protected_position!==null&&builderEditing?.protected_position!==undefined;
   const scene=root.querySelector('.sequence-scene'),markup=sequenceSceneMarkup(steps);scene.style.height=markup.height+'px';scene.innerHTML=markup.html;
   scene.querySelectorAll('[data-x]').forEach(node=>{node.style.left=node.dataset.x+'px';node.style.top=node.dataset.y+'px'});
   root.querySelectorAll('[data-flow-condition]').forEach(button=>button.onclick=()=>openConditionPanel(button.dataset.flowCondition==='entry'?'entry':Number(button.dataset.flowCondition)));

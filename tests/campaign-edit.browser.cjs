@@ -1,0 +1,54 @@
+const {chromium}=require('playwright');
+const {spawn,spawnSync}=require('node:child_process');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ const data=fs.mkdtempSync(path.resolve('test-results/campaign-edit-'));
+ const server=spawn('python',['tests/browser_server.py'],{env:{...process.env,APP_PORT:'8812',APP_DATA_DIR:data,SMTP_HOST:'',SMTP_FROM:'',IMAP_HOST:'',OPENAI_API_KEY:'',HUNTER_API_KEY:''},stdio:'pipe'});let browser;
+ try{
+  await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
+  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  page.on('pageerror',error=>errors.push(error.message));await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
+  await page.route('https://tile.openstreetmap.org/**',route=>route.abort());
+  await page.goto('http://localhost:8812');await page.waitForFunction(()=>state?.seller_project);
+  const id=await page.evaluate(async()=>{
+   await api('contacts',{name:'Anna',email:'anna@example.com',tags:['Clients']});
+   await api('campaigns',{name:'Editable',offer:'Services',audience_mode:'tags',audience_tags:['Clients'],steps:[{delay_days:0,subject:'First {{name}}',body:'Hello {{name}}'},{delay_days:3,subject:'Next',body:'Follow-up'}],conditions:[{field:'email',operator:'is_set',before_step:1}]});
+   await refresh();const id=state.campaigns[0].id;await api('campaign/prepare',{id});await refresh();return id;
+  });
+  await page.locator('nav [data-view=campaigns]').click();await page.locator('[data-action=edit-campaign]').click();
+  assert.equal(await page.locator('#build-name').inputValue(),'Editable');
+  assert.equal(await page.locator('#build-offer').inputValue(),'Services');
+  assert.deepEqual(await page.evaluate(()=>builderConditions),[{field:'email',operator:'is_set',value:'',before_step:1}]);
+  assert.deepEqual(await page.evaluate(()=>selectedCampaignTags()),['Clients']);
+  await page.locator('#build-name').fill('Edited campaign');
+  await page.locator('[data-builder=save-draft]').click();
+  await page.waitForFunction(()=>view==='campaigns'&&selectedCampaign!==null);
+  await page.getByRole('heading',{name:'Edited campaign',exact:true}).waitFor();assert.equal(await page.evaluate(()=>state.campaigns.length),1);
+  await page.waitForFunction(()=>campaignMessagePage(selectedCampaign).loaded);
+  assert.equal(await page.evaluate(()=>campaignMessagePage(selectedCampaign).total),0);
+  await page.locator('[data-action=prepare]').first().click();
+  await page.waitForFunction(()=>campaignMessagePage(selectedCampaign).total===2);
+  const seed=spawnSync('python',['-c',"import sqlite3,sys,time; c=sqlite3.connect(sys.argv[1]); c.execute(\"UPDATE messages SET status='sent',sent_at=?,message_id='<test>' WHERE campaign_id=? AND position=0\",(time.time(),int(sys.argv[2]))); c.execute(\"UPDATE campaigns SET status='active' WHERE id=?\",(int(sys.argv[2]),)); c.commit()",path.join(data,'katie.sqlite3'),String(id)],{encoding:'utf8'});
+  assert.equal(seed.status,0,seed.stderr);await page.evaluate(async()=>refresh());
+  await page.locator('[data-action=edit-campaign]').click();
+  await page.locator('#build-name').waitFor();
+  await page.evaluate(()=>showBuilderStage(2));await page.locator('[data-sequence-view=list]').click();
+  assert.equal(await page.locator('#steps [name=subject]').first().isDisabled(),true);
+  assert.equal(await page.locator('#steps [name=subject]').last().isEnabled(),true);
+  await page.locator('#steps [name=subject]').last().fill('Changed follow-up');
+  await page.locator('[data-builder=save-draft]').click();
+  await page.waitForFunction(()=>view==='campaigns'&&state.campaigns[0].status==='paused');
+  await page.waitForFunction(()=>campaignMessagePage(selectedCampaign).loaded&&!campaignMessagePage(selectedCampaign).loading);
+  assert.equal(await page.evaluate(()=>campaignMessagePage(selectedCampaign).messages.find(m=>m.position===0).status),'sent');
+  assert.equal(await page.evaluate(()=>campaignMessagePage(selectedCampaign).messages.find(m=>m.position===1).subject),'Changed follow-up');
+  await page.locator('[data-action=edit-campaign]').click();await page.locator('#build-name').fill('Unsaved edit');await page.locator('[data-builder=exit]').click();
+  await page.evaluate(()=>newCampaign());assert.equal(await page.locator('#build-name').inputValue(),'');
+  await page.locator('[data-builder=exit]').click();await page.evaluate(id=>{selectedCampaign=id;render()},id);
+  await page.locator('[data-action=edit-campaign]').click();assert.equal(await page.locator('#build-name').inputValue(),'Unsaved edit');
+  await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await page.screenshot({path:'test-results/campaign-edit-mobile.png',fullPage:true});
+  assert.deepEqual(errors,[]);
+  console.log('Campaign edit QA passed: populated builder, tags/conditions, same campaign ID, draft preparation, active pause, protected sent step, future message update, isolated edit draft and mobile.');
+ }finally{if(browser)await browser.close();server.kill()}
+})().catch(error=>{console.error(error);process.exitCode=1});

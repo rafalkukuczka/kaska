@@ -2,6 +2,11 @@
 let uiLanguage='pl';
 try{uiLanguage=localStorage.getItem('kaska-ui-language')==='en'?'en':'pl'}catch{}
 const uiEnglish={
+ 'Edytuj kampanię':'Edit campaign', 'EDYCJA KAMPANII':'EDIT CAMPAIGN',
+ 'Zapisano zmiany kampanii. Wysyłka nie została uruchomiona.':'Campaign changes saved. Sending has not been started.',
+ 'Zapis zmian wstrzyma aktywną kampanię. Wysłane kroki pozostają zablokowane. Zmienione oczekujące wiadomości zostaną odświeżone według szablonów. Po zmianie szkicu przygotuj wiadomości ponownie.':'Saving changes pauses an active campaign. Sent steps remain locked. Changed queued messages are refreshed from templates. After editing a draft, prepare its messages again.',
+ 'Wstaw nowe kroki po wysłanych wiadomościach.':'Insert new steps after sent messages.',
+ 'Szukaj':'Search', 'Wpisz opis firm, których szukasz.':'Describe the companies you are looking for.',
  'Podgląd':'Preview',
  'Podgląd wiadomości':'Message preview', 'Wczytuję podgląd…':'Loading preview…',
  'Maksymalnie firm na język':'Maximum companies per language',
@@ -564,7 +569,7 @@ function syncLanguages(){
 }
 function messageLanguageOptions(selected){return Object.entries(state.languages).map(([code,spec])=>`<option value="${code}" ${code===selected?'selected':''}>${spec.label}</option>`).join('')}
 function renderLanguageSettings(){
-  $('#content .topline').insertAdjacentHTML('afterend',`<section class="panel"><h2>Języki</h2><p>Język Kaśki zmienia panel i język nowych ocen AI. Język wiadomości wybierasz niezależnie dla każdej kampanii.</p><div class="row"><div><label for="settings-ui-language">Język Kaśki</label><select id="settings-ui-language" data-ui-language><option value="pl">Polski</option><option value="en">English</option></select></div><div><label for="settings-message-language">Domyślny język wiadomości</label><select id="settings-message-language">${messageLanguageOptions(state.preferences.message_language)}</select></div></div><p class="hint">Bez AI wpisz ofertę i własne szablony w wybranym języku. Treści wpisane przez Ciebie nie są automatycznie tłumaczone.</p></section>`);
+  $('#content .topline').insertAdjacentHTML('afterend',`<details class="panel" id="admin-languages"><summary><strong>Języki</strong></summary><p>Język Kaśki zmienia panel i język nowych ocen AI. Język wiadomości wybierasz niezależnie dla każdej kampanii.</p><div class="row"><div><label for="settings-ui-language">Język Kaśki</label><select id="settings-ui-language" data-ui-language><option value="pl">Polski</option><option value="en">English</option></select></div><div><label for="settings-message-language">Domyślny język wiadomości</label><select id="settings-message-language">${messageLanguageOptions(state.preferences.message_language)}</select></div></div><p class="hint">Bez AI wpisz ofertę i własne szablony w wybranym języku. Treści wpisane przez Ciebie nie są automatycznie tłumaczone.</p></details>`);
   $('#settings-message-language').onchange=e=>run(e.target,async()=>{
     try{state.preferences=await api('preferences',{message_language:e.target.value});toast('Zapisano domyślny język wiadomości.')}
     finally{e.target.value=state.preferences.message_language}

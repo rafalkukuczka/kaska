@@ -2,6 +2,7 @@ import csv
 import contact_groups
 import contact_tags
 import campaign_messages
+import campaign_edit
 import discover_contacts
 import hashlib
 import hmac
@@ -99,6 +100,7 @@ def init():
         discover_contacts.init_schema(c)
         contact_tags.init_schema(c)
         campaign_messages.init_schema(c)
+        campaign_edit.init_schema(c)
         project_scope.migrate(c)
         # A process interrupted during SMTP may already have delivered a message.
         c.execute("UPDATE messages SET status='uncertain',error='Przerwano proces podczas wysyłki. Sprawdź skrzynkę przed ponowieniem.' WHERE status='sending'")
@@ -514,33 +516,39 @@ def prepare(campaign_id):
         return
     with db() as c:
         campaign = c.execute('SELECT * FROM campaigns WHERE id=?', (campaign_id,)).fetchone()
-        if not campaign or campaign['status'] != 'draft':
-            raise ValueError('Wiadomości można przygotować tylko dla szkicu')
+        if not campaign or campaign['status'] not in ('draft','paused'):
+            raise ValueError('Przed przygotowaniem wiadomości wstrzymaj kampanię.')
         if campaign['audience_mode']=='signals':
             raise ValueError('Dodaj regułę w zakładce Sygnały przed przygotowaniem wiadomości')
-        contacts = c.execute("SELECT * FROM contacts WHERE status='active' AND simulated=0 AND contact_pool=?",(project_scope.contact_pool(c,campaign['project_id']),)).fetchall()
-        if campaign['audience_mode']=='selected':
-            selected = json.loads(campaign['contact_ids'])
-            contacts = [contact for contact in contacts if contact['id'] in selected]
-        if campaign['audience_mode']=='group':
-            contacts = [contact for contact in contacts if contact['target_group']==campaign['target_group'] and campaign['target_group']]
-        if campaign['audience_mode']=='tags':
-            contacts = [contact for contact in contacts if contact_tags.matches(contact['tags'],campaign['audience_tags'],campaign['tag_match'])]
-        contacts = [contact for contact in contacts if sequence_conditions.matches(campaign['conditions'], contact,0)]
+        contacts = campaign_edit.recipients(c,campaign)
+        existing={(row['contact_id'],row['position']):dict(row) for row in c.execute('SELECT * FROM messages WHERE campaign_id=?',(campaign_id,))}
+        incremental=campaign['status']=='paused' or any(row['sent_at'] or row['status'] in ('sent','sending','uncertain') for row in existing.values())
         steps = c.execute('SELECT * FROM steps WHERE campaign_id=? ORDER BY position', (campaign_id,)).fetchall()
     if not contacts:
         raise ValueError('Brak aktywnych kontaktów spełniających wybór odbiorców i warunki sekwencji.')
     messages = []
     for contact in contacts:
+        history=[row for row in existing.values() if row['contact_id']==contact['id']]
+        if incremental and any(row['status'] in ('uncertain','sending') or ((row['status']=='cancelled' or row['deleted']) and row['position']<len(steps)) for row in history):continue
+        first=existing.get((contact['id'],0))
+        baseline=(first['sent_at'] or first['due'])-steps[0]['delay_days']*86400 if first else time.time()
         for step in steps:
+            old=existing.get((contact['id'],step['position']))
+            if incremental and old and (old['status']!='queued' or old['deleted'] or old['sent_at']):continue
             subject, body = ai_copy(contact, campaign, step)
-            messages.append((campaign_id, contact['id'], step['position'], subject, body, time.time() + step['delay_days'] * 86400))
-    with db() as c:
-        current = c.execute('SELECT status FROM campaigns WHERE id=?', (campaign_id,)).fetchone()
-        if not current or current['status'] != 'draft':
-            raise ValueError('Status kampanii zmienił się podczas generowania')
-        c.execute('DELETE FROM messages WHERE campaign_id=?', (campaign_id,))
-        c.executemany('INSERT INTO messages(campaign_id,contact_id,position,subject,body,due) VALUES(?,?,?,?,?,?)', messages)
+            due=old['due'] if incremental and old else baseline+step['delay_days']*86400
+            messages.append((campaign_id, contact['id'], step['position'], subject, body, due))
+    with MAIL_LOCK,db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        current = c.execute('SELECT status,revision FROM campaigns WHERE id=?', (campaign_id,)).fetchone()
+        if not current or current['status']!=campaign['status'] or current['revision']!=campaign['revision']:
+            raise ValueError('Kampania zmieniła się podczas generowania. Otwórz ją ponownie.')
+        if not incremental:
+            c.execute('DELETE FROM messages WHERE campaign_id=?', (campaign_id,))
+        for row in messages:
+            if incremental and (row[1],row[2]) in existing:
+                c.execute("UPDATE messages SET subject=?,body=?,due=? WHERE campaign_id=? AND contact_id=? AND position=? AND status='queued' AND deleted=0",(row[3],row[4],row[5],row[0],row[1],row[2]))
+            else:c.execute('INSERT INTO messages(campaign_id,contact_id,position,subject,body,due) VALUES(?,?,?,?,?,?)',row)
     event(f'Przygotowano {len(messages)} wiadomości dla kampanii {campaign["name"]}')
 
 
@@ -900,6 +908,10 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError('Kroki muszą mieć temat, treść i rosnącą liczbę dni')
                         previous = delay
                         c.execute('INSERT INTO steps(campaign_id,position,delay_days,subject,body) VALUES(?,?,?,?,?)', (campaign_id, i, delay, step['subject'], step['body']))
+            elif self.path == '/api/campaign/edit-data':
+                return self.respond(campaign_edit.read(db,int(item['id'])))
+            elif self.path == '/api/campaign/update':
+                return self.respond(campaign_edit.save(db,library,MAIL_LOCK,ai_copy,item))
             elif self.path == '/api/campaign/prepare':
                 prepare(int(item['id']))
             elif self.path == '/api/campaign/delete':

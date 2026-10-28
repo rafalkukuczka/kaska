@@ -60,24 +60,31 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.ok(searches[1].audience.includes(original.offer));
   assert.equal(searches[1].project_id,original.id);
   assert.equal(searches[1].offer,original.offer);
-  // Empty Dashboard input reuses the current project criteria.
+  // Empty input and whitespace cannot launch a search, including Enter/programmatic submit.
   await page.locator('nav [data-view=dashboard]').click();
-  await page.locator('#dashboard-search-form button[type=submit]').click();
-  await page.waitForFunction(()=>view==='prospecting'&&document.querySelector('#prospect-search')?.disabled===false);
-  assert.equal(searches.length,3);
-  assert.equal(searches[2].audience,searches[1].audience);
+  assert.match(await page.locator('#dashboard-search-form button[type=submit]').innerText(),/^Search\s+↗$/);
+  assert.equal(await page.locator('#dashboard-search-form button[type=submit]').isDisabled(),true);
+  await page.locator('#dashboard-audience').fill('   ');
+  assert.equal(await page.locator('#dashboard-search-form button[type=submit]').isDisabled(),true);
+  await page.evaluate(()=>document.querySelector('#dashboard-search-form').requestSubmit());
+  assert.equal(await page.evaluate(()=>view),'dashboard');assert.equal(searches.length,2);
+  await page.locator('#dashboard-audience').fill('Companies in Austria');
+  assert.equal(await page.locator('#dashboard-search-form button[type=submit]').isEnabled(),true);
+  await page.locator('#dashboard-audience').fill('');
+  assert.equal(await page.locator('#dashboard-search-form button[type=submit]').isDisabled(),true);
   // Missing integration opens Leads with an actionable explanation, without a request.
-  await page.locator('nav [data-view=dashboard]').click();
+  await page.locator('#dashboard-audience').fill('Logistics companies in Austria with 100+ employees');
   await page.evaluate(()=>state.prospecting.hunter=false);
   await page.locator('#dashboard-search-form button[type=submit]').click();
   await page.waitForFunction(()=>view==='prospecting'&&document.querySelector('#prospect-feedback')?.textContent.includes('Connect Hunter'));
-  assert.equal(searches.length,3);
+  assert.equal(searches.length,2);
   // An existing operation must not launch another search.
   await page.locator('nav [data-view=dashboard]').click();
+  await page.locator('#dashboard-audience').fill('Logistics companies in Austria with 100+ employees');
   await page.evaluate(()=>{state.prospecting.hunter=true;state.prospecting.runs.push({id:1000,status:'searching',audience:'Existing search',stage:'Searching',warnings:'[]',filters:'{}'})});
   await page.locator('#dashboard-search-form button[type=submit]').click();
   await page.waitForFunction(()=>view==='prospecting'&&document.querySelector('#prospect-feedback')?.textContent.includes('already running'));
-  assert.equal(searches.length,3);
+  assert.equal(searches.length,2);
   assert.deepEqual(errors,[]);
   console.log('Lead brief QA passed: local brief, AI, project isolation, Dashboard automatic search, duplicate prevention, existing criteria, missing integration and busy operation, English and mobile.');
  }finally{if(browser)await browser.close();server.kill()}

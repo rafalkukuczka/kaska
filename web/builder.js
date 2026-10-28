@@ -1,16 +1,20 @@
-const builderDraftKey=()=>'campaign-builder-draft:'+state.seller_project.id;
+let builderEditing=null;
+const builderDraftKey=()=>'campaign-builder-draft:'+state.seller_project.id+(builderEditing?':edit:'+builderEditing.campaign.id:'');
 let builderStep=0;
+function builderContacts(){return [...new Map([...(builderEditing?.selected_contacts||[]),...state.contacts].map(contact=>[contact.id,contact])).values()]}
 const builderStages=['Odbiorcy','Oferta','Sekwencja','Ustawienia'];
 function campaignAudience(c){if(state.signals.rules.some(r=>r.campaign_id===c.id)||c.audience_mode==='signals')return 'Odbiorcy z sygnałów sprzedażowych';if(c.audience_mode==='tags')return translateUiText('Tagi')+': '+contactTags(c.audience_tags).join('; ');if(c.audience_mode==='group')return translateUiText('Tagi')+': '+c.target_group;if(c.audience_mode==='selected')return `Wybrane kontakty (${JSON.parse(c.contact_ids).length})`;return 'Wszystkie aktywne kontakty'}
 function campaignRecipientNotice(c){if(state.signals.rules.some(r=>r.campaign_id===c.id))return 'Kampania z regułą sygnałów: odbiorcy pochodzą z zaakceptowanych zdarzeń spełniających regułę. Nowe dopasowania są dołączane automatycznie.';if(c.audience_mode==='signals')return 'Ta kampania czeka na regułę sygnałów. Dodaj regułę w zakładce Sygnały; przygotowanie nie obejmie całej bazy.';if(c.audience_mode==='tags')return translateUiText('Odbiorcy według tagów:')+' '+contactTags(c.audience_tags).join('; ')+' · '+translateUiText(c.tag_match==='all'?'Wszystkie wybrane tagi (I)':'Dowolny z wybranych tagów (LUB)');if(c.audience_mode==='group')return translateUiText('Przygotowanie obejmuje aktywne kontakty należące do wybranej grupy w chwili generowania.')+' '+translateUiText('Grupa docelowa')+': '+c.target_group+'.';if(c.audience_mode==='selected')return 'Przygotowanie obejmuje wyłącznie wybrane, nadal aktywne kontakty. Lista jest zapisana w kampanii.';return 'Przygotowanie obejmuje wszystkie aktywne kontakty w bazie w chwili generowania.'}
 const companyMaterials=website=>{try{return state.library.materials.filter(m=>!m.simulated&&new URL(m.website).hostname.replace(/^www\./,'')===new URL(website).hostname.replace(/^www\./,''))}catch{return []}};
 
-function openCampaignBuilder(){
+async function editCampaign(id){const data=await api('campaign/edit-data',{id});if(data.campaign.project_id!==state.seller_project.id)return;openCampaignBuilder(data)}
+function openCampaignBuilder(editing=null){
+  builderEditing=editing;
   $('#modal').close();$('#modal-content').innerHTML='';
   view='builder';builderStep=0;resetSequence();
   document.querySelectorAll('nav [data-view]').forEach(b=>b.classList.toggle('selected',b.dataset.view==='campaigns'));
   $('#breadcrumb').textContent='Przestrzeń robocza / Kreator kampanii';
-  const contacts=state.contacts.filter(c=>c.status==='active'&&!c.simulated);
+  const contacts=builderContacts().filter(c=>!c.simulated&&(c.status==='active'||builderEditing?.selected_contacts?.some(selected=>selected.id===c.id)));
   $('#content').innerHTML=`<div class="builder-top"><button class="secondary" data-builder="exit">← Kampanie</button><div><span class="section-label">NOWA KAMPANIA</span><strong id="builder-campaign-title">Nowa kampania</strong></div><div class="builder-progress">${builderStages.map((s,i)=>`<button data-builder-step="${i}" ${i===0?'aria-current="step"':''}><span>${i+1}</span>${s}</button>`).join('')}</div><div class="builder-header-actions"><button class="secondary" data-builder="save-draft">Zapisz szkic</button><button class="primary" data-builder="header-next">Zapisz i przejdź dalej</button></div></div>
   <div class="builder-layout"><section class="builder-assistant"><div class="assistant-mini-toolbar"><span>↶</span><strong>Kaśka</strong><span>✧</span></div><div class="assistant-art"><img src="/assets/kaska.png" alt="Kaśka — ruda asystentka w okrągłych okularach" width="600" height="400"></div><div class="assistant-intro"><img src="/assets/kaska.png" alt="" width="32" height="32"><p>Cześć, jestem Kaśka.<br>Jak mogę Ci dziś pomóc w tworzeniu kampanii?</p></div><p id="builder-help">Zacznij od osób, z którymi chcesz porozmawiać. Możesz wybrać kontakty albo użyć sygnałów sprzedażowych.</p><div class="assistant-shortcuts"><button type="button" data-builder="website-shortcut">Stw\u00f3rz ofert\u0119 z naszej strony</button><button type="button" data-builder="materials-shortcut">Zbuduj ofert\u0119 z historii sukcesu</button></div><div class="assistant-note">Twoja kampania, krok po kroku.<br>Wiadomości sprawdzisz przed wysyłką.</div></section>
   <form id="campaign-form" class="builder-form">
@@ -23,7 +27,8 @@ function openCampaignBuilder(){
   </form><section class="builder-preview"><div class="builder-pitch-visual" aria-hidden="true"><div class="cradle"><i></i><i></i><i></i><i></i><i></i></div></div><div class="preview-heading"><span class="section-label">PODGLĄD DLA ODBIORCY</span><span class="badge gray">Szkic</span></div><label for="preview-contact">Kontakt</label><select id="preview-contact">${contacts.map(c=>`<option value="${c.id}">${esc(c.name)} · ${esc(c.company)}</option>`).join('')||'<option value="">Brak aktywnych kontaktów</option>'}</select><label for="preview-step">Krok sekwencji</label><select id="preview-step"><option value="0">Pierwsza wiadomość</option></select><button class="secondary" data-builder="preview">↻ Odśwież podgląd</button><div id="builder-preview-content"><div class="preview-art"><span>✉</span></div><h2>Dobry kontekst.<br>Lepsza rozmowa.</h2><p>Uzupełnij ofertę i sekwencję, aby zobaczyć wiadomość dla konkretnej osoby.</p></div><p class="hint">Podgląd personalizuje szablon. Generowanie przez AI, jeśli podłączone, następuje podczas przygotowania wiadomości.</p></section></div>`;
   bindSellingPoints($('#campaign-form'));bindWebsiteActions($('#campaign-form'));
   addStep();decorateBuilderSteps();
-  try{const draft=JSON.parse(localStorage.getItem(builderDraftKey())||'null');if(draft)restoreBuilder(draft)}catch{}
+  if(editing){const c=editing.campaign;restoreBuilder({...c,steps:editing.steps,contact_ids:JSON.parse(c.contact_ids),material_ids:JSON.parse(c.material_ids),audience_tags:JSON.parse(c.audience_tags),conditions:JSON.parse(c.conditions)});$('#campaign-form').insertAdjacentHTML('afterbegin','<p class="notice campaign-edit-notice">Zapis zmian wstrzyma aktywną kampanię. Wysłane kroki pozostają zablokowane. Zmienione oczekujące wiadomości zostaną odświeżone według szablonów. Po zmianie szkicu przygotuj wiadomości ponownie.</p>');$('.builder-top .section-label').textContent=translateUiText('EDYCJA KAMPANII');document.querySelector('[data-builder=save-draft]').textContent=translateUiText('Zapisz zmiany');$('#campaign-form [type=submit]').textContent=translateUiText('Zapisz zmiany')}
+  try{const draft=JSON.parse(localStorage.getItem(builderDraftKey())||'null');if(draft&&(!editing||draft.revision===editing.campaign.revision))restoreBuilder(draft)}catch{}
   $('#campaign-form').oninput=()=>{persistBuilder();updateRecipientHint();renderSequenceMap();$('#builder-campaign-title').textContent=$('#build-name').value||'Nowa kampania'};
   $('#campaign-form').addEventListener('focusin',e=>{const row=e.target.closest('#steps .step');if(row){builderSelectedStep=[...document.querySelectorAll('#steps .step')].indexOf(row);renderSequenceMap()}});
   $('#campaign-form').addEventListener('invalid',e=>{const section=e.target.closest('[data-stage]');if(section)showBuilderStage(Number(section.dataset.stage))},true);
@@ -34,7 +39,7 @@ function openCampaignBuilder(){
   $('#build-language').dataset.previousLanguage=$('#build-language').value;
   $('#build-language').onchange=changeBuilderLanguage;
   $('#project-picker').onchange=e=>{const p=state.library.projects.find(p=>p.website===e.target.value);if(p){$('#company-url').value=p.website;$('#build-offer').value=p.offer;renderBuilderMaterials();persistBuilder()}};
-  $('#campaign-form').onsubmit=e=>{e.preventDefault();if(builderStep!==3){showBuilderStage(builderStep+1);return}run(e.submitter,async()=>{const data=builderData();await api('campaigns',data);localStorage.removeItem(builderDraftKey());view='campaigns';selectedCampaign=null;await refresh();toast('Kampania zapisana jako szkic. Przygotuj i sprawdź wiadomości.')})};
+  $('#campaign-form').onsubmit=e=>{e.preventDefault();if(builderStep!==3){showBuilderStage(builderStep+1);return}run(e.submitter,async()=>{const data=builderData(),edited=builderEditing?.campaign;await api(edited?'campaign/update':'campaigns',edited?{...data,id:edited.id,project_id:edited.project_id,revision:edited.revision}:data);localStorage.removeItem(builderDraftKey());if(edited&&monitoringSimulation){const runs=fetchedSimulation().deliveryRuns;if(runs?.[edited.id]){delete runs[edited.id];saveSimulationResults()}}builderEditing=null;view='campaigns';selectedCampaign=edited?.id||null;await refresh();toast(edited?translateUiText('Zapisano zmiany kampanii. Wysyłka nie została uruchomiona.'):'Kampania zapisana jako szkic. Przygotuj i sprawdź wiadomości.')})};
   $('#builder-campaign-title').textContent=$('#build-name').value||'Nowa kampania';
   updateRecipientHint();renderBuilderMaterials();showBuilderStage(0);
 }
@@ -92,6 +97,7 @@ function builderData(){
  data.audience_tags=[...f.querySelectorAll('[name=audience_tags]:checked')].map(e=>e.value);
  data.material_ids=[...f.querySelectorAll('[name=material_ids]:checked')].map(e=>Number(e.value));
  data.conditions=builderConditions;data.assistant_note=$('#assistant-step-note')?.value||'';
+ if(builderEditing)data.revision=builderEditing.campaign.revision;
  data.steps=[...f.querySelectorAll('.step')].map(s=>({delay_days:Number(s.querySelector('[name=delay]').value),subject:s.querySelector('[name=subject]').value,body:s.querySelector('[name=body]').value}));
  return data;
 }
@@ -121,7 +127,8 @@ function updateRecipientHint(){
  $('#builder-target-tags').querySelectorAll('input,select').forEach(input=>input.disabled=mode!=='tags');
  $('#build-mode').setCustomValidity(mode==='tags'&&!tags.length?translateUiText('Wybierz co najmniej jeden tag odbiorców.'):'');
  $('#builder-recipients').hidden=mode!=='selected';
- const contacts=state.contacts.filter(c=>c.status==='active'&&!c.simulated&&(mode!=='tags'||campaignContactMatchesTags(c,tags,match)));
+ const selected=new Set([...document.querySelectorAll('[name=contact_ids]:checked')].map(input=>Number(input.value)));
+ const contacts=builderContacts().filter(c=>c.status==='active'&&!c.simulated&&(mode!=='tags'||campaignContactMatchesTags(c,tags,match))&&(mode!=='selected'||selected.has(c.id)));
  $('#builder-recipient-hint').textContent=mode==='tags'?translateUiText('Aktywne kontakty pasujące do tagów:')+' '+contacts.length:mode==='signals'?'Po zapisaniu szkicu ustaw regułę w zakładce Sygnały. Przygotowanie nie obejmie całej bazy.':mode==='selected'?`Wybrano ${document.querySelectorAll('[name=contact_ids]:checked').length} aktywnych kontaktów.`:`Do przygotowania zostaną użyte aktywne kontakty z bazy: ${contacts.length}.`;
  const preview=$('#preview-contact'),previous=preview.value;
  preview.innerHTML=contacts.map(c=>`<option value="${c.id}">${esc(c.name)} · ${esc(c.company)}</option>`).join('')||'<option value="">'+translateUiText('Brak aktywnych kontaktów')+'</option>';
@@ -131,6 +138,7 @@ function decorateBuilderSteps(){
  const steps=[...document.querySelectorAll('#steps .step')];
  steps.forEach((s,i)=>{s.querySelector('h3').textContent=`✉ Email · krok ${i+1}`;if(!s.querySelector('[data-builder=remove-step]'))s.insertAdjacentHTML('beforeend','<button type="button" class="link" data-builder="remove-step">Usuń krok</button>')});
  steps.forEach(step=>{if(!step.querySelector('[data-builder=step-preview]'))step.querySelector('[data-builder=remove-step]').insertAdjacentHTML('beforebegin','<button type="button" class="secondary step-preview-button" data-builder="step-preview">Podgląd</button>')});
+ if(builderEditing?.protected_position!==null&&builderEditing?.protected_position!==undefined)steps.forEach((step,index)=>{if(index<=builderEditing.protected_position){step.querySelectorAll('input,textarea,[data-builder=remove-step]').forEach(input=>input.disabled=true);step.dataset.sentStep='true'}});
  renderSequenceMap();
  const value=$('#preview-step')?.value||0;if($('#preview-step')){$('#preview-step').innerHTML=steps.map((_,i)=>`<option value="${i}">Wiadomość ${i+1}</option>`).join('');$('#preview-step').value=Math.min(Number(value),steps.length-1)}
 }
@@ -161,7 +169,7 @@ function showBuilderStage(stage){
  $('.builder-preview').hidden=builderStep<2;$('.builder-layout').dataset.stageIndex=builderStep;
  document.querySelectorAll('[data-builder-step]').forEach(b=>{b.classList.toggle('selected',Number(b.dataset.builderStep)===builderStep);b.setAttribute('aria-current',Number(b.dataset.builderStep)===builderStep?'step':'false')});
  $('#builder-stage-count').textContent=`Krok ${builderStep+1} z 4`;document.querySelector('[data-builder=prev]').disabled=builderStep===0;document.querySelector('[data-builder=next]').hidden=builderStep===3;
- document.querySelector('[data-builder=header-next]').textContent=builderStep===3?'Zapisz kampanię':'Zapisz i przejdź dalej';
+ document.querySelector('[data-builder=header-next]').textContent=builderStep===3?(builderEditing?translateUiText('Zapisz zmiany'):'Zapisz kampanię'):'Zapisz i przejdź dalej';
  $('#builder-help').textContent=['Wybierz osoby, do których pasuje oferta. Każda kampania ma własną listę odbiorców.','Strona firmy może być źródłem oferty, argumentów i materiałów. Sprawdź pobraną treść przed wysyłką.','Zaplanuj pierwszy kontakt i kolejne wiadomości. Po prawej sprawdzisz wynik dla wybranego odbiorcy.','Zapisz szkic. Samo zapisanie nie uruchamia wysyłki; kolejkę uruchomisz w widoku kampanii.'][builderStep];
  if(builderStep===3){const d=builderData();$('#builder-summary').innerHTML=`<dl class="builder-summary"><dt>Kampania</dt><dd>${esc(d.name)||'Brak nazwy'}</dd><dt>Strona nadawcy</dt><dd>${esc(d.website)||'Oferta wpisana ręcznie'}</dd><dt>Odbiorcy</dt><dd>${d.audience_mode==='tags'?esc(translateUiText('Tagi')+': '+d.audience_tags.join('; ')+' · '+translateUiText(d.tag_match==='all'?'Wszystkie wybrane tagi (I)':'Dowolny z wybranych tagów (LUB)')):d.audience_mode==='signals'?'Reguła sygnałów do skonfigurowania':d.audience_mode==='selected'?d.contact_ids.length+' wybranych kontaktów':'Wszystkie aktywne kontakty'}</dd><dt>Sekwencja</dt><dd>${d.steps.length} wiadomości · dni ${d.steps.map(s=>s.delay_days).join(', ')}</dd><dt>Materiały</dt><dd>${{none:'Bez materiałów',auto:'Dobór według kontekstu',manual:'Ręczny wybór'}[d.material_mode]}</dd></dl>`}
 }
@@ -174,7 +182,7 @@ document.addEventListener('click',e=>{
  const b=e.target.closest('button');if(!b)return;
  if(b.dataset.builderStep!==undefined){showBuilderStage(Number(b.dataset.builderStep));return}
  const action=b.dataset.builder;if(action)run(b,async()=>{
-  if(action==='exit'){persistBuilder();view='campaigns';render()}
+  if(action==='exit'){persistBuilder();selectedCampaign=builderEditing?.campaign.id||null;builderEditing=null;view='campaigns';render()}
   if(action==='next'||action==='header-next'){if(builderStep===3)$('#campaign-form').requestSubmit();else showBuilderStage(builderStep+1)}
   if(action==='save-draft'){showBuilderStage(3);$('#campaign-form').requestSubmit()}
   if(action==='prev')showBuilderStage(builderStep-1);

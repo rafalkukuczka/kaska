@@ -508,3 +508,5 @@ td strong{font-weight:600}
 .sequence-insert-menu{position:absolute;display:grid;gap:6px;width:180px;padding:10px;background:white;border:1px solid var(--line);border-radius:7px;box-shadow:0 4px 18px #302a3e15;z-index:3}.sequence-insert-menu button{font-size:12px;text-align:left}.condition-node>span{max-height:48px;overflow:auto}
 
 .builder-form .step .step-preview-button{margin-top:12px;padding:7px 12px;font-size:11px} [data-step-preview]>select{margin-bottom:10px}[data-step-preview-message] .mail-preview p{overflow-wrap:anywhere}
+
+#admin-languages>summary{cursor:pointer}
