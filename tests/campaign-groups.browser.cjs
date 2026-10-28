@@ -61,7 +61,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   const campaign=await page.evaluate(()=>state.campaigns.find(c=>c.name==='Retail campaign'));
   assert.equal(campaign.audience_mode,'tags');assert.deepEqual(JSON.parse(campaign.audience_tags),['ERP','Retail']);assert.equal(campaign.tag_match,'all');
   await page.locator(`[data-action=campaign][data-id="${campaign.id}"]`).click();
-  await page.locator('.empty [data-action=prepare]').click();
+  await page.locator('#campaign-workspace-header [data-action=prepare]').click();
   await page.waitForFunction(id=>state.messages.some(message=>message.campaign_id===id),campaign.id);
   assert.equal(await page.locator('.empty [data-action=prepare]').count(),0);
   const recipients=await page.evaluate(id=>state.messages.filter(m=>m.campaign_id===id).map(m=>state.contacts.find(c=>c.id===m.contact_id).email),campaign.id);

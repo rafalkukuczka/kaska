@@ -330,6 +330,7 @@ class SystemTests(unittest.TestCase):
         with app.db() as c:
             self.assertEqual(c.execute('SELECT status FROM contacts').fetchone()[0], 'replied')
             self.assertEqual(c.execute('SELECT COUNT(*) FROM replies').fetchone()[0], 1)
+            self.assertEqual(c.execute('SELECT campaign_id FROM replies').fetchone()[0],1)
             self.assertEqual(c.execute('SELECT status FROM messages WHERE position=1').fetchone()[0], 'cancelled')
 
     def test_http_import_csrf_edit_and_unsubscribe(self):

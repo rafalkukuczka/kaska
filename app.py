@@ -3,6 +3,7 @@ import contact_groups
 import contact_tags
 import campaign_messages
 import campaign_edit
+import campaign_workspace
 import discover_contacts
 import hashlib
 import hmac
@@ -101,6 +102,7 @@ def init():
         contact_tags.init_schema(c)
         campaign_messages.init_schema(c)
         campaign_edit.init_schema(c)
+        campaign_workspace.init_schema(c)
         project_scope.migrate(c)
         # A process interrupted during SMTP may already have delivered a message.
         c.execute("UPDATE messages SET status='uncertain',error='Przerwano proces podczas wysyłki. Sprawdź skrzynkę przed ponowieniem.' WHERE status='sending'")
@@ -640,13 +642,13 @@ def sync_replies():
             sender = parseaddr(str(message.get('From', '')))[1].lower()
             with MAIL_LOCK, db() as c:
                 references = str(message.get('In-Reply-To', '')) + ' ' + str(message.get('References', ''))
-                outbound=c.execute("SELECT m.contact_id,m.message_id,p.project_id FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id WHERE t.email=? AND m.status IN ('sent','uncertain')",(sender,)).fetchall()
+                outbound=c.execute("SELECT m.contact_id,m.message_id,m.campaign_id,p.project_id FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id WHERE t.email=? AND m.status IN ('sent','uncertain')",(sender,)).fetchall()
                 matched=next((row for row in outbound if row['message_id'] and row['message_id'] in references),None)
                 if not matched:continue
                 contact=c.execute('SELECT * FROM contacts WHERE id=?',(matched['contact_id'],)).fetchone()
                 part = message.get_body(preferencelist=('plain',))
                 body = part.get_content()[:20000] if part else '[Wiadomość bez wersji tekstowej]'
-                c.execute('INSERT OR IGNORE INTO replies(contact_id,subject,body,received,uid,project_id) VALUES(?,?,?,?,?,?)', (contact['id'], str(message.get('Subject', '')), body, time.time(), identity,matched['project_id']))
+                c.execute('INSERT OR IGNORE INTO replies(contact_id,subject,body,received,uid,project_id,campaign_id) VALUES(?,?,?,?,?,?,?)', (contact['id'], str(message.get('Subject', '')), body, time.time(), identity,matched['project_id'],matched['campaign_id']))
                 c.execute("UPDATE contacts SET status='replied' WHERE id=? AND status!='unsubscribed'", (contact['id'],))
                 c.execute("UPDATE messages SET status='cancelled' WHERE contact_id=? AND status='queued'", (contact['id'],))
     event('Zsynchronizowano odpowiedzi z poczty')
@@ -704,6 +706,10 @@ class Handler(BaseHTTPRequestHandler):
         if not self.valid_host():
             return self.respond({'error': 'Nieprawidłowy host'}, 403)
         path = urlparse(self.path)
+        if path.path == '/api/campaign/workspace':
+            params=parse_qs(path.query)
+            try:return self.respond(campaign_workspace.read(db,params.get('campaign_id',['0'])[0],params.get('page',['1'])[0],params.get('page_size',['25'])[0]))
+            except (ValueError,TypeError):return self.respond({'error':'Nie można wczytać kampanii lub strony odbiorców.'},400)
         if path.path == '/api/campaign/messages':
             params=parse_qs(path.query)
             try:
@@ -768,7 +774,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond('<html lang="pl"><meta charset="utf-8"><title>Rezygnacja</title><h1>Rezygnacja z wiadomości</h1><form method="post" action="/unsubscribe"><input type="hidden" name="id" value="'+html.escape(contact_id, quote=True)+'"><input type="hidden" name="token" value="'+sign(contact_id)+'"><button>Potwierdzam rezygnację</button></form></html>', content_type='text/html; charset=utf-8')
         if path.path == '/assets/kaska.png':
             return self.respond((ROOT / 'web' / 'assets' / 'kaska.png').read_bytes(), content_type='image/png')
-        files = {'/reports.js': ('reports.js', 'text/javascript'), '/dashboard-chart.js': ('dashboard-chart.js', 'text/javascript'), '/project-migration.js': ('project-migration.js', 'text/javascript'), '/icons.js': ('icons.js', 'text/javascript'), '/delivery-simulation.js': ('delivery-simulation.js', 'text/javascript'), '/campaign-messages.js': ('campaign-messages.js', 'text/javascript'), '/search-map.js': ('search-map.js', 'text/javascript'), '/vendor/leaflet/leaflet.js': ('vendor/leaflet/leaflet.js', 'text/javascript'), '/vendor/leaflet/leaflet.css': ('vendor/leaflet/leaflet.css', 'text/css'), '/background-progress.js': ('background-progress.js', 'text/javascript'), '/simulation.js': ('simulation.js', 'text/javascript'), '/seller-project.js': ('seller-project.js', 'text/javascript'), '/monitoring.js': ('monitoring.js', 'text/javascript'), '/sequence.js': ('sequence.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'), '/ai-settings.js': ('ai-settings.js', 'text/javascript'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/signals.js': ('signals.js', 'text/javascript'), '/builder.js': ('builder.js', 'text/javascript'), '/builder.css': ('builder.css', 'text/css'), '/theme.css': ('theme.css', 'text/css'), '/style.css': ('style.css', 'text/css')}
+        files = {'/campaign-workspace.js': ('campaign-workspace.js', 'text/javascript'), '/reports.js': ('reports.js', 'text/javascript'), '/dashboard-chart.js': ('dashboard-chart.js', 'text/javascript'), '/project-migration.js': ('project-migration.js', 'text/javascript'), '/icons.js': ('icons.js', 'text/javascript'), '/delivery-simulation.js': ('delivery-simulation.js', 'text/javascript'), '/campaign-messages.js': ('campaign-messages.js', 'text/javascript'), '/search-map.js': ('search-map.js', 'text/javascript'), '/vendor/leaflet/leaflet.js': ('vendor/leaflet/leaflet.js', 'text/javascript'), '/vendor/leaflet/leaflet.css': ('vendor/leaflet/leaflet.css', 'text/css'), '/background-progress.js': ('background-progress.js', 'text/javascript'), '/simulation.js': ('simulation.js', 'text/javascript'), '/seller-project.js': ('seller-project.js', 'text/javascript'), '/monitoring.js': ('monitoring.js', 'text/javascript'), '/sequence.js': ('sequence.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'), '/ai-settings.js': ('ai-settings.js', 'text/javascript'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/signals.js': ('signals.js', 'text/javascript'), '/builder.js': ('builder.js', 'text/javascript'), '/builder.css': ('builder.css', 'text/css'), '/theme.css': ('theme.css', 'text/css'), '/style.css': ('style.css', 'text/css')}
         if path.path in files:
             name, mime = files[path.path]
             return self.respond((ROOT / 'web' / name).read_text(encoding='utf-8'), content_type=mime+'; charset=utf-8')

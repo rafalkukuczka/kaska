@@ -18,6 +18,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
    await api('campaign/prepare',{id:state.campaigns[0].id});await refresh();
   });
   await page.locator('nav [data-view=campaigns]').click();await page.locator('[data-action=campaign]').click();
+  await page.locator('[data-campaign-tab=messages]').click();
   const root=page.locator('#campaign-messages');
   await root.locator('tbody tr').first().waitFor();
   assert.equal(await root.locator('tbody tr').count(),25);
@@ -45,7 +46,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await root.locator('[data-message-clear]').click();
   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.screenshot({path:'test-results/campaign-messages-mobile.png',fullPage:true});
-  await page.reload();await page.waitForFunction(()=>state?.campaigns.length);await page.locator('[data-action=campaign]').click();await root.locator('tbody tr').first().waitFor();
+  await page.reload();await page.waitForFunction(()=>state?.campaigns.length);await page.locator('[data-action=campaign]').click();await page.locator('[data-campaign-tab=messages]').click();await root.locator('tbody tr').first().waitFor();
   assert.equal(await page.evaluate(()=>campaignMessagePage(selectedCampaign).total),29);
   assert.equal(await root.locator('[data-message-progress] progress[value="0"]').count(),25);
   let delivery='sending';

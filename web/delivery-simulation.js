@@ -104,5 +104,5 @@ setInterval(()=>{
  for(const run of Object.values(runs)){
   const page=campaignMessagePages.get(run.campaign_id);if(page){const data=simulationCampaignMessagePage(run.campaign_id,{messages:page.messages});page.messages=data.messages}
  }
- if(!$('#modal').open){if(view==='campaigns'&&selectedCampaign)renderCampaignMessages(selectedCampaign);else if(['inbox','dashboard','campaigns'].includes(view))render()}
+ if(!$('#modal').open){if(view==='campaigns'&&selectedCampaign){renderCampaignMessages(selectedCampaign);renderCampaignWorkspaceLive(selectedCampaign)}else if(['inbox','dashboard','campaigns'].includes(view))render()}
 },1000);
