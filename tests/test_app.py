@@ -34,6 +34,8 @@ class SystemTests(unittest.TestCase):
         app.init()
         self.env = patch.dict(app.os.environ, {'SMTP_HOST': 'smtp.test', 'SMTP_FROM': 'sales@example.com', 'SMTP_USER': '', 'SMTP_SECURITY': 'starttls', 'DAILY_SEND_LIMIT': '50', 'SEND_INTERVAL_SECONDS': '0', 'OPENAI_API_KEY': '', 'HUNTER_API_KEY': ''})
         self.env.start()
+        self.apollo_env = patch.dict(app.os.environ, {'APOLLO_API_KEY': ''})
+        self.apollo_env.start()
         with app.db() as c:
             app.add_contact(c, {'name': 'Anna', 'email': 'anna@example.com', 'company': 'Acme'})
             c.execute("INSERT INTO campaigns(id,name,offer,audience,created) VALUES(1,'Test','Oferta','IT',?)", (time.time(),))
@@ -41,6 +43,7 @@ class SystemTests(unittest.TestCase):
             c.execute("INSERT INTO steps(campaign_id,position,delay_days,subject,body) VALUES(1,1,3,'Powrót','Czy aktualne?')")
 
     def tearDown(self):
+        self.apollo_env.stop()
         self.env.stop()
         app.DB = self.old_db
         self.temp.cleanup()
@@ -74,14 +77,12 @@ class SystemTests(unittest.TestCase):
         with app.db() as c:
             c.execute("UPDATE campaigns SET status='active' WHERE id=1")
             c.execute("UPDATE messages SET status='sent',sent_at=?,message_id='<sent@example.com>' WHERE position=0", (time.time(),))
-            c.execute("INSERT INTO signal_rules(campaign_id,kinds) VALUES(1,'[]')")
         app.delete_campaign(1)
         with app.db() as c:
             self.assertEqual(c.execute('SELECT status FROM campaigns WHERE id=1').fetchone()[0], 'deleted')
             self.assertEqual(c.execute('SELECT status FROM messages WHERE position=1').fetchone()[0], 'cancelled')
             self.assertEqual(c.execute('SELECT message_id FROM messages WHERE position=0').fetchone()[0], '<sent@example.com>')
             self.assertEqual(c.execute('SELECT COUNT(*) FROM steps').fetchone()[0], 0)
-            self.assertEqual(c.execute('SELECT COUNT(*) FROM signal_rules').fetchone()[0], 0)
             self.assertEqual(c.execute('SELECT status FROM contacts').fetchone()[0], 'active')
             self.assertEqual(c.execute('PRAGMA foreign_key_check').fetchall(), [])
         with patch('app.smtplib.SMTP') as smtp:

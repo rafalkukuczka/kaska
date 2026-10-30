@@ -73,15 +73,6 @@ class ContactTagTests(unittest.TestCase):
         self.assertFalse(contact_tags.matches(['ERP Plus'],['ERP']))
         self.assertTrue(contact_tags.matches(['ERP Plus'],['erp plus']))
 
-    def test_signal_enrollment_respects_campaign_tags(self):
-        with app.db() as c:
-            contact_tags.set_tags(c,1,'ERP')
-            app.add_contact(c,{'email':'other@acme.example','company':'Acme','tags':'Other'})
-            c.execute("UPDATE campaigns SET audience_mode='tags',audience_tags='[\"ERP\"]' WHERE id=1")
-        app.signal_engine.save_rule({'campaign_id':1,'kinds':['funding'],'min_score':0,'max_age_days':30,'enabled':True})
-        signal=app.signal_engine.record({'company':'Acme','kind':'funding','title':'Acme raised funding','evidence':'Acme secured funding for expansion.','url':'https://example.com/funding'})
-        self.assertEqual(app.signal_engine.status({'id':signal,'status':'accepted'}),1)
-        with app.db() as c:self.assertEqual({row[0] for row in c.execute('SELECT contact_id FROM signal_enrollments')},{1})
 
     def test_administration_creates_unused_tags_and_renames_assignments_atomically(self):
         created=contact_tags.manage(app.db,{'action':'create','name':'  Industry  '})

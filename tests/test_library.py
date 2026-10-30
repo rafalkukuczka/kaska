@@ -61,10 +61,10 @@ class LibraryTests(unittest.TestCase):
         _,body=app.ai_copy({'name':'Alex','company':'Store'},campaign,{'subject':'Hi','body':'{{material_url}}\n{{cta_url}}'})
         self.assertEqual(body.count('https://alpha.example/blog/delivery'),1)
 
-    def test_signal_context_changes_material_choice(self):
+    def test_contact_notes_change_material_choice(self):
         self.store()
         cloud=self.store(url='https://alpha.example/cloud',title='Cloud migration',summary='Cloud hosting migration infrastructure',tags=['cloud','migration'])
-        selected=app.library.select({'signal_evidence':'Company announced cloud migration'},self.campaign(audience=''))
+        selected=app.library.select({'notes':'Company announced cloud migration'},self.campaign(audience=''))
         self.assertEqual(selected['id'],cloud)
 
     def test_cross_company_material_and_invalid_campaign_rejected(self):

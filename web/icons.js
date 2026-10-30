@@ -22,11 +22,11 @@ const appIconPaths={
  project:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM5 19a7 7 0 0 1 14 0'
 };
 function decorateAppIcons(){
- const nav={dashboard:'dashboard',discover:'compass',prospecting:'search',contacts:'users',campaigns:'send',signals:'activity',inbox:'inbox',library:'book',reports:'chart',settings:'plug',administration:'sliders'};
+ const nav={dashboard:'dashboard',discover:'compass',prospecting:'search',contacts:'users',campaigns:'send',inbox:'inbox',library:'book',reports:'chart',settings:'plug',administration:'sliders'};
  const actions={'new-contact':'plus','new-campaign':'plus',prepare:'send','delete-campaign':'trash',import:'import','upload-csv':'import',message:'edit',back:'left','connect-gmail':'mail',sync:'refresh'};
  const builder={'import-project':'project','add-step':'plus',prev:'left',next:'right','header-next':'right',exit:'left','save-draft':'save',preview:'eye'};
- document.querySelectorAll('nav [data-view],button[data-action],button[data-builder],#current-seller-project,[data-monitor-delete],[data-monitor-events],[data-message-delete],[data-monitor-sources]').forEach(element=>{
-  const name=element.closest('nav')?nav[element.dataset.view]:element.id==='current-seller-project'?'project':element.hasAttribute('data-monitor-delete')||element.hasAttribute('data-message-delete')?'trash':element.hasAttribute('data-monitor-events')?'activity':element.hasAttribute('data-monitor-sources')?'sliders':element.dataset.action==='campaign-status'?(element.dataset.status==='active'?'play':'pause'):actions[element.dataset.action]||builder[element.dataset.builder];
+ document.querySelectorAll('nav [data-view],button[data-action],button[data-builder],#current-seller-project,[data-message-delete]').forEach(element=>{
+  const name=element.closest('nav')?nav[element.dataset.view]:element.id==='current-seller-project'?'project':element.hasAttribute('data-message-delete')?'trash':element.dataset.action==='campaign-status'?(element.dataset.status==='active'?'play':'pause'):actions[element.dataset.action]||builder[element.dataset.builder];
   if(!name||element.querySelector('[data-app-icon]'))return;
   for(const node of element.childNodes)if(node.nodeType===Node.TEXT_NODE&&node.textContent.trim()){
    node.textContent=node.textContent.replace(/^\s*[◫✧♙↗⚡✉⚙⌕⌑↻←→+]\s*[\s\u00a0]*/u,'');break;

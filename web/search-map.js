@@ -44,12 +44,11 @@ function projectCoverageAreas(){
   }
  }
  add(state.seller_project.search_areas,translateUiText('Projekt'));
- for(const monitor of state.signals.monitoring?.monitors||[])add(monitor.search_areas,monitor.name||monitor.offer||monitor.plan?.[0]?.topic||translateUiText('Monitoring'));
  return [...areas.values()];
 }
 function projectCoveragePanel(){
  const areas=projectCoverageAreas();
- return `<section class="panel project-coverage"><div class="panel-head"><h2>Obszary obsługiwane przez projekt</h2><span class="badge gray">${areas.length}</span></div><p data-no-translate>${esc(state.seller_project.name)}</p><p class="hint">Zbiorczo: obszary projektu i jego monitoringów. Powtarzające się obszary pokazujemy raz.</p>${areas.length?'':'<p class="hint">Cały świat — brak ograniczeń obszaru wyszukiwania.</p>'}<div class="search-area-map project-coverage-map" id="project-coverage-map" role="region" aria-label="Zbiorcza mapa obszarów projektu"></div><p class="hint" id="project-coverage-status" role="status"></p><div class="project-coverage-legend">${areas.map((area,index)=>`<button type="button" class="secondary" data-coverage-area="${index}" data-no-translate>${esc(area.label||translateUiText('Obszar')+' '+(index+1))} · ${esc(area.radius_km)} km</button>`).join('')}</div></section>`;
+ return `<section class="panel project-coverage"><div class="panel-head"><h2>Obszary obsługiwane przez projekt</h2><span class="badge gray">${areas.length}</span></div><p data-no-translate>${esc(state.seller_project.name)}</p><p class="hint">Obszary wybrane w bieżącym projekcie.</p>${areas.length?'':'<p class="hint">Cały świat — brak ograniczeń obszaru wyszukiwania.</p>'}<div class="search-area-map project-coverage-map" id="project-coverage-map" role="region" aria-label="Zbiorcza mapa obszarów projektu"></div><p class="hint" id="project-coverage-status" role="status"></p><div class="project-coverage-legend">${areas.map((area,index)=>`<button type="button" class="secondary" data-coverage-area="${index}" data-no-translate>${esc(area.label||translateUiText('Obszar')+' '+(index+1))} · ${esc(area.radius_km)} km</button>`).join('')}</div></section>`;
 }
 function projectCoverageTile(){
  const areas=projectCoverageAreas();
@@ -111,7 +110,7 @@ function bindSearchMap(form){
   L.tileLayer(tileUrl,{maxZoom:19,keepBuffer:0}).addTo(mini);
  }),{rootMargin:'0px'});
  function clearThumbnails(){thumbnailObserver.disconnect();thumbnails.forEach(mini=>mini.remove());thumbnails.clear()}
- const projectId=state.seller_project.id,monitorForm=form.id.startsWith('monitor-'),key='kaska-show-search-map-'+projectId+(monitorForm?':'+form.id:'');
+ const projectId=state.seller_project.id,key='kaska-show-search-map-'+projectId;
  const validDraft=()=>lat.value.trim()!==''&&lng.value.trim()!==''&&Number.isFinite(Number(lat.value))&&Number.isFinite(Number(lng.value))&&Number.isFinite(Number(radius.value))&&Math.abs(Number(lat.value))<=90&&Math.abs(Number(lng.value))<=180&&Number(radius.value)>=1&&Number(radius.value)<=1000;
  const tooltip=text=>{const element=document.createElement('span');element.textContent=text;return element};
  function preview(){
@@ -153,7 +152,7 @@ function bindSearchMap(form){
   if(areas.length>=10){toast('Możesz dodać maksymalnie 10 obszarów.');return}
   const area={lat:Number(Number(lat.value).toFixed(6)),lng:Number(Number(lng.value).toFixed(6)),radius_km:Number(radius.value),label:label.value.trim()};
   if(areas.some(existing=>existing.lat===area.lat&&existing.lng===area.lng&&existing.radius_km===area.radius_km)){toast('Ten obszar jest już dodany.');return}
-  areas.push(area);sync();previewLayer?.clearLayers();lat.value='';lng.value='';label.value='';status.textContent=monitorForm?'Obszar dodany do monitoringu.':'Obszar dodany do projektu.';
+  areas.push(area);sync();previewLayer?.clearLayers();lat.value='';lng.value='';label.value='';status.textContent='Obszar dodany do projektu.';
  };
  list.onclick=event=>{
   const open=event.target.closest('[data-open-search-area]');

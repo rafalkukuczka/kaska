@@ -51,8 +51,3 @@ class CampaignWorkspaceTests(unittest.TestCase):
         self.assertEqual(campaign_workspace.read(app.db,1)['fingerprint'],before)
         with app.db() as c:c.execute("UPDATE messages SET body='New text' WHERE position=1")
         self.assertNotEqual(campaign_workspace.read(app.db,1)['fingerprint'],before)
-
-    def test_signal_campaign_does_not_list_entire_contact_pool_as_targets(self):
-        with app.db() as c:c.execute("UPDATE campaigns SET audience_mode='signals' WHERE id=1")
-        data=campaign_workspace.read(app.db,1)
-        self.assertEqual(data['summary']['recipients'],0);self.assertTrue(data['summary']['signal_audience'])

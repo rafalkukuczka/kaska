@@ -9,7 +9,7 @@ function simulationResultId(){
  return 'sim-'+id;
 }
 try{simulationResults=JSON.parse(sessionStorage.getItem('kaska-data-simulation-results')||'{}')}catch{}
-const simulatedFetchPaths=new Set(['discover/contacts/search','prospecting/search','prospecting/verify','signals/scan','signals/discovery/start','signals/discovery/cancel','signals/monitoring/companies','research','ai/proof-points','library/discover','library/add','sync']);
+const simulatedFetchPaths=new Set(['discover/opportunities/start','discover/opportunities/cancel','discover/contacts/search','prospecting/search','prospecting/verify','research','ai/proof-points','library/discover','library/add','sync']);
 function shouldSimulateRequest(path,data){
  if(path==='prospecting/candidates/bulk'&&String(data?.id).startsWith('sim-')){
   if(!monitoringSimulation)throw Error('Włącz symulację, aby zmieniać fikcyjne wyniki.');return true;
@@ -66,16 +66,23 @@ async function loadAppState(){
   snapshot.prospecting.candidates=[...results.candidates,...snapshot.prospecting.candidates];
   snapshot.library.materials=[...snapshot.library.materials,...results.materials];
   snapshot.library.projects=[...snapshot.library.projects,...results.libraryProjects.filter(p=>!snapshot.library.projects.some(existing=>existing.website===p.website))];
-  snapshot.signals.discovery.jobs=[...results.jobs,...snapshot.signals.discovery.jobs];
+  snapshot.discovery_opportunities.runs=[...(results.opportunityRuns||[]),...snapshot.discovery_opportunities.runs];
+  snapshot.discovery_opportunities.items=[...(results.opportunityItems||[]),...snapshot.discovery_opportunities.items];
  }
  snapshot.prospecting.hunter=true;
- const demo=snapshot.signals.sources.filter(s=>s.enabled).flatMap(source=>simulationSignals(source).map(signal=>({...signal,company:source.company||'',status:'new',scope:source.company?'company':'market'})));
- snapshot.signals.items=[...demo,...snapshot.signals.items];snapshot.signals.counts.new=(snapshot.signals.counts.new||0)+demo.length;
  return applyDeliverySimulation(snapshot);
 }
 async function simulationApi(path,data={}){
  const results=fetchedSimulation(data.project_id??state.seller_project.id),contactResults=simulationContactResults(state.seller_project,state.seller_projects),now=Date.now()/1000;let result;
- if(path==='discover/contacts/search'){
+ if(path==='discover/opportunities/start'){
+  const selected=(state.project_catalog||[]).filter(type=>(state.seller_project.signal_interests||[]).includes(type.key));
+  if(!selected.length)throw Error('Wybierz sygnały w katalogu projektu.');
+  const id=simulationResultId(),categories=new Set(selected.map(type=>type.category)),day=new Date().toISOString().slice(0,10);
+  results.opportunityItems=selected.map((type,index)=>({id:id+'-'+index,run_id:id,kind:type.key,category:type.category,company:translateUiText('Firma demonstracyjna')+' '+(index+1),title:translateUiText(type.label),summary:translateUiText('Fikcyjna okazja pokazująca działanie wyszukiwania.'),quote:translateUiText('Przykładowy cytat — dane symulacyjne, nie pochodzą z publikacji.'),event_date:day,published_date:day,relevance:70,reason:translateUiText('Przykładowe dopasowanie do oferty projektu.'),domain:'',website:'',sources:[],signature:'',location:'',simulated:true}));
+  results.opportunityRuns=[{id,status:'completed',stage:translateUiText('Symulacja wyszukiwania zakończona'),completed:categories.size,total:categories.size,added:selected.length,warnings:[],created:now,signature:''}];
+  result={id,total:categories.size,simulated:true};
+ }else if(path==='discover/opportunities/cancel'){result={ok:true,simulated:true};
+ }else if(path==='discover/contacts/search'){
   const names=['Anna Kowalska','Piotr Nowak','Marta Wiśniewska','Tomasz Wójcik','Katarzyna Zielińska','Michał Kamiński','Agnieszka Lewandowska','Paweł Dąbrowski','Magdalena Szymańska','Krzysztof Woźniak'],roles=['Operations Manager','CEO','IT Director','Sales Director','Marketing Manager'];
   result={id:simulationResultId(),company:data.company,domain:'demo.example',organization:data.company,contacts:Array.from({length:Math.max(1,Math.min(10,Math.floor(Number(data.limit)||5)))},(_,i)=>({id:i,name:names[i],email:`kontakt${i+1}@demo.example`,role:data.titles||roles[i%roles.length],sources:[],existing:null})),simulated:true};
   (results.contactSearches||={})[result.id]=result;
@@ -138,11 +145,6 @@ async function simulationApi(path,data={}){
   result=await api('prospecting/contacts/add-simulation',{project_id:state.seller_project.id,contacts:rows.map(({name,email,company,role})=>({name,email,company,role})),tags_by_contact:data.tags_by_contact||{}});
  }else if(path==='prospecting/verify'){
   for(const candidate of results.candidates.filter(c=>c.run_id===data.id))Object.assign(candidate,{verification_status:'unknown',checked_at:now,error:'Symulowany odczyt nie potwierdza adresu.'});result={simulated:true};
- }else if(path==='signals/scan'){result={created:state.signals.sources.filter(s=>s.enabled&&(!data.id||s.id===data.id)).length*3,enrolled:0,errors:[],simulated:true};
- }else if(path==='signals/discovery/start'){
-  const id=simulationResultId();results.jobs.unshift({id,status:'completed',completed:data.companies.length,total:data.companies.length,error:'',results:data.companies.map(company=>({company,reason:'Symulowane pobieranie. Nie dodano fikcyjnych źródeł do konfiguracji.',signal_kinds:[],entries:[],citations:[]}))});result={id};
- }else if(path==='signals/discovery/cancel'){result={simulated:true};
- }else if(path==='signals/monitoring/companies'){result={count:0,simulated:true};
  }else if(path==='research'){
   result={offer:state.seller_project.offer||'Symulowany opis oferty — uzupełnij treścią swojej firmy.',audience:state.seller_project.audience||'',source:normalizeWebsite(data.url),ai:false,simulated:true};
  }else if(path==='ai/proof-points'){result={proof_points:'',sources:[],website:data.website,simulated:true};
@@ -162,26 +164,9 @@ async function setAppSimulation(enabled){
   await saveSimulationMode(enabled,state.csrf);monitoringSimulation=enabled;simulationEpoch++;
   if(!enabled)pauseDeliverySimulations();
   try{localStorage.setItem('kaska-simulation',enabled?'on':'off');localStorage.setItem('kaska-monitoring-simulation',enabled?'on':'off')}catch{}
-  discoverReview.stop=true;$('#modal').close();await refresh();
+  $('#modal').close();await refresh();
  }catch(error){monitoringSimulation=previous;try{await saveSimulationMode(previous,state.csrf)}catch{}throw error}
  finally{checkbox.checked=monitoringSimulation;checkbox.disabled=false;renderSimulationControl()}
 }
 function renderSimulationControl(){const input=$('#app-simulation');if(input)input.checked=monitoringSimulation;document.body.classList.toggle('simulation-mode',monitoringSimulation)}
 document.addEventListener('DOMContentLoaded',()=>{renderSimulationControl();$('#app-simulation').onchange=e=>run(null,()=>setAppSimulation(e.target.checked))});
-function simulationSources(){const ids=new Set((sig().monitoring?.monitors||[]).flatMap(m=>m.source_ids));return sig().sources.filter(s=>ids.has(s.id)&&s.enabled)}
-function simulationSignals(source){
- const topic=JSON.parse(source.config||'{}').topic||source.company||source.name,selected=JSON.parse(source.signal_kinds||'[]'),kinds=selected.length?selected:['tender','erp','hiring'];
- return Array.from({length:3},(_,index)=>{
-  const company=`${translateUiText('Firma demonstracyjna')} ${source.id}.${index+1}`,kind=kinds[index%kinds.length];
-  return {id:`demo-${source.id}-${index}`,source_id:source.id,company,kind,topic,score:0,explanation:'Symulacja pobierania',title:`${company}: ${kind} — ${topic}`,evidence:translateUiText('Przykładowe zdarzenie wygenerowane na potrzeby symulacji. Nie pochodzi z odczytu źródła.'),reason:translateUiText('Przykładowa okazja do rozmowy o ofercie z wybranego projektu. Wymagałaby potwierdzenia w rzeczywistym źródle.'),observed:Date.now()/1000,simulated:true};
- });
-}
-function allSimulationSignals(){return simulationSources().flatMap(simulationSignals)}
-function simulationBanner(){return ''}
-function simulationSignalCards(signals){return signals.map(s=>`<article class="signal-card" data-demo-signal="${esc(s.id)}"><span class="badge warn">Symulacja</span><h3 data-no-translate>${esc(s.title)}</h3><p>${esc(s.evidence)}</p><p class="hint">${esc(s.reason)}</p></article>`).join('')}
-function showSimulationSignals(signals){modal(`<h2>Sygnały symulowane</h2><p class="hint">To przykłady pobranych danych. Nie można ich używać do rzeczywistych kampanii.</p>${simulationSignalCards(signals)}`)}
-document.addEventListener('click',e=>{
- if(e.target.closest('[data-simulation-scan]')){renderDiscover();toast('Symulacja gotowa: 3 sygnały z każdego źródła.');return}
- const button=e.target.closest('[data-simulation-source]');if(!button)return;
- const source=simulationSources().find(s=>s.id===Number(button.dataset.simulationSource));if(source)showSimulationSignals(simulationSignals(source));
-});

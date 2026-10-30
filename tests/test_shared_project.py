@@ -5,7 +5,6 @@ from unittest.mock import patch
 import test_app
 import app
 import shared_project
-import signal_monitoring
 
 
 class SharedProjectTests(unittest.TestCase):
@@ -79,52 +78,8 @@ class SharedProjectTests(unittest.TestCase):
             with self.subTest(name=name),self.assertRaises(ValueError):shared_project.create(app.db,{'name':name})
         with self.assertRaises(ValueError):shared_project.select(app.db,{'project_id':9999})
 
-    def test_monitoring_and_company_assessments_belong_to_project_even_after_switch(self):
-        first=shared_project.save(app.db,{'offer':'First offer'})
-        app.signal_monitor.topic({'topic':'ERP'})
-        signal_id=app.signal_engine.record({'scope':'market','topic':'ERP','kind':'erp','title':'Acme ERP','evidence':'Acme ERP project.','url':'https://example.com/erp'})
-        second=shared_project.create(app.db,{'name':'Second'})
-        self.assertEqual(app.signal_monitor.state()['monitors'],[])
-        rows=[{'company':'Acme','quote':'Acme ERP project.','reason':'Potential ERP project.'}]
-        with patch('ai_service.generate_json',return_value={'companies':json.dumps(rows)}):
-            app.signal_monitor.companies({'id':signal_id,'project_id':first['id']})
-        self.assertEqual(app.signal_monitor.state()['companies'],[])
-        shared_project.select(app.db,{'project_id':first['id']})
-        self.assertEqual(len(app.signal_monitor.state()['companies']),1)
-        self.assertEqual(app.signal_monitor.state()['reviews'][0]['revision'],first['revision'])
-        # The same event can have a separate assessment with a different project's offer.
-        with patch('ai_service.generate_json',return_value={'companies':json.dumps([{**rows[0],'reason':'Different offer context.'}])}):
-            app.signal_monitor.companies({'id':signal_id,'project_id':second['id']})
-        self.assertEqual(app.signal_monitor.state()['companies'][0]['reason'],'Potential ERP project.')
-        self.assertEqual(app.signal_monitor.state(second['id'])['companies'][0]['reason'],'Different offer context.')
 
-    def test_offer_plan_created_after_switch_stays_with_originating_project(self):
-        first=shared_project.save(app.db,{'offer':'First offer'})
-        second=shared_project.create(app.db,{'name':'Second'})
-        def generate(*args,**kwargs):
-            shared_project.select(app.db,{'project_id':second['id']})
-            return {'plan':json.dumps([{'topic':'ERP','signal_kinds':['erp'],'reason':'ERP work'}])}
-        with patch('ai_service.generate_json',side_effect=generate):
-            plan=app.signal_monitor.propose({'project_id':first['id']})
-        with self.assertRaises(ValueError):app.signal_monitor.activate({'id':plan['id']})
-        app.signal_monitor.activate({'id':plan['id'],'project_id':first['id']})
-        self.assertEqual(app.signal_monitor.state()['monitors'],[])
-        self.assertEqual(len(app.signal_monitor.state(first['id'])['monitors']),1)
 
-    def test_legacy_company_migration_preserves_data_without_recreating_cleared_results(self):
-        signal_id=app.signal_engine.record({'scope':'market','topic':'ERP','kind':'erp','title':'Acme ERP','evidence':'Acme ERP project.','url':'https://example.com/erp'})
-        with app.db() as c:
-            c.execute('DROP TABLE signal_project_companies')
-            c.execute('DROP TABLE signal_company_reviews')
-            c.execute("INSERT INTO signal_companies(signal_id,company,reason,quote) VALUES(?,'Acme','Legacy reason','Acme ERP project.')",(signal_id,))
-            c.execute('UPDATE sales_signals SET companies_checked_at=123,companies_project_revision=0 WHERE id=?',(signal_id,))
-            signal_monitoring.init_schema(c)
-        state=app.signal_monitor.state()
-        self.assertEqual(state['companies'][0]['reason'],'Legacy reason')
-        self.assertEqual(state['reviews'][0]['checked_at'],123)
-        with patch('ai_service.generate_json',return_value={'companies':'[]'}):app.signal_monitor.companies({'id':signal_id})
-        app.init()
-        self.assertEqual(app.signal_monitor.state()['companies'],[])
 
     def test_customer_search_history_is_separate_per_project(self):
         first=shared_project.get(app.db)
@@ -162,19 +117,6 @@ class SharedProjectTests(unittest.TestCase):
         self.assertEqual(shared_project.get(app.db)['id'],selected['id'])
         self.assertEqual(shared_project.get(app.db)['offer'],'')
 
-    def test_delete_project_pauses_exclusive_sources_and_retains_shared_sources(self):
-        first=shared_project.get(app.db)
-        app.signal_monitor.topic({'topic':'ERP'})
-        app.signal_monitor.topic({'topic':'NIS2'})
-        second=shared_project.create(app.db,{'name':'Second'})
-        app.signal_monitor.topic({'topic':'ERP'})
-        shared_project.delete(app.db,{'project_id':first['id']})
-        self.assertEqual(shared_project.get(app.db)['id'],second['id'])
-        sources=app.signal_engine.state()['sources']
-        self.assertTrue(all(s['enabled'] for s in sources if json.loads(s['config'])['topic']=='ERP'))
-        self.assertTrue(all(not s['enabled'] for s in sources if json.loads(s['config'])['topic']=='NIS2'))
-        self.assertEqual(len(app.signal_monitor.state()['monitors']),1)
-        with app.db() as c:self.assertFalse(c.execute("SELECT 1 FROM signal_monitors WHERE project_id=? AND status='active'",(first['id'],)).fetchone())
 
     def test_delete_rejects_busy_search_and_late_ai_cannot_restore_deleted_project(self):
         project=shared_project.get(app.db)
@@ -183,29 +125,3 @@ class SharedProjectTests(unittest.TestCase):
         with self.assertRaises(ValueError):shared_project.delete(app.db,{'project_id':project['id']})
         self.assertEqual(shared_project.get(app.db)['id'],project['id'])
         with app.db() as c:c.execute("UPDATE prospect_runs SET status='completed' WHERE id=?",(run_id,))
-        def generate(*args,**kwargs):
-            shared_project.delete(app.db,{'project_id':project['id']})
-            return {'plan':json.dumps([{'topic':'ERP','signal_kinds':['erp'],'reason':'ERP work'}])}
-        shared_project.save(app.db,{'offer':'Old offer'})
-        with patch('ai_service.generate_json',side_effect=generate),self.assertRaises(ValueError):
-            app.signal_monitor.propose({'project_id':project['id']})
-        self.assertEqual(app.signal_monitor.state()['monitors'],[])
-
-    def test_shared_context_used_by_offer_plan_and_company_assessment(self):
-        shared_project.save(app.db,{'offer':'ERP support','audience':'Manufacturers','pain_points':'Manual planning','value_props':'Faster planning'})
-        plan=[{'topic':'ERP','signal_kinds':['erp'],'reason':'Implementation demand'}]
-        with patch('ai_service.generate_json',return_value={'plan':json.dumps(plan)}) as generate:
-            result=app.signal_monitor.propose({})
-            context=generate.call_args.args[1]
-            self.assertEqual((context['offer'],context['pain_points_hypotheses'],context['value_props']),('ERP support','Manual planning','Faster planning'))
-        app.signal_monitor.activate({'id':result['id']})
-        signal_id=app.signal_engine.record({'scope':'market','topic':'ERP','kind':'erp','title':'Acme ERP implementation','evidence':'Acme announced an ERP implementation.','url':'https://example.com/news'})
-        with patch('ai_service.generate_json',return_value={'companies':'[]'}) as generate:
-            app.signal_monitor.companies({'id':signal_id})
-            offer=generate.call_args.args[1]['offers'][0]
-            self.assertEqual((offer['offer'],offer['pain_points'],offer['value_props']),('ERP support','Manual planning','Faster planning'))
-        signal=next(s for s in app.signal_engine.state()['items'] if s['id']==signal_id)
-        self.assertIsNotNone(signal['companies_checked_at'])
-        self.assertEqual(signal['companies_project_revision'],shared_project.get(app.db)['revision'])
-        resolved=shared_project.resolve(app.db,{'company_limit':3})
-        self.assertEqual((resolved['offer'],resolved['pain_points']),('ERP support','Manual planning'))

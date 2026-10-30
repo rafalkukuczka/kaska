@@ -22,7 +22,9 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
    await api('signals/monitoring/companies',{id:state.signals.items[0].id});await refresh();
   });
   await page.locator('nav [data-view=discover]').click();
-  await page.locator('#discover-companies>summary').click();
+  assert.equal(await page.locator('#discover-root .project-context,#my-monitoring,#discover-root #signal-content').count(),0);
+  assert.equal(await page.locator('#content [data-signal=scan]').count(),0);
+  assert.equal(await page.locator('#discover-companies').evaluate(panel=>panel.open),true);
   const company=page.locator('[data-discover-company]');
   assert.equal(await company.evaluate(node=>node.open),false);
   assert.equal(await company.locator('.discover-company-toggle.has-contacts').count(),0);

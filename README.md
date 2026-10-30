@@ -17,16 +17,19 @@ Otwórz http://localhost:8787. Kolejne uruchomienia: `python app.py` lub `./star
 
 ## Praca z systemem
 
+W **Szczegółach projektu → Katalog sygnałów** można zaznaczyć interesujące sytuacje biznesowe. Wybór zapisuje się jako `signal_interests`, osobno dla każdego projektu. W **Odkrywaj → Znajdź okazje** stanowi podstawę wyszukiwania internetowego wraz z ofertą, opisem odbiorców, językami i obszarami projektu. Samo zaznaczenie checkboxów nie uruchamia operacji i nie zmienia zwykłego wyszukiwania Leadów.
+
+Usunięto dawny interfejs i API ręcznego monitoringu, źródeł sygnałów, zdarzeń i reguł. Nie działają procesy skanujące źródła ani automatyczne dołączanie odbiorców. Migracja wyłącza dawne konfiguracje i zachowuje historyczne dane; kampanie oparte na regułach przechodzą na jawny wybór dotychczasowych odbiorców. Nowa instalacja nie tworzy tabel starego monitoringu. Odkrywaj prezentuje znalezione okazje oraz firmy z Leadów i Kontaktów, z możliwością wyszukania kolejnych osób.
+
+Wyszukiwanie okazji działa wyłącznie na żądanie, w tle, bez harmonogramu i automatycznego ponawiania. Wykonuje jedno zapytanie OpenAI z wyszukiwaniem internetowym na wybraną kategorię i sprawdza do czterech propozycji na kategorię. Wynik wymaga wybranej kategorii, źródła rzeczywiście użytego podczas wyszukiwania, dosłownego cytatu z nazwą firmy w odczytanej publikacji i potwierdzonej daty publikacji lub zdarzenia z ostatnich 30 dni. Wyniki bez takiego potwierdzenia są pomijane; wyjaśnienia widać przy wyszukiwaniu. Ocena dopasowania jest hipotezą, a dokładny promień geograficzny wymaga sprawdzenia.
+
+Okazje są grupowane kategoriami i mają paginację. Powtórne odczytanie tego samego źródła nie tworzy duplikatu; wskazane przez AI publikacje o tej samej firmie, typie i jawnej dacie zdarzenia mogą zostać połączone, zachowując cytaty i źródła. Przycisk **Przerwij wyszukiwanie** zatrzymuje pracę po bieżącym zapytaniu i zachowuje już zapisane wyniki. Zmiana kryteriów podczas pracy zatrzymuje zapis nieaktualnych wyników. Restart nie ponawia płatnych wywołań. Odświeżenie strony wyświetla zapisane wyniki, bez nowego wyszukiwania.
+
+Symulacja generuje lokalne przykłady dla wybranych kategorii, bez wywołań OpenAI i bez modyfikacji danych projektu. Wyszukiwanie okazji nie tworzy Kontaktów, kampanii ani wiadomości. Kontakt można znaleźć i dodać osobno z panelu firmy. API: `POST /api/discover/opportunities/start` z `project_id`; przerwanie: `POST /api/discover/opportunities/cancel` z `project_id,id`.
+
 Widok kampanii ma podsumowanie liczby odbiorców, kroków i wiadomości oraz zakładki **Odbiorcy / Sekwencja / Wiadomości / Wyniki**. W Odbiorcach każda osoba występuje raz; po rozwinięciu widać wszystkie jej wiadomości i statusy. Odbiorców widać również przed przygotowaniem wiadomości. Główne działanie prowadzi przez **Przygotuj wiadomości → Sprawdź wiadomości → Uruchom wysyłkę**, a podczas pracy pozwala ją wstrzymać. Pozostałe działania są w menu **⋯**. Liczniki i strony odbiorców pochodzą z pełnej historii kampanii, niezależnie od limitu 2000 rekordów głównego stanu. Wyniki pokazują wysłane wiadomości, osoby, odpowiedzi i stany kolejki; nowe odpowiedzi IMAP są przypisywane do konkretnej kampanii po identyfikatorze wiadomości. Starsze odpowiedzi bez takiego powiązania nie są dopisywane do statystyk na podstawie samego adresu email.
 
 Na liście kampanii i w jej szczegółach przycisk **Edytuj** otwiera kreator z zapisaną ofertą, odbiorcami, tagami, materiałami, warunkami i sekwencją. Zapis aktualizuje tę samą kampanię. W szkicu usuwa poprzednio przygotowane wiadomości — użyj ponownie **Przygotuj wiadomości**. Zapis w kampanii aktywnej lub wstrzymanej pozostawia ją wstrzymaną i zachowuje historię. Kroki, z których wysłano już wiadomość lub wysyłka jest niepotwierdzona, są zablokowane. Zmiana treści przyszłego kroku lub oferty odświeża oczekujące wiadomości według szablonów, a usunięcie kroku lub odbiorcy anuluje odpowiadające mu oczekujące wiadomości. Przycisk **Przygotuj wiadomości** jest dostępny również po wstrzymaniu: uzupełnia nowe kroki i nowych odbiorców, zachowując wysłane, anulowane i usunięte wiadomości. Wysyłkę wznawiasz osobno. Szkice edycji w przeglądarce są oddzielne dla każdego projektu i kampanii; równoczesny zapis starszej wersji jest odrzucany.
-
-1. Dodaj kontakty ręcznie lub zaimportuj CSV. Wymagana kolumna `email`, opcjonalne `name,company,role,notes`. Przykład: `examples/contacts.csv`. Duplikaty adresów są pomijane. Nieprawidłowy adres wycofuje cały import.
-2. Utwórz kampanię w czterech etapach: **Odbiorcy → Oferta → Sekwencja → Ustawienia**. Wybierz wszystkie aktywne kontakty, konkretną listę albo dobór przez sygnały. Ofertę wpisz ręcznie lub pobierz z dowolnej strony firmy. Dni sekwencji muszą rosnąć: np. 0, 3, 7. Zmienne w treści: `{{name}}`, `{{company}}`, `{{role}}`, `{{offer}}`, `{{audience}}`, `{{notes}}`.
-3. Zapisz szkic i wybierz **Przygotuj wiadomości**. System zapisze wiadomości dla odbiorców zgodnych z wybranym trybem. Opis grupy docelowej jest kontekstem dla treści, a faktyczny wybór kontaktów wynika z listy albo reguły sygnałów. Nowe kontakty można znaleźć i zweryfikować przez Hunter w zakładce **Znajdź klientów**.
-4. Sprawdź i w razie potrzeby popraw zapisane wiadomości. Ponowne przygotowanie szkicu zastępuje poprzednie wiadomości kampanii. Bez podłączonego AI działa personalizacja szablonów. Z AI przygotowanie trwa odpowiednio dłużej.
-5. Po konfiguracji SMTP wybierz **Uruchom wysyłkę**. Dopiero ta operacja upoważnia kolejkę do wysyłania. Nowe kontakty nie są automatycznie dołączane do wcześniej przygotowanej kampanii.
-6. Obserwuj statusy oraz zakładkę Odpowiedzi. Możesz wstrzymać kampanię lub dany kontakt. Zatrzymanie kontaktu anuluje jego oczekujące wiadomości we wszystkich kampaniach.
 
 Nie ma demonstracyjnych kontaktów, wygenerowanych statystyk ani pozorowanej wysyłki. Dane interfejsu pochodzą z bazy. Widoki pobierają maksymalnie 2000 ostatnich rekordów danej tabeli; przy większej bazie potrzebna jest paginacja.
 
@@ -35,10 +38,6 @@ Nie ma demonstracyjnych kontaktów, wygenerowanych statystyk ani pozorowanej wys
 Aplikacja nie ma domyślnego klienta, domeny ani branży. Można działać bez strony internetowej, opisując ofertę ręcznie, albo podać dowolną publiczną stronę HTTPS. Każda kampania zapisuje stronę nadawcy, ofertę, problemy klientów, argumenty, język PL/EN i opcjonalne wezwanie do działania z linkiem. Jest to jedna lokalna przestrzeń robocza z projektami firm — nie wdrożono kont wielu organizacji ani izolacji użytkowników SaaS.
 
 Projekt edytuje się na osobnej stronie **Szczegóły**, dostępnej pod listą projektów w pasku bocznym (`#project`). Oferta, problemy, propozycje wartości, dowody, opis odbiorców, języki wyszukiwania i obszary są wspólne dla Odkrywania firm i Pozyskiwania leadów. Te widoki nie powielają formularza projektu. Przycisk **+** tworzy projekt i otwiera jego edycję, a ikona kosza usuwa projekt po potwierdzeniu. Kampania może pobrać te treści przyciskiem **Importuj z projektu**.
-
-Przy tworzeniu projektu opcja **Współdziel kontakty** wybiera wspólną pulę kontaktów i tagów. Domyślnie nowy projekt ma własną bazę. Ten sam email może występować osobno w różnych prywatnych projektach. Kampanie, ich wiadomości i odpowiedzi należą do konkretnego projektu; odbiorcy pochodzą z jego puli kontaktów. Usunięcie projektu wstrzymuje jego kampanie i reguły sygnałów. Migracja zachowuje dotychczasową wspólną pulę kontaktów i przypisuje kampanie do projektu wskazanego przez wyszukiwanie, a pozostałe do pierwszego istniejącego projektu. Zachowuje identyfikatory i historię wiadomości.
-
-Niezależna opcja **Współdziel monitoringi** łączy projekty ze wspólną pulą monitoringów ofertowych i tematycznych oraz ich źródeł. Nowy monitoring i jego usunięcie są widoczne we wszystkich projektach z tą opcją. Oceny firm pozostają osobne dla ofert projektów. Po usunięciu twórcy wspólnego monitoringu zachowujemy go w innym projekcie z tej puli; zatrzymujemy go po usunięciu ostatniego uczestnika. Domyślnie opcja jest wyłączona, również dla dotychczasowych projektów.
 
 Wiadomości w kampanii mają paginację z wyborem 10/25/50/100 pozycji. Checkbox **Operacje zbiorcze** włącza wybieranie wiadomości i usuwanie zaznaczonych; wybór pozostaje przy zmianie strony, a checkbox w nagłówku obejmuje tylko bieżącą stronę. Usuwanie wymaga wstrzymania aktywnej kampanii i potwierdzenia. Usunięcie oczekującego kroku anuluje późniejsze oczekujące kroki tej osoby. Rekordy wysłanych wiadomości pozostają w bazie dla historii doręczeń, dopasowania odpowiedzi i limitów wysyłki, a usunięte pozycje znikają z listy.
 
@@ -51,12 +50,12 @@ Niezapisany formularz jest zachowywany w localStorage tej przeglądarki i przywr
 W kampanii wybierz sposób użycia materiałów:
 
 - **Bez dodatkowego materiału** — sama treść wiadomości.
-- **Dobierz według kontekstu** — ranking podobieństwa słów w stanowisku, notatkach, grupie docelowej, problemach i sygnale. Bez dopasowania link nie jest dodawany.
+- **Dobierz według kontekstu** — ranking podobieństwa słów w stanowisku, notatkach, grupie docelowej i problemach. Bez dopasowania link nie jest dodawany.
 - **Wybór ręczny** — wybierz materiały, spośród których zostanie dołączony jeden najlepiej dopasowany; przy braku kontekstu używany jest jeden z wybranych.
 
 Wybierane są wyłącznie włączone materiały z domeny nadawcy danej kampanii. Ranking jest heurystyczny, niezależny od branży, nie jest potwierdzeniem biznesowej trafności. Dostępne zmienne: `{{material_title}}`, `{{material_url}}`, `{{material_summary}}`, `{{cta}}`, `{{cta_url}}`. Wybrany link oraz link CTA są dopisywane, jeśli nie występują już w treści. Są to bezpośrednie adresy istniejących stron; nie dodano śledzenia kliknięć ani publikacji nowych stron.
 
-API biblioteki: `POST /api/library/discover` z `website`, `POST /api/library/add` z `website,url`, `POST /api/library/status` z `id,enabled`. Podgląd: `POST /api/campaign/preview` z parametrami kampanii, `steps`, `preview_contact_id` i `preview_step`. Wszystkie wymagają tokenu CSRF. Kampanie przyjmują `audience_mode` (`all/selected/signals`), `contact_ids`, `material_mode` (`none/auto/manual`), `material_ids`, `website`, `language`, `cta`, `cta_url`, `pain_points` i `value_props`.
+API biblioteki: `POST /api/library/discover` z `website`, `POST /api/library/add` z `website,url`, `POST /api/library/status` z `id,enabled`. Podgląd: `POST /api/campaign/preview` z parametrami kampanii, `steps`, `preview_contact_id` i `preview_step`. Wszystkie wymagają tokenu CSRF. Kampanie przyjmują `audience_mode` (`all/selected/group/tags`), `contact_ids`, `material_mode` (`none/auto/manual`), `material_ids`, `website`, `language`, `cta`, `cta_url`, `pain_points` i `value_props`.
 
 ## Poczta
 
@@ -132,15 +131,11 @@ OPENAI_MODEL=gpt-6-luna
 
 Klucz utworzysz na [OpenAI Platform](https://platform.openai.com/api-keys). API ma osobne rozliczenia od abonamentu ChatGPT. Wybrany model musi obsługiwać Responses API i Structured Outputs. Domyślny model można zmienić w panelu. Integracja używa HTTPS, schematu JSON i `store:false`; klucz pozostaje po stronie serwera. Dokumentacja: [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
 
-System wysyła do OpenAI dane kontaktu, ofertę, szablon, kontekst sygnału i materiału; przy analizie strony — jej publiczny tekst. Klucz jest zapisany jawnie w lokalnym `.env`, pomijanym przez Git. Bez `OPENAI_API_KEY` działa personalizacja szablonów. Błąd API przerywa przygotowanie i zachowuje poprzednie szkice. Treść sprawdza użytkownik przed uruchomieniem kampanii. Podgląd szablonu w kreatorze nie wywołuje API.
-
 Widok **Drzewo / Lista** w etapie **Sekwencja** zachowuje te same wiadomości. Planszę można przeciągać, powiększać przyciskami +/− lub Ctrl + kółko myszy i dopasować przyciskiem **Wyśrodkuj**. Kliknięcie karty otwiera edycję kroku. Przyciski + przed, między i po wiadomościach pozwalają wybrać email lub warunek. Wstawianie emaila zachowuje rosnące dni wysyłki (maksymalnie 6 wiadomości i 10 reguł warunków). Preferencja widoku zapisuje się w przeglądarce.
 
 **Wróć do szablonów** udostępnia sekwencje 1, 2 lub 3 wiadomości. Wybranie szablonu zastępuje treść bieżących kroków, zachowując ofertę i warunki. Nadawca pokazuje skonfigurowaną skrzynkę SMTP; aplikacja obsługuje obecnie jedną skrzynkę.
 
 ## Dane i testy
-
-Kampanię usuniesz przyciskiem **Usuń kampanię** na liście lub w szczegółach, po potwierdzeniu. Znika z interfejsu, oczekujące wiadomości są anulowane, a kroki, reguły sygnałów i powiązanie z wyszukiwaniem są usuwane. Kontakty, odpowiedzi i zapis wysłanych wiadomości pozostają w bazie dla wykrywania odpowiedzi oraz limitów wysyłki. Usuniętej kampanii nie można ponownie uruchomić ani przywrócić w interfejsie.
 
 Stan przechowywany jest w `data/katie.sqlite3`, sekrety w `.env`. Zatrzymaj aplikację przed wykonywaniem kopii folderu `data/`. Zatrzymanie procesu zatrzymuje wysyłkę; aplikacja nie instaluje usługi Windows.
 
@@ -163,14 +158,15 @@ Kontakty mają **tagi**, np. `produkcja; ERP; Polska`, zamiast pojedynczej listy
 
 Interfejs korzysta ze spójnej terminologii PL/EN: kontakty, leady, prospekty, firmy docelowe, ICP i listy kontaktów. Definicje znajdziesz w **Słowniku sprzedaży** w nagłówku oraz w [TERMINOLOGY.md](TERMINOLOGY.md). Ocena dopasowania przez AI nie oznacza potwierdzonego zainteresowania zakupem.
 
-Na **Dashboardzie** kafelek mapy, umieszczony zaraz po Kontaktach, otwiera zbiorczą mapę na cały ekran. Zamknij ją przyciskiem lub klawiszem Esc. Mapa zbiera obszary aktywnego projektu i wszystkich jego monitoringów. Takie same środki z takim samym promieniem są pokazywane raz; mapa dopasowuje widok do całego zasięgu. Nazwy pod mapą przybliżają wybrany obszar. Zmiana projektu zmienia zawartość mapy.
-
 Przy tworzeniu kampanii w kroku **Odbiorcy** wybierz **Z grupy docelowej** i wskaż grupę kontaktów. Kreator pokazuje liczbę aktywnych osób i ogranicza do nich listę podglądu. Grupa zapisuje się w szkicu oraz kampanii; przygotowanie wiadomości obejmuje jej aktywnych członków w chwili generowania. Pusta lub nieistniejąca grupa nie zastępuje wyboru całą bazą. Osoby wstrzymane i wypisane są pomijane. Zapis kampanii nie uruchamia wysyłki.
-
-Gotowe integracje danych: **Google News RSS, GDELT DOC 2.0, Greenhouse Job Board i Lever Postings**. Konfiguracja w **Sygnały → Źródła**; nie trzeba wpisywać adresów API. Dostępność i ograniczenia: [DATA-SOURCES.md](DATA-SOURCES.md).
-
-Dodano moduł **Sygnały**: 50 typów detekcji, monitorowanie RSS/Atom i zmian HTML, źródła JSON, dowody, priorytety, akceptacja i reguły automatycznego dołączania odbiorców do kampanii. Instrukcja i format danych: [SIGNALS.md](SIGNALS.md). Źródła danych trzeba podłączyć — liczba typów nie oznacza dostępu do płatnych baz dostawców.
 
 Gotowe: CRUD w zakresie dodawania i wstrzymywania kontaktów, import CSV, sekwencje, edycja spersonalizowanych szkiców, opcjonalne OpenAI API, kolejka SMTP, limity, IMAP i zatrzymanie po odpowiedzi, rezygnacje, dziennik zdarzeń oraz trwała baza.
 
 Do rozbudowy według potrzeb: automatyczne wyszukiwanie i wzbogacanie leadów, LinkedIn, integracja CRM, OAuth poczty, kalendarz i rezerwacja spotkań, konta zespołu, wdrożenie serwerowe oraz obsługa dużych baz. Ta wersja nie udaje tych integracji.
+## Uzupełnianie kontaktów z wielu źródeł
+
+W Leadach przepływ obejmuje ofertę i kryteria projektu, wyszukanie firm w Hunter Discover, uzupełnienie kontaktów, ocenę dopasowania oraz weryfikację adresów w Hunter. Kampania i zapis do Kontaktów wymagają oddzielnej decyzji użytkownika.
+
+Opcjonalne Apollo podłączysz w Integracjach. Hunter jest pierwszym dostawcą kontaktów; Apollo wypełnia tylko brakujące miejsca w limicie osób na firmę. Klucz Apollo wymaga uprawnień `mixed_people/api_search` i `people/match`. Uzupełnianie może zużywać kredyty; liczba prób wzbogacenia na firmę jest ograniczona do liczby brakujących kontaktów. Integracja nie uruchamia dodatkowego waterfall po stronie Apollo, pobierania prywatnych adresów ani telefonów. Dokumentacja API: [wyszukiwanie](https://docs.apollo.io/reference/people-api-search), [uzupełnianie](https://docs.apollo.io/reference/people-enrichment).
+
+Mechanizm działa także przy szukaniu kontaktów w Odkrywaj. Wyniki zachowują źródła i są deduplikowane według adresu email. W Leadach kontakty obecne w puli projektu są pomijane. Przebieg uzupełniania oraz błędy dostawców można rozwinąć nad wynikami. Awaria dodatkowego źródła nie usuwa znalezionych osób. Deklaracja dostawcy o poprawnym adresie nie zastępuje weryfikacji Hunter; niezweryfikowane kontakty pozostają wstrzymane po imporcie.

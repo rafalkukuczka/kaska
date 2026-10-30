@@ -1,0 +1,65 @@
+const {chromium}=require('playwright');
+const {spawn}=require('node:child_process');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ const data=fs.mkdtempSync(path.resolve('test-results/opportunity-discovery-'));
+ const server=spawn('python',['tests/browser_server.py'],{env:{...process.env,APP_PORT:'8820',APP_DATA_DIR:data,SMTP_HOST:'',SMTP_FROM:'',IMAP_HOST:'',OPENAI_API_KEY:'browser-opportunity-fixture-only',HUNTER_API_KEY:'browser-fixture-only',APOLLO_API_KEY:''},stdio:'pipe'});
+ let browser;
+ try{
+  await new Promise((resolve,reject)=>{server.stdout.on('data',d=>{if(d.toString().includes('Katie:'))resolve()});server.on('error',reject);server.on('exit',c=>reject(Error('Server exit '+c)));setTimeout(()=>reject(Error('Server timeout')),10000).unref()});
+  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[],posts=[];
+  page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='POST')posts.push(r.url())});
+  await page.route('https://tile.openstreetmap.org/**',r=>r.abort());
+  await page.addInitScript(()=>localStorage.setItem('kaska-simulation','off'));
+  await page.goto('http://localhost:8820');await page.waitForFunction(()=>state?.seller_project);
+  await page.locator('nav [data-view=discover]').click();
+  assert.equal(await page.locator('[data-find-opportunities]').isDisabled(),true);
+  await page.evaluate(async()=>{await api('seller-project',{offer:'Industrial integration services',audience:'Manufacturers',signal_interests:['new_factory','funding'],search_languages:['pl','de']});await refresh()});
+  const projectBefore=await page.evaluate(()=>JSON.stringify(state.seller_project));
+  assert.equal(await page.locator('[data-find-opportunities]').isEnabled(),true);
+  assert.equal(await page.locator('[data-opportunity-category]').count(),2);
+  await page.locator('[data-find-opportunities]').click();
+  await page.locator('[data-cancel-opportunities]').waitFor();
+  await page.locator('[data-background-task^="opportunity-"]').waitFor();
+  await page.waitForFunction(()=>state.discovery_opportunities.runs[0]?.status==='completed');
+  assert.equal(await page.locator('[data-opportunity-id]').count(),2);
+  assert.equal(await page.locator('[data-opportunity-category="Ekspansja"] [data-opportunity-id]').count(),1);
+  assert.equal(await page.locator('[data-opportunity-category="Kapitał"] [data-opportunity-id]').count(),1);
+  assert.equal(await page.locator('[data-opportunity-id] a[href^="https://news.example/"]').count(),2);
+  assert.equal(await page.locator('[data-opportunity-id] blockquote').count(),2);
+  assert.equal(await page.evaluate(()=>state.messages.length),0);
+  assert.equal(await page.evaluate(()=>state.campaigns.length),0);
+  assert.equal(await page.evaluate(()=>JSON.stringify(state.seller_project)),projectBefore);
+  await page.locator('[data-opportunity-contact]>summary').first().click();
+  await page.locator('[data-opportunity-company]').first().click();
+  assert.equal(await page.locator('[data-discover-company]').count(),1);
+  assert.equal(await page.locator('[data-discover-contact-field=domain]').inputValue(),'acme.example');
+  await page.locator('[data-discover-contact-action=search]').click();
+  await page.locator('[data-discover-person]').first().waitFor();
+  assert.equal(await page.locator('[data-discover-person]').count(),2);
+  // Refreshing the page must only read saved results, never start another paid search.
+  const searches=posts.filter(url=>url.endsWith('/discover/opportunities/start')).length;
+  await page.reload();await page.locator('[data-opportunity-id]').first().waitFor();
+  assert.equal(posts.filter(url=>url.endsWith('/discover/opportunities/start')).length,searches);
+  await page.locator('[data-find-opportunities]').click();
+  await page.locator('[data-cancel-opportunities]').click();
+  await page.waitForFunction(()=>state.discovery_opportunities.runs[0]?.status==='cancelled');
+  assert.equal(await page.locator('[data-opportunity-id]').count(),2);
+  // Simulation is local, category-based and does not modify project values.
+  await page.locator('#app-simulation').check();await page.waitForFunction(()=>monitoringSimulation);
+  const realSearches=posts.filter(url=>url.endsWith('/discover/opportunities/start')).length;
+  await page.locator('[data-find-opportunities]').click();
+  await page.waitForFunction(()=>state.discovery_opportunities.items.some(row=>row.simulated));
+  assert.equal(posts.filter(url=>url.endsWith('/discover/opportunities/start')).length,realSearches);
+  assert.equal(await page.evaluate(()=>JSON.stringify(state.seller_project)),projectBefore);
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+  await page.evaluate(async()=>{await api('preferences',{ui_language:'en',message_language:'en'});await refresh()});
+  assert.match(await page.locator('#discover-opportunities').innerText(),/Find opportunities/);
+  assert.equal(await page.locator('nav [data-view=signals]').count(),0);
+  assert.equal(await page.locator('[data-signal],[data-monitor-companies],[data-signal-analysis-auto]').count(),0);
+  assert.deepEqual(errors,[]);
+  console.log('PASS: on-demand category discovery, cited results, background progress and cancellation, no scheduler/outreach, contact handoff, local simulation, unchanged project, mobile and English');
+ }finally{await browser?.close();server.kill()}
+})().catch(error=>{console.error(error);process.exitCode=1});

@@ -13,9 +13,7 @@ class DiscoverContactTests(unittest.TestCase):
     tearDown=test_app.SystemTests.tearDown
 
     def seed(self):
-        signal=app.signal_engine.record({'scope':'market','topic':'ERP','kind':'erp','title':'Acme ERP project','evidence':'Acme announced ERP.','url':'https://example.com/erp'})
-        with app.db() as c:
-            c.execute('INSERT INTO signal_project_companies(signal_id,project_id,company,reason,quote) VALUES(?,1,?,?,?)',(signal,'Acme','ERP support','Acme announced ERP.'))
+        with app.db() as c:app.add_contact(c,{'email':'info@acme.example','company':'Acme'})
         return {'domain':'acme.example','organization':'Acme','emails':[
             {'value':'new@acme.example','first_name':'New','last_name':'Person','type':'personal','provenance':'found','position':'COO','sources':[{'uri':'https://acme.example/team'}]},
             {'value':'anna@example.com','first_name':'Anna','type':'personal','sources':[{'uri':'https://example.com/team'}]}]}
@@ -32,14 +30,14 @@ class DiscoverContactTests(unittest.TestCase):
         self.assertEqual(params['company'],'Acme')
         self.assertEqual(params['provenance'],'found')
         self.assertEqual(len(result['contacts']),1)
-        with app.db() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM contacts').fetchone()[0],1)
+        with app.db() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM contacts').fetchone()[0],2)
         added=app.discover_contact_finder.add({'id':result['id'],'selected':[0,0],'target_group':'Manufacturers','confirm_company':True})
         self.assertEqual(added['added'],1)
         with app.db() as c:
             contact=c.execute("SELECT * FROM contacts WHERE email='new@acme.example'").fetchone()
             self.assertEqual(contact['target_group'],'Manufacturers')
             self.assertIn('https://acme.example/team',contact['notes'])
-            self.assertIn('Acme announced ERP.',contact['notes'])
+            self.assertIn('acme.example',contact['notes'])
             self.assertEqual(c.execute('SELECT COUNT(*) FROM messages').fetchone()[0],0)
 
     def test_individual_contact_tags_and_atomic_validation(self):
@@ -127,7 +125,6 @@ class DiscoverContactTests(unittest.TestCase):
     def test_persisted_simulation_contacts_never_enter_live_messages_or_source_discovery(self):
         languages.save_data_simulation(app.db,{'enabled':True})
         app.discover_contact_finder.add_simulated({'company':'Fake Company','contacts':[{'name':'Demo','email':'fake@demo.example'}],'target_group':'Demo list','confirm_company':True})
-        self.assertNotIn('Fake Company',app.signal_engine.contact_companies())
         app.prepare(1)
         with app.db() as c:
             fake=c.execute("SELECT id FROM contacts WHERE email='fake@demo.example'").fetchone()[0]

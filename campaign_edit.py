@@ -16,6 +16,7 @@ def init_schema(c):
 def recipients(c,campaign):
     rows=c.execute("SELECT * FROM contacts WHERE status='active' AND simulated=0 AND contact_pool=?",(project_scope.contact_pool(c,campaign['project_id']),)).fetchall()
     mode=campaign['audience_mode']
+    if mode not in ('all','selected','group','tags'):return []
     if mode=='selected':rows=[row for row in rows if row['id'] in json.loads(campaign['contact_ids'])]
     if mode=='group':rows=[row for row in rows if campaign['target_group'] and row['target_group']==campaign['target_group']]
     if mode=='tags':rows=[row for row in rows if contact_tags.matches(row['tags'],campaign['audience_tags'],campaign['tag_match'])]
@@ -55,7 +56,6 @@ def save(db,library,mail_lock,ai_copy,item):
             for position in range(protected+1):
                 if position>=len(validated) or position not in old_steps or any(validated[position][key]!=old_steps[position][key] for key in ('delay_days','subject','body')):raise ValueError('Nie można zmienić ani usunąć wysłanego kroku. Edytuj kolejne kroki sekwencji.')
         extra=library.validate_campaign(c,item);group=contact_groups.campaign_group(c,item);tags,match=contact_tags.validate_campaign(c,item)
-        if c.execute('SELECT 1 FROM signal_rules WHERE campaign_id=?',(item['id'],)).fetchone() and item.get('audience_mode','all')!=current['audience_mode']:raise ValueError('Kampania ma regułę sygnałów. Sposób doboru odbiorców zmień po usunięciu tej reguły.')
         status='paused' if current['status']!='draft' or protected is not None else 'draft'
         c.execute('UPDATE campaigns SET name=?,offer=?,audience=?,status=?,revision=revision+1 WHERE id=?',(item['name'].strip(),item['offer'].strip(),str(item.get('audience','')),status,item['id']))
         c.execute('UPDATE campaigns SET website=?,audience_mode=?,contact_ids=?,material_mode=?,material_ids=?,language=?,cta=?,cta_url=?,pain_points=?,value_props=?,proof_points=? WHERE id=?',extra+(item['id'],))

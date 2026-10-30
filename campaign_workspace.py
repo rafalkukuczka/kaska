@@ -20,8 +20,7 @@ def read(db,campaign_id,page=1,size=25):
         project_scope.require_campaign(c,campaign_id)
         campaign=dict(c.execute('SELECT * FROM campaigns WHERE id=?',(campaign_id,)).fetchone())
         steps=[dict(row) for row in c.execute('SELECT * FROM steps WHERE campaign_id=? ORDER BY position',(campaign_id,))]
-        ruled=campaign['audience_mode']=='signals' or bool(c.execute('SELECT 1 FROM signal_rules WHERE campaign_id=?',(campaign_id,)).fetchone())
-        eligible=[] if ruled else campaign_edit.recipients(c,campaign)
+        eligible=campaign_edit.recipients(c,campaign)
         targets={row['id']:dict(row) for row in eligible}
         counts={row['status']:row['count'] for row in c.execute('SELECT status,COUNT(*) AS count FROM messages WHERE campaign_id=? AND deleted=0 GROUP BY status',(campaign_id,))}
         metadata=[dict(row) for row in c.execute('SELECT m.id,m.contact_id,m.position,m.subject,m.body,t.email FROM messages m LEFT JOIN contacts t ON t.id=m.contact_id WHERE m.campaign_id=? AND m.deleted=0 ORDER BY m.id',(campaign_id,))]
@@ -42,6 +41,6 @@ def read(db,campaign_id,page=1,size=25):
         sent_visible=c.execute("SELECT COUNT(DISTINCT contact_id) FROM messages WHERE campaign_id=? AND deleted=0 AND status='sent'",(campaign_id,)).fetchone()[0]
         sent_ids=[row[0] for row in c.execute("SELECT DISTINCT contact_id FROM messages WHERE campaign_id=? AND status='sent'",(campaign_id,))]
         replied_ids=[row[0] for row in c.execute('SELECT DISTINCT contact_id FROM replies WHERE campaign_id=?',(campaign_id,))]
-        summary={'recipients':total,'eligible':len(eligible),'prepared_recipients':len(enrolled),'messages':len(metadata),'steps':len(steps),'counts':counts,'message_ids':[row['id'] for row in metadata],'sent':sent[0],'contacted':sent[1],'sent_contact_ids':sent_ids,'replied_contact_ids':replied_ids,'sent_visible_recipients':sent_visible,'replies':replies[0],'replied':replies[1],'signal_audience':ruled}
+        summary={'recipients':total,'eligible':len(eligible),'prepared_recipients':len(enrolled),'messages':len(metadata),'steps':len(steps),'counts':counts,'message_ids':[row['id'] for row in metadata],'sent':sent[0],'contacted':sent[1],'sent_contact_ids':sent_ids,'replied_contact_ids':replied_ids,'sent_visible_recipients':sent_visible,'replies':replies[0],'replied':replies[1]}
         fingerprint=hashlib.sha256(json.dumps([campaign['revision'],metadata],sort_keys=True).encode()).hexdigest()
     return {'campaign_id':campaign_id,'project_id':campaign['project_id'],'revision':campaign['revision'],'summary':summary,'steps':steps,'conditions':json.loads(campaign['conditions']),'recipients':people,'page':page,'page_size':size,'total':total,'fingerprint':fingerprint}

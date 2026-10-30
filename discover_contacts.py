@@ -10,6 +10,7 @@ import languages
 import shared_project
 import project_scope
 from prospecting import Hunter,clean_domain,safe_link
+from contact_enrichment import waterfall
 
 
 def init_schema(c):
@@ -66,7 +67,11 @@ class DiscoverContacts:
         company=item.get('company','')
         if not isinstance(company,str) or not company.strip() or len(company)>200:raise ValueError('Nieprawidłowa firma.')
         with self.db() as c:
-            firm=next((dict(row) for row in c.execute('SELECT company,quote FROM signal_project_companies WHERE project_id=?',(project['id'],)) if row['company'].casefold()==company.strip().casefold()),None)
+            names=[row['company'] for row in c.execute('SELECT DISTINCT p.company FROM prospect_candidates p JOIN prospect_runs r ON r.id=p.run_id WHERE r.project_id=?',(project['id'],))]
+            names.extend(row['company'] for row in c.execute('SELECT DISTINCT company FROM discovered_opportunities WHERE project_id=?',(project['id'],)))
+            names.extend(row['company'] for row in c.execute('SELECT DISTINCT company FROM contacts WHERE contact_pool=?',(project_scope.contact_pool(c,project['id']),)))
+            name=next((name for name in names if name.casefold()==company.strip().casefold()),None)
+            firm={'company':name,'quote':'Firma z wyników wyszukiwania lub Kontaktów.'} if name else None
         if not firm:raise ValueError('Wybierz firmę z Discover w tym projekcie.')
         limit=item.get('limit',5)
         if type(limit)!=int or not 1<=limit<=10:raise ValueError('Wybierz od 1 do 10 kontaktów.')
@@ -81,7 +86,7 @@ class DiscoverContacts:
         params={'limit':limit,'type':'personal','provenance':'found','required_field':'full_name'}
         params.update({'domain':domain} if domain else {'company':firm['company']})
         if titles.strip():params['job_titles']=titles.strip()
-        data=Hunter().request('domain-search',params)['data']
+        data=waterfall(Hunter(),domain,limit,titles.strip(),hunter_params=params)
         if not isinstance(data,dict) or not isinstance(data.get('emails',[]),list):raise ValueError('Hunter zwrócił nieprawidłową listę kontaktów.')
         found_domain=clean_domain(data['domain']) if data.get('domain') else domain
         if domain and found_domain!=domain:raise ValueError('Hunter zwrócił inną domenę. Wynik nie został zapisany.')
@@ -100,13 +105,13 @@ class DiscoverContacts:
             seen.add(email)
             with self.db() as c:existing=c.execute('SELECT id,target_group,status FROM contacts WHERE email=? AND contact_pool=?',(email,project_scope.contact_pool(c,project['id']))).fetchone()
             contacts.append({'id':len(contacts),'name':name,'email':email,'role':str(person.get('position') or '')[:250],
-                             'sources':sources,'existing':dict(existing) if existing else None})
+                             'sources':sources,'provider':person.get('provider','Hunter'),'existing':dict(existing) if existing else None})
         with self.db() as c:
             c.execute('BEGIN IMMEDIATE')
             if not c.execute('SELECT 1 FROM seller_projects WHERE id=? AND deleted=0',(project['id'],)).fetchone():raise ValueError('Projekt został usunięty.')
             search_id=c.execute('INSERT INTO discover_contact_searches(project_id,company,domain,organization,contacts,context,created) VALUES(?,?,?,?,?,?,?)',
                 (project['id'],firm['company'],found_domain,organization,json.dumps(contacts,ensure_ascii=False),firm['quote'][:2000],time.time())).lastrowid
-        return {'id':search_id,'company':firm['company'],'domain':found_domain,'organization':organization,'contacts':contacts,'simulated':False}
+        return {'id':search_id,'company':firm['company'],'domain':found_domain,'organization':organization,'contacts':contacts,'enrichment':data.get('enrichment',[]),'simulated':False}
 
     def add(self,item):
         project=shared_project.get(self.db,item.get('project_id'))
@@ -128,6 +133,6 @@ class DiscoverContacts:
                     existing+=1
                     if group:contact_tags.set_tags(c,row['id'],tags,merge='tags' in item or 'tags_by_contact' in item,project_id=project['id'])
                     continue
-                notes=('Discover / Hunter; email wymaga weryfikacji.\nDomena: '+search['domain']+'\nDowód zdarzenia: '+search['context']+'\nŹródła adresu:\n'+'\n'.join(source['url'] for source in person['sources']))[:10000]
+                notes=('Discover; email wymaga weryfikacji.\nDomena: '+search['domain']+'\nDowód zdarzenia: '+search['context']+'\nŹródła adresu:\n'+'\n'.join(source['url'] for source in person['sources']))[:10000]
                 self.add_contact(c,{'project_id':project['id'],'name':person['name'],'email':person['email'],'company':search['company'],'role':person['role'],'notes':notes,'tags':tags});added+=1
         return {'added':added,'existing':existing,'target_group':group}

@@ -11,10 +11,11 @@ from urllib.parse import urlencode, urlparse
 
 import ai_service
 import contact_tags
+import contact_enrichment
 import languages
 import shared_project
 import search_areas
-from sales_signals import public_url
+from public_data import public_url
 
 DEPARTMENTS = ('executive', 'it', 'finance', 'management', 'sales', 'legal', 'support', 'hr',
                 'marketing', 'communication', 'education', 'design', 'health', 'operations',
@@ -122,7 +123,8 @@ class Prospecting:
         with self.db() as c:
             runs = [dict(r) for r in c.execute('SELECT * FROM prospect_runs WHERE project_id=? ORDER BY id DESC LIMIT 50',(project_id,))]
             candidates = [dict(r) for r in c.execute('SELECT p.*,t.id AS contact_id,t.status AS contact_status,t.tags AS contact_tags FROM prospect_candidates p LEFT JOIN contacts t ON t.email=p.email AND t.contact_pool=? WHERE run_id IN (SELECT id FROM prospect_runs WHERE project_id=? ORDER BY id DESC LIMIT 50) ORDER BY p.id',(project_scope.contact_pool(c,project_id),project_id))]
-        return {'runs': runs, 'candidates': candidates, 'hunter': bool(os.getenv('HUNTER_API_KEY', '').strip())}
+        return {'runs': runs, 'candidates': candidates, 'hunter': bool(os.getenv('HUNTER_API_KEY', '').strip()),
+                'apollo': bool(os.getenv('APOLLO_API_KEY', '').strip())}
 
     def add_contacts(self,item,add_contact,simulated=False):
         """Import selected people without generating a campaign or changing existing statuses."""
@@ -158,7 +160,7 @@ class Prospecting:
                     existing+=1;continue
                 verified=not simulated and row['verification_status']=='valid' and row.get('checked_at') and row['checked_at']>time.time()-7*86400 and row.get('verified_at') and row['verified_at']>time.time()-31*86400 and row['qualification']!='rejected'
                 if simulated:notes='Dane symulacyjne z Leadów. Wykluczone z rzeczywistej wysyłki.'
-                else:notes=('Leady / Hunter. Weryfikacja: '+row['verification_status']+'\n'+row['fit_reason']+'\n'+row['why_now']+'\nŹródła: '+', '.join(safe_link(source.get('url','')) for source in json.loads(row['sources'])))[:10000]
+                else:notes=('Leady. Weryfikacja: '+row['verification_status']+'\n'+row['fit_reason']+'\n'+row['why_now']+'\nŹródła: '+', '.join(safe_link(source.get('url','')) for source in json.loads(row['sources'])))[:10000]
                 add_contact(c,{'project_id':project_id,'name':row['name'],'email':email,'company':row['company'],'role':row['role'],'notes':notes,'tags':tags})
                 c.execute('UPDATE contacts SET simulated=?,status=? WHERE email=? AND contact_pool=?',(int(simulated),'active' if verified else 'paused',email,pool))
                 added+=1;paused+=int(not verified)
@@ -250,6 +252,8 @@ class Prospecting:
         try:
             if action == 'search':
                 self.search(run_id)
+                self.update(run_id, status='verifying', stage='Weryfikacja znalezionych adresów email')
+                self.verify(run_id)
             else:
                 self.verify(run_id)
             self.update(run_id, status='ready', stage='Wyniki gotowe do przeglądu')
@@ -300,7 +304,10 @@ class Prospecting:
             requests.append(entry)
             self.update(run_id,filters=json.dumps({'requests':requests,'search':{key:run[key] for key in ('audience','titles','department','company_limit','per_company','language','search_languages','search_areas','exclusions')}},ensure_ascii=False),warnings=json.dumps(warnings,ensure_ascii=False))
         if not successful:raise ValueError('Nie udało się wyszukać firm w żadnym języku. Sprawdź szczegóły zapytań Hunter.')
-        seen = set()
+        seen = set(); pipeline = []
+        with self.db() as c:
+            known_emails = {r[0].lower() for r in c.execute('SELECT email FROM contacts WHERE contact_pool=?',
+                (project_scope.contact_pool(c, run['project_id']),))}
         for company in companies:
             try:domain = clean_domain(company.get('domain', ''))
             except (ValueError,AttributeError):continue
@@ -314,8 +321,23 @@ class Prospecting:
                 params['department'] = run['department']
             if run['titles']:
                 params['job_titles'] = run['titles']
-            people = hunter.request('domain-search', params)['data']
-            evidence = {'provider': 'Hunter Discover / Domain Search', 'company': name, 'domain': domain,
+            try:
+                people = contact_enrichment.waterfall(hunter, domain, run['per_company'], run['titles'],
+                    run['department'], known_emails,
+                    progress=lambda provider: self.update(run_id, stage='Uzupełnianie kontaktów: '+name+' / '+provider),
+                    hunter_params=params)
+            except ValueError as exc:
+                warnings.append(name + ': ' + str(exc))
+                pipeline.append({'domain': domain, 'company': name, 'error': str(exc), 'contacts': 0})
+                self.update(run_id, warnings=json.dumps(warnings, ensure_ascii=False))
+                continue
+            pipeline.append({'domain': domain, 'company': name, 'providers': people['enrichment'], 'contacts': len(people['emails'])})
+            for step in people['enrichment']:
+                if step['status'] == 'error': warnings.append(name + ': ' + step['error'])
+            filters = json.loads(self.get_run(run_id)['filters'])
+            filters['pipeline'] = pipeline
+            self.update(run_id, filters=json.dumps(filters, ensure_ascii=False))
+            evidence = {'provider': 'Hunter Discover', 'enrichment': people['enrichment'], 'company': name, 'domain': domain,
                         'retrieved': time.time(), 'company_summary': '', 'website_read': False}
             try:
                 page = self.library.page('https://' + domain + '/')
@@ -324,10 +346,7 @@ class Prospecting:
                 evidence.update(company_summary=page['summary'], website_read=True, website_url=page['url'])
             except Exception:
                 warnings.append(name + ': nie odczytano strony firmy; dostępne są wyłącznie dane Hunter.')
-            # No name-only matching to sales signals: it could join unrelated companies.
-            with self.db() as c:
-                signals = [dict(r) for r in c.execute("SELECT title,evidence,url,observed,COALESCE(occurred,source_date,observed) AS signal_date FROM sales_signals WHERE status='accepted' AND COALESCE(occurred,source_date,observed)>? ORDER BY observed DESC LIMIT 200", (time.time()-30*86400,))]
-            signals = [s for s in signals if safe_link(s['url']) and (urlparse(s['url']).hostname or '').lower().removeprefix('www.') == domain][:3]
+            signals = []
             evidence['signals'] = signals
             for person in (people.get('emails') or [])[:run['per_company']]:
                 email = str(person.get('value', '')).strip().lower()
@@ -342,10 +361,11 @@ class Prospecting:
                 for source in person.get('sources') or []:
                     link = safe_link(source.get('uri', ''))
                     if link:
-                        sources.append({'url': link, 'last_seen': str(source.get('last_seen_on') or ''), 'kind': 'email'})
+                        sources.append({'url': link, 'last_seen': str(source.get('last_seen_on') or ''), 'kind': source.get('kind','email'), 'provider': person.get('provider','Hunter')})
                 if not sources:
                     continue  # Never invent an address or silently accept an inferred one.
-                sources.append({'url': 'https://hunter.io/search/' + domain, 'kind': 'provider', 'last_seen': ''})
+                if person.get('provider','Hunter') == 'Hunter':
+                    sources.append({'url': 'https://hunter.io/search/' + domain, 'kind': 'provider', 'last_seen': '', 'provider': 'Hunter'})
                 if evidence['website_read']:
                     sources.append({'url': evidence['website_url'], 'kind': 'company', 'last_seen': ''})
                 sources.extend({'url': s['url'], 'kind': 'signal', 'last_seen': ''} for s in signals)
@@ -380,8 +400,12 @@ class Prospecting:
                     why_now = ('Review before contacting: ' if english else 'Do sprawdzenia przed kontaktem: ') + '; '.join(s['title'] for s in signals)
                 with self.db() as c:
                     c.execute('INSERT OR IGNORE INTO prospect_candidates(run_id,domain,company,name,email,role,sources,evidence,qualification,fit_reason,missing_data,why_now) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-                        (run_id, domain, name, person_name, email, role, json.dumps(sources, ensure_ascii=False), json.dumps(evidence, ensure_ascii=False), assessment['qualification'], assessment['fit_reason'][:2000], assessment['missing_data'][:2000], why_now[:2000]))
+                        (run_id, domain, name, person_name, email, role, json.dumps(sources, ensure_ascii=False), json.dumps({**evidence, 'contact_provider': person.get('provider','Hunter')}, ensure_ascii=False), assessment['qualification'], assessment['fit_reason'][:2000], assessment['missing_data'][:2000], why_now[:2000]))
             self.update(run_id, warnings=json.dumps(warnings, ensure_ascii=False))
+
+        filters = json.loads(self.get_run(run_id)['filters'])
+        filters['pipeline'] = pipeline
+        self.update(run_id, filters=json.dumps(filters, ensure_ascii=False))
 
     def start_verification(self, run_id):
         run = self.get_run(run_id)
@@ -406,7 +430,16 @@ class Prospecting:
             if row['verification_status'] == 'valid' and row['checked_at'] and row['checked_at'] > time.time()-7*86400:
                 continue
             self.update(run_id, stage='Weryfikacja: ' + row['company'])
-            verification = hunter.request('email-verifier', {'email': row['email']})['data']
+            try:
+                verification = hunter.request('email-verifier', {'email': row['email']})['data']
+            except ValueError as exc:
+                with self.db() as c:
+                    c.execute('UPDATE prospect_candidates SET error=? WHERE id=?', (str(exc), row['id']))
+                current = self.get_run(run_id)
+                warnings = json.loads(current['warnings'])
+                if str(exc) not in warnings: warnings.append(str(exc))
+                self.update(run_id, warnings=json.dumps(warnings,ensure_ascii=False))
+                break  # Do not repeatedly spend credits against a failed or rate-limited provider.
             status = str(verification.get('status', 'unknown'))
             if status not in ('valid', 'invalid', 'accept_all', 'webmail', 'disposable', 'unknown', 'pending'):
                 status = 'unknown'

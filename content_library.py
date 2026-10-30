@@ -5,7 +5,7 @@ import time
 from collections import Counter
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse, urldefrag
-from sales_signals import fetch_public, public_url, norm
+from public_data import fetch_public, public_url, norm
 from languages import validate_language
 
 STOP = set('the and for with from that this your our are you what how into will have company firma firmy oraz dla przez jest sie przy'.split())
@@ -114,7 +114,7 @@ class Library:
         rows=[r for r in rows if domain(r['website'])==domain(website)]
         if mode=='manual':
             ids=json.loads(campaign.get('material_ids','[]'));rows=[r for r in rows if r['id'] in ids]
-        context=' '.join(str(v) for k,v in dict(contact).items() if k in ('role','notes','signal_title','signal_evidence','signal_type'))+' '+campaign.get('audience','')+' '+campaign.get('pain_points','')
+        context=' '.join(str(v) for k,v in dict(contact).items() if k in ('role','notes'))+' '+campaign.get('audience','')+' '+campaign.get('pain_points','')
         query=tokens(context)
         for row in rows:
             # Rank title, subject tags, then descriptive context. No invented fit.
@@ -126,7 +126,7 @@ class Library:
     def validate_campaign(self,c,item):
         mode=item.get('audience_mode','all'); material_mode=item.get('material_mode','none')
         ids=item.get('contact_ids',[]);materials=item.get('material_ids',[])
-        if mode not in ('all','selected','signals','group','tags') or material_mode not in ('none','auto','manual'):raise ValueError('Nieprawidłowy tryb odbiorców lub materiałów')
+        if mode not in ('all','selected','group','tags') or material_mode not in ('none','auto','manual'):raise ValueError('Nieprawidłowy tryb odbiorców lub materiałów')
         if not isinstance(ids,list) or not isinstance(materials,list):raise ValueError('Lista kontaktów i materiałów musi być tablicą')
         ids=list(dict.fromkeys(int(i) for i in ids));materials=list(dict.fromkeys(int(i) for i in materials))
         if mode=='selected' and not ids:raise ValueError('Wybierz co najmniej jednego odbiorcę')

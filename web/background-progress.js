@@ -1,6 +1,7 @@
 const backgroundRequests=new Map();
 let backgroundRequestId=0,backgroundJobs=[],backgroundPolling=false,backgroundTimer;
 const backgroundLabels={
+ 'discover/opportunities/start':'Wyszukiwanie okazji','discover/opportunities/cancel':'Zatrzymywanie wyszukiwania okazji',
  'ai/translate-search-brief':'Tłumaczenie opisu wyszukiwania',
  'campaign/edit-data':'Wczytywanie kampanii','campaign/update':'Zapisywanie zmian kampanii',
  'campaign/messages/delete':'Usuwanie wiadomości',
@@ -8,14 +9,11 @@ const backgroundLabels={
  'discover/contacts/search':'Wyszukiwanie kontaktów firmy', 'discover/contacts/add':'Dodawanie kontaktów do grupy', 'discover/contacts/add-simulation':'Zapisywanie kontaktów z symulacji',
  'contact/group':'Zapisywanie grupy kontaktu',
  'ai/suggest-audience':'Przygotowywanie filtra wyszukiwania',
- 'signals/monitoring/delete':'Usuwanie monitoringu',
  'research':'Odczyt strony i oferty','ai/refine':'Poprawianie tekstu z AI',
  'ai/selling-points':'Przygotowywanie problemów i wartości','ai/proof-points':'Odczyt dowodów ze strony',
- 'ai/step-prompt':'Przygotowywanie kroku kampanii','signals/scan':'Skanowanie źródeł',
- 'signals/monitoring/propose':'Dobieranie sygnałów do oferty','signals/monitoring/companies':'Ocena firm ze zdarzenia',
+ 'ai/step-prompt':'Przygotowywanie kroku kampanii',
  'campaign/prepare':'Przygotowywanie wiadomości','prospecting/search':'Uruchamianie wyszukiwania klientów',
  'prospecting/verify':'Uruchamianie weryfikacji adresów','prospecting/draft':'Uruchamianie tworzenia szkiców',
- 'signals/discovery/start':'Uruchamianie konfiguracji źródeł','signals/discovery/cancel':'Przerywanie konfiguracji',
  'integrations/openai':'Sprawdzanie OpenAI','integrations/gmail':'Sprawdzanie Gmail','sync':'Odczyt odpowiedzi'
 };
 function beginBackgroundRequest(path){
@@ -36,16 +34,14 @@ function backgroundProgressHost(){
  return panel;
 }
 function renderBackgroundProgress(){
- const review=typeof discoverReview!=='undefined'&&discoverReview.running?discoverReview:null;
- const rows=[...[...backgroundRequests.values()].filter(row=>!review||row.path!=='signals/monitoring/companies'),...backgroundJobs.filter(job=>job.kind!=='discovery'||!$('#discovery-active-banner'))];
- if(review)rows.push({id:'company-review',label:'Ocena firm ze zdarzeń',completed:review.completed,total:review.total});
- if(!rows.length&&!$('#discovery-active-banner')){
+ const rows=[...backgroundRequests.values(),...backgroundJobs];
+ if(!rows.length){
    const panel=$('#background-progress');panel?.backgroundObserver?.disconnect();panel?.remove();document.documentElement.style.setProperty('--background-progress-height','0px');return;
  }
  const panel=backgroundProgressHost(),list=panel.querySelector('#background-progress-list');
  list.innerHTML=rows.map(row=>{
    const total=Number(row.total),counted=Number.isFinite(total)&&total>0,completed=counted?Math.min(total,Math.max(0,Number(row.completed)||0)):0;
-   const label=row.label||(row.kind==='discovery'?'Konfiguracja źródeł z AI':({searching:'Szukanie klientów',verifying:'Weryfikacja emaili',drafting:'Tworzenie szkiców'}[row.status]||'Trwa operacja…'));
+   const label=row.label||(row.kind==='opportunities'?'Wyszukiwanie okazji':({searching:'Szukanie klientów',verifying:'Weryfikacja emaili',drafting:'Tworzenie szkiców'}[row.status]||'Trwa operacja…'));
    const percent=counted?Math.floor(completed/total*100):null;
    return `<div class="background-progress-row" role="status" data-background-task="${esc(row.id)}"><div class="background-progress-heading"><strong>${esc(translateUiText(label))}</strong>${counted?`<span>${completed} / ${total} · ${percent}%</span>`:'<span class="background-working">W trakcie…</span>'}</div>${row.stage||row.project_name?`<p><span>${esc(row.stage||'')}</span>${row.project_name?` · <span data-no-translate>${esc(row.project_name)}</span>`:''}</p>`:''}<progress aria-label="${esc(translateUiText(label))}" ${counted?`max="${total}" value="${completed}"`:''}></progress></div>`;
  }).join('');
@@ -60,5 +56,5 @@ async function pollBackgroundProgress(){
    renderBackgroundProgress();
  }finally{backgroundPolling=false}
 }
-setInterval(()=>{if(backgroundJobs.length||backgroundRequests.size||state?.prospecting?.runs.some(r=>['searching','verifying','drafting'].includes(r.status)))pollBackgroundProgress().catch(()=>{})},3000);
+setInterval(()=>{if(backgroundJobs.length||backgroundRequests.size||state?.discovery_opportunities?.runs.some(r=>['running','cancelling'].includes(r.status))||state?.prospecting?.runs.some(r=>['searching','verifying','drafting'].includes(r.status)))pollBackgroundProgress().catch(()=>{})},3000);
 document.addEventListener('DOMContentLoaded',()=>pollBackgroundProgress().catch(()=>{}));

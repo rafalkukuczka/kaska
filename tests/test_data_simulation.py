@@ -25,15 +25,3 @@ class DataSimulationTests(unittest.TestCase):
         for value in ('false',0,None,[]):
             with self.assertRaises(ValueError):languages.save_data_simulation(app.db,{'enabled':value})
         self.assertTrue(languages.data_simulation(app.db))
-
-    def test_background_scan_skips_providers_without_changing_configuration(self):
-        app.signal_monitor.topic({'topic':'ERP'})
-        sources=app.signal_engine.state()['sources']
-        languages.save_data_simulation(app.db,{'enabled':True})
-        with patch('data_connectors.load') as load,patch('sales_signals.fetch_public') as fetch:
-            result=app.signal_engine.scan(force=True)
-            load.assert_not_called();fetch.assert_not_called()
-        self.assertTrue(result['simulated'])
-        self.assertEqual(result['created'],0)
-        self.assertEqual(app.signal_engine.state()['sources'],sources)
-        self.assertEqual(app.signal_engine.state()['items'],[])
