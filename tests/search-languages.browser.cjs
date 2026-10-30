@@ -17,7 +17,9 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('#current-seller-project').click();
   await page.locator('#prospect-website').fill('alpha.example');
   await page.locator('#prospect-offer').fill('Logistics services');
+  await page.locator('[data-project-tab=search]').click();
   await page.locator('#prospect-audience').fill('Retail companies operating online stores');
+  await page.locator('[data-project-tab=search]').click();
   await page.locator('[data-search-language-picker] summary').click();
   assert.equal(await page.locator('[name=search_language]').count(),6);
   await page.locator('[name=search_language][value=en]').check();
@@ -34,13 +36,14 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.deepEqual(await page.evaluate(()=>JSON.parse(state.prospecting.runs[0].search_languages)),['en','de']);
   assert.equal(await page.evaluate(()=>state.prospecting.runs[0].language),'fr');
   await page.locator('#current-seller-project').click();
-  await page.locator('#discover-project').evaluate(el=>el.open=true);
+  await page.locator('[data-project-tab=search]').click();
   assert.equal(await page.locator('[name=search_language][value=en]').isChecked(),true);
   assert.equal(await page.locator('[name=search_language][value=de]').isChecked(),true);
   await page.reload();
   await page.getByRole('heading',{name:'Projekt',exact:true}).waitFor();
   assert.equal(await page.locator('[name=search_language][value=de]').isChecked(),true);
   await page.locator('#current-seller-project').click();
+  await page.locator('[data-project-tab=search]').click();
   await page.locator('[data-search-language-picker] summary').click();
   await page.setViewportSize({width:390,height:844});
   await page.locator('[data-search-language-picker]').scrollIntoViewIfNeeded();
@@ -51,6 +54,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.deepEqual(await page.evaluate(()=>state.seller_project.search_languages),[]);
   await page.evaluate(async()=>{await api('seller-projects/create',{name:'Other language project'});await refresh()});
   assert.equal(await page.locator('[name=search_language]:checked').count(),0);
+  await page.locator('[data-project-tab=search]').click();
   await page.locator('[data-search-language-picker] summary').click();
   await page.locator('[name=search_language][value=it]').check();
   await page.locator('#active-project').selectOption('1');

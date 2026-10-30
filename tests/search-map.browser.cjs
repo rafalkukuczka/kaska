@@ -22,6 +22,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   // Dashboard now renders the worldwide preview even without selected areas.
   await page.locator('#prospect-website').fill('alpha.example');
   await page.locator('#prospect-offer').fill('Logistics services');
+  await page.locator('[data-project-tab=search]').click();
   await page.locator('#prospect-audience').fill('Retail companies with online stores');
   await page.locator('[data-show-search-map]').check();
   await page.locator('[data-search-area-map].leaflet-container').waitFor();
@@ -66,12 +67,12 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(Array.isArray(payloads[0].search_areas),true);assert.equal(payloads[0].search_areas.length,2);
   assert.equal(JSON.parse(await page.evaluate(()=>state.prospecting.runs[0].search_areas)).length,2);
   await page.locator('#current-seller-project').click();
-  await page.locator('#discover-project').evaluate(el=>el.open=true);
+  await page.locator('[data-project-tab=search]').click();
   assert.equal(await page.locator('.search-area-row').count(),2);
   await page.locator('[data-show-search-map]').check();
   await page.locator('[data-search-area-map].leaflet-container').waitFor();
   await page.reload();await page.waitForFunction(()=>state?.seller_project);
-  await page.locator('#discover-project').evaluate(el=>el.open=true);
+  await page.locator('[data-project-tab=search]').click();
   assert.equal(await page.locator('.search-area-row').count(),2);
   await page.locator('[data-remove-search-area]').first().click();
   await page.evaluate(async()=>flushSellerProject());
@@ -80,7 +81,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('.search-area-row').count(),0);
   assert.equal(await page.locator('[data-show-search-map]').isChecked(),false);
   await page.locator('#active-project').selectOption('1');await page.waitForFunction(()=>state.seller_project.id===1&&!sellerSwitchBusy);
-  await page.locator('#discover-project').evaluate(el=>el.open=true);
+  await page.locator('[data-project-tab=search]').click();
   assert.equal(await page.locator('.search-area-row').count(),1);
   await page.setViewportSize({width:390,height:844});
   await page.locator('[data-show-search-map]').check();

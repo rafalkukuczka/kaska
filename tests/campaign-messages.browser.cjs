@@ -22,6 +22,8 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   const root=page.locator('#campaign-messages');
   await root.locator('tbody tr').first().waitFor();
   assert.equal(await root.locator('tbody tr').count(),25);
+  assert.match(await page.locator('.campaign-delivery-summary').innerText(),/Kampania nie została uruchomiona/);
+  assert.match(await root.locator('[data-message-progress]').first().innerText(),/Kampania nie została uruchomiona/);
   await root.locator('[data-message-page-size]').selectOption('10');
   await page.waitForFunction(()=>document.querySelectorAll('#campaign-messages tbody tr').length===10&&!campaignMessagePage(selectedCampaign).loading);
   await root.locator('[data-message-page="4"]').click();
@@ -49,6 +51,10 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.reload();await page.waitForFunction(()=>state?.campaigns.length);await page.locator('[data-action=campaign]').click();await page.locator('[data-campaign-tab=messages]').click();await root.locator('tbody tr').first().waitFor();
   assert.equal(await page.evaluate(()=>campaignMessagePage(selectedCampaign).total),29);
   assert.equal(await root.locator('[data-message-progress] progress[value="0"]').count(),25);
+  const explanation=await page.evaluate(()=>messageDeliveryExplanation({status:'queued',delivery_reason:'daily_limit',next_attempt_at:Date.now()/1000+3600}));
+  assert.match(explanation,/Osiągnięto dzienny limit/);
+  assert.match(explanation,/Najwcześniejsza próba/);
+  assert.equal(await page.evaluate(()=>messageDeliveryExplanation({status:'queued',delivery_reason:'daily_limit',delivery_simulated:true})), '');
   let delivery='sending';
   await page.route('**/api/campaign/messages?*',async route=>{
    const response=await route.fetch(),data=await response.json();

@@ -1,5 +1,6 @@
 """Paged campaign messages and reversible removal from the working list."""
 import math
+import delivery_status
 
 
 def init_schema(c):
@@ -12,10 +13,12 @@ def page(db,campaign_id,page_number=1,page_size=25):
     campaign_id=int(campaign_id);page_number=int(page_number);page_size=int(page_size)
     if page_number<1 or page_size not in (10,25,50,100):raise ValueError('Nieprawidłowa strona wiadomości.')
     with db() as c:
-        if not c.execute("SELECT 1 FROM campaigns WHERE id=? AND status!='deleted'",(campaign_id,)).fetchone():raise ValueError('Nie znaleziono kampanii.')
+        campaign=c.execute("SELECT * FROM campaigns WHERE id=? AND status!='deleted'",(campaign_id,)).fetchone()
+        if not campaign:raise ValueError('Nie znaleziono kampanii.')
         total=c.execute('SELECT COUNT(*) FROM messages WHERE campaign_id=? AND deleted=0',(campaign_id,)).fetchone()[0]
         page_number=min(page_number,max(1,math.ceil(total/page_size)))
         rows=[dict(row) for row in c.execute('SELECT m.*,t.email FROM messages m LEFT JOIN contacts t ON t.id=m.contact_id WHERE m.campaign_id=? AND m.deleted=0 ORDER BY m.id DESC LIMIT ? OFFSET ?',(campaign_id,page_size,(page_number-1)*page_size))]
+        delivery_status.annotate(c,campaign,rows)
     return {'messages':rows,'total':total,'page':page_number,'page_size':page_size}
 
 

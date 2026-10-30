@@ -22,12 +22,15 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   });
   await page.goto('http://localhost:8794');await page.waitForFunction(()=>state?.seller_project);
   await page.locator('#current-seller-project').click();
+  await page.locator('[data-project-tab=search]').click();
   const tuneBounds=await page.locator('[data-refine=audience]').boundingBox(),suggestBounds=await page.locator('[data-suggest-audience]').boundingBox(),mapBounds=await page.locator('[data-show-search-map]').boundingBox();
   assert.ok(Math.abs(tuneBounds.y-suggestBounds.y)<2);
   assert.ok(mapBounds.y>suggestBounds.y+suggestBounds.height);
+  await page.locator('[data-project-tab=project]').click();
   await page.locator('#prospect-offer').fill('Industrial automation');
   await page.locator('[data-point-editor=pain_points] .point-row input').first().fill('Manual reporting');
   await page.locator('[data-point-editor=value_props] .point-row input').first().fill('Less repetitive work');
+  await page.locator('[data-project-tab=search]').click();
   await page.locator('#prospect-audience').fill('Original audience excluding retailers');
   await page.locator('[data-suggest-audience]').click();
   await page.locator('[data-audience-proposal]').waitFor();
@@ -54,12 +57,12 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('#prospect-audience').inputValue(),'User changed description while waiting');
   fail=false;
   await page.locator('#current-seller-project').click();
-  await page.locator('#discover-project').evaluate(el=>el.open=true);
+  await page.locator('[data-project-tab=search]').click();
   assert.equal(await page.locator('#prospect-audience').inputValue(),'User changed description while waiting');
   await page.locator('[data-suggest-audience]').click();await page.locator('[data-audience-proposal]').waitFor();
   await page.locator('[data-audience-apply]').click();await page.evaluate(async()=>flushSellerProject());
   await page.reload();await page.waitForFunction(()=>state?.seller_project);
-  await page.locator('#discover-project').evaluate(el=>el.open=true);
+  await page.locator('[data-project-tab=search]').click();
   assert.equal(await page.locator('#prospect-audience').inputValue(),'Manufacturing companies using manual reporting, excluding retailers.');
   // A late answer for another project must never appear in the new project.
   hold=true;release=null;

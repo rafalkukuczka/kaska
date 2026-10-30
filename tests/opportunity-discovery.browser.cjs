@@ -15,6 +15,20 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.goto('http://localhost:8820');await page.waitForFunction(()=>state?.seller_project);
   await page.locator('nav [data-view=discover]').click();
   assert.equal(await page.locator('[data-find-opportunities]').isDisabled(),true);
+  const categoryCount=await page.evaluate(()=>new Set(state.project_catalog.map(item=>item.category)).size);
+  assert.equal(await page.locator('[data-opportunity-category]').count(),categoryCount);
+  assert.match(await page.locator('#discover-opportunities').innerText(),/Nie skonfigurowano/);
+  assert.equal(posts.filter(url=>url.endsWith('/discover/opportunities/start')).length,0);
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+  await page.setViewportSize({width:1440,height:1000});
+  await page.screenshot({path:'test-results/discovery-categories-empty.png',fullPage:true});
+  await page.locator('[data-open-project-catalog]').first().click();
+  assert.equal(await page.locator('[data-project-tab=signals]').getAttribute('aria-selected'),'true');
+  assert.equal(await page.locator('.project-interest-catalog').isVisible(),true);
+  await page.locator('nav [data-view=discover]').click();
+  await page.evaluate(async()=>{await api('contacts',{name:'Contact without assessment',email:'unassessed@example.com',company:'Unassessed Company'});await refresh()});
+  assert.match(await page.locator('[data-discover-company]>summary').innerText(),/Nie oceniono/);
   await page.evaluate(async()=>{await api('seller-project',{offer:'Industrial integration services',audience:'Manufacturers',signal_interests:['new_factory','funding'],search_languages:['pl','de']});await refresh()});
   const projectBefore=await page.evaluate(()=>JSON.stringify(state.seller_project));
   assert.equal(await page.locator('[data-find-opportunities]').isEnabled(),true);
@@ -24,6 +38,10 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('[data-background-task^="opportunity-"]').waitFor();
   await page.waitForFunction(()=>state.discovery_opportunities.runs[0]?.status==='completed');
   assert.equal(await page.locator('[data-opportunity-id]').count(),2);
+  assert.equal(await page.locator('[data-opportunity-id] .opportunity-fit meter[value="80"]').count(),2);
+  assert.equal(await page.locator('[data-opportunity-id] .opportunity-reason strong').count(),2);
+  assert.equal(await page.locator('[data-discover-company]>summary .opportunity-fit meter[value="80"]').count(),1);
+  await page.screenshot({path:'test-results/discovery-assessment.png',fullPage:true});
   assert.equal(await page.locator('[data-opportunity-category="Ekspansja"] [data-opportunity-id]').count(),1);
   assert.equal(await page.locator('[data-opportunity-category="Kapitał"] [data-opportunity-id]').count(),1);
   assert.equal(await page.locator('[data-opportunity-id] a[href^="https://news.example/"]').count(),2);
@@ -33,9 +51,10 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.evaluate(()=>JSON.stringify(state.seller_project)),projectBefore);
   await page.locator('[data-opportunity-contact]>summary').first().click();
   await page.locator('[data-opportunity-company]').first().click();
-  assert.equal(await page.locator('[data-discover-company]').count(),1);
-  assert.equal(await page.locator('[data-discover-contact-field=domain]').inputValue(),'acme.example');
-  await page.locator('[data-discover-contact-action=search]').click();
+  assert.equal(await page.locator('[data-discover-company]').count(),2);
+  const acme=page.locator('[data-discover-company]').filter({has:page.locator('h3',{hasText:'Acme'})});
+  assert.equal(await acme.locator('[data-discover-contact-field=domain]').inputValue(),'acme.example');
+  await acme.locator('[data-discover-contact-action=search]').click();
   await page.locator('[data-discover-person]').first().waitFor();
   assert.equal(await page.locator('[data-discover-person]').count(),2);
   // Refreshing the page must only read saved results, never start another paid search.

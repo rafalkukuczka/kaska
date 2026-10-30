@@ -5,6 +5,7 @@ import math
 
 import campaign_edit
 import project_scope
+import delivery_status
 
 
 def init_schema(c):
@@ -23,7 +24,9 @@ def read(db,campaign_id,page=1,size=25):
         eligible=campaign_edit.recipients(c,campaign)
         targets={row['id']:dict(row) for row in eligible}
         counts={row['status']:row['count'] for row in c.execute('SELECT status,COUNT(*) AS count FROM messages WHERE campaign_id=? AND deleted=0 GROUP BY status',(campaign_id,))}
-        metadata=[dict(row) for row in c.execute('SELECT m.id,m.contact_id,m.position,m.subject,m.body,t.email FROM messages m LEFT JOIN contacts t ON t.id=m.contact_id WHERE m.campaign_id=? AND m.deleted=0 ORDER BY m.id',(campaign_id,))]
+        metadata=[dict(row) for row in c.execute('SELECT m.*,t.email FROM messages m LEFT JOIN contacts t ON t.id=m.contact_id WHERE m.campaign_id=? AND m.deleted=0 ORDER BY m.id',(campaign_id,))]
+        fingerprint_metadata=[{key:row[key] for key in ('id','contact_id','position','subject','body','email')} for row in metadata]
+        delivery=delivery_status.annotate(c,campaign,metadata)
         enrolled={row['contact_id'] for row in metadata}
         for row in c.execute('SELECT DISTINCT t.* FROM contacts t JOIN messages m ON m.contact_id=t.id WHERE m.campaign_id=? AND m.deleted=0',(campaign_id,)):
             targets.setdefault(row['id'],dict(row))
@@ -32,6 +35,9 @@ def read(db,campaign_id,page=1,size=25):
         ids=[row['id'] for row in people];messages=[]
         if ids:
             messages=[dict(row) for row in c.execute('SELECT m.*,t.email FROM messages m JOIN contacts t ON t.id=m.contact_id WHERE m.campaign_id=? AND m.deleted=0 AND m.contact_id IN ('+','.join('?' for _ in ids)+') ORDER BY m.position,m.id',(campaign_id,*ids))]
+            diagnostics={row['id']:row for row in metadata}
+            for message in messages:
+                message.update({key:diagnostics[message['id']][key] for key in ('delivery_reason','next_attempt_at')})
         selected={row['id'] for row in eligible}
         for person in people:
             person['tags']=json.loads(person['tags']);person['selected']=person['id'] in selected
@@ -42,5 +48,5 @@ def read(db,campaign_id,page=1,size=25):
         sent_ids=[row[0] for row in c.execute("SELECT DISTINCT contact_id FROM messages WHERE campaign_id=? AND status='sent'",(campaign_id,))]
         replied_ids=[row[0] for row in c.execute('SELECT DISTINCT contact_id FROM replies WHERE campaign_id=?',(campaign_id,))]
         summary={'recipients':total,'eligible':len(eligible),'prepared_recipients':len(enrolled),'messages':len(metadata),'steps':len(steps),'counts':counts,'message_ids':[row['id'] for row in metadata],'sent':sent[0],'contacted':sent[1],'sent_contact_ids':sent_ids,'replied_contact_ids':replied_ids,'sent_visible_recipients':sent_visible,'replies':replies[0],'replied':replies[1]}
-        fingerprint=hashlib.sha256(json.dumps([campaign['revision'],metadata],sort_keys=True).encode()).hexdigest()
-    return {'campaign_id':campaign_id,'project_id':campaign['project_id'],'revision':campaign['revision'],'summary':summary,'steps':steps,'conditions':json.loads(campaign['conditions']),'recipients':people,'page':page,'page_size':size,'total':total,'fingerprint':fingerprint}
+        fingerprint=hashlib.sha256(json.dumps([campaign['revision'],fingerprint_metadata],sort_keys=True).encode()).hexdigest()
+    return {'campaign_id':campaign_id,'project_id':campaign['project_id'],'revision':campaign['revision'],'summary':summary,'delivery':delivery,'steps':steps,'conditions':json.loads(campaign['conditions']),'recipients':people,'page':page,'page_size':size,'total':total,'fingerprint':fingerprint}

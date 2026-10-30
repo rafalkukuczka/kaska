@@ -70,12 +70,12 @@ function projectContextLink(){
 function renderSellerProject(){
  if($('#seller-project-form'))return;
  $('#content').innerHTML=renderTop('Projekt','Oferta i kryteria odbiorców wspólne dla odkrywania firm i pozyskiwania leadów.')+`<p class="hint">${esc(translateUiText(sellerProject().share_contacts?'Kontakty: współdzielone':'Kontakty: tylko w tym projekcie'))}</p>`+sharedProjectPanel();
- $('#discover-project').open=true;
  bindDiscoverProject();
+ selectProjectTab(projectTabs.get(sellerProject().id)||'project');
 }
 function projectInterestCatalog(){
  const groups=new Map();for(const item of state.project_catalog||[]){if(!groups.has(item.category))groups.set(item.category,[]);groups.get(item.category).push(item)}
- return `<details class="project-interest-catalog"><summary><strong>Katalog sygnałów</strong> · <span data-interest-count>0</span></summary><p class="hint">Wybierz zdarzenia, których Kaśka ma szukać po kliknięciu „Znajdź okazje” w Odkrywaj.</p><input type="hidden" name="signal_interests" value="[]"><div class="project-interest-groups">${[...groups].map(([category,items])=>`<fieldset><legend>${esc(category)}</legend>${items.map(item=>`<label class="check"><input type="checkbox" data-project-interest value="${esc(item.key)}"><span>${esc(item.label)}</span></label>`).join('')}</fieldset>`).join('')}</div></details>`;
+ return `<section class="project-interest-catalog"><h2>Katalog sygnałów · <span data-interest-count>0</span></h2><p class="hint">Wybierz zdarzenia, których Kaśka ma szukać po kliknięciu „Znajdź okazje” w Odkrywaj.</p><input type="hidden" name="signal_interests" value="[]"><div class="project-interest-groups">${[...groups].map(([category,items])=>`<fieldset><legend>${esc(category)}</legend>${items.map(item=>`<label class="check"><input type="checkbox" data-project-interest value="${esc(item.key)}"><span>${esc(item.label)}</span></label>`).join('')}</fieldset>`).join('')}</div></section>`;
 }
 function bindProjectInterests(form){
  const panel=form.querySelector('.project-interest-catalog');if(!panel)return;
@@ -85,14 +85,30 @@ function bindProjectInterests(form){
  panel.querySelectorAll('[data-project-interest]').forEach(input=>input.onchange=()=>{storage.value=JSON.stringify([...panel.querySelectorAll('[data-project-interest]:checked')].map(input=>input.value));count();storage.dispatchEvent(new Event('input',{bubbles:true}))});count();
 }
 function sharedProjectPanel(){
- const project=sellerProject();
- return `<details class="panel" id="discover-project" ${project.offer?'':'open'}><summary><strong>Projekt</strong> · <span data-no-translate>${esc(project.website||project.name||'')}</span></summary><form id="seller-project-form"><label for="seller-name">Nazwa projektu</label><input id="seller-name" name="name" required maxlength="100"><input id="prospect-language" type="hidden" value="${esc(state.preferences.message_language)}"><label for="prospect-website">Strona firmy, w imieniu której piszesz</label><input id="prospect-website" name="website" type="text" placeholder="firma.pl" maxlength="2000"><label for="prospect-offer">Oferta</label><textarea id="prospect-offer" name="offer" maxlength="10000" rows="4"></textarea>${refineControls('offer')}${sellingPointsSection('prospect')}<label for="prospect-audience">Opis firm, których szukasz</label><textarea id="prospect-audience" name="audience" maxlength="3000" rows="3"></textarea><div class="audience-ai-tools">${refineControls('audience')}${audienceSuggestionControls()}</div>${searchMapControls()}${searchLanguagesPicker()}${projectInterestCatalog()}<button class="secondary">Zapisz projekt</button></form></details>`;
+ return `<section id="discover-project"><form id="seller-project-form"><div class="campaign-tabs project-tabs" role="tablist" aria-label="${esc(translateUiText('Szczegóły projektu'))}">${[['project','Projekt'],['search','Szukaj'],['signals','Katalog sygnałów']].map(([tab,label])=>`<button type="button" id="project-tab-${tab}" role="tab" data-project-tab="${tab}" aria-controls="project-panel-${tab}" aria-selected="${tab==='project'}" tabindex="${tab==='project'?'0':'-1'}">${label}</button>`).join('')}</div><section class="panel project-tab-panel" id="project-panel-project" role="tabpanel" aria-labelledby="project-tab-project"><label for="seller-name">Nazwa projektu</label><input id="seller-name" name="name" required maxlength="100"><input id="prospect-language" type="hidden" value="${esc(state.preferences.message_language)}"><label for="prospect-website">Strona firmy, w imieniu której piszesz</label><input id="prospect-website" name="website" type="text" placeholder="firma.pl" maxlength="2000"><label for="prospect-offer">Oferta</label><textarea id="prospect-offer" name="offer" maxlength="10000" rows="4"></textarea>${refineControls('offer')}${sellingPointsSection('prospect')}</section><section class="panel project-tab-panel" id="project-panel-search" role="tabpanel" aria-labelledby="project-tab-search" hidden><label for="prospect-audience">Opis firm, których szukasz</label><textarea id="prospect-audience" name="audience" maxlength="3000" rows="3"></textarea><div class="audience-ai-tools">${refineControls('audience')}${audienceSuggestionControls()}</div>${searchMapControls()}${searchLanguagesPicker()}</section><section class="panel project-tab-panel" id="project-panel-signals" role="tabpanel" aria-labelledby="project-tab-signals" hidden>${projectInterestCatalog()}</section><button class="secondary">Zapisz projekt</button></form></section>`;
 }
+const projectTabs=new Map();
+function selectProjectTab(tab){
+ if(!['project','search','signals'].includes(tab)||!$('#seller-project-form'))return;
+ projectTabs.set(sellerProject().id,tab);
+ for(const button of document.querySelectorAll('[data-project-tab]')){
+  const selected=button.dataset.projectTab===tab;
+  button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;
+  $('#'+button.getAttribute('aria-controls')).hidden=!selected;
+ }
+}
+document.addEventListener('click',event=>{const button=event.target.closest('[data-project-tab]');if(button)selectProjectTab(button.dataset.projectTab)});
+document.addEventListener('keydown',event=>{
+ const button=event.target.closest('[data-project-tab]');if(!button||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+ event.preventDefault();const tabs=[...document.querySelectorAll('[data-project-tab]')],index=tabs.indexOf(button),next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+ tabs[next].click();tabs[next].focus();
+});
+document.addEventListener('invalid',event=>{const panel=event.target.closest('#seller-project-form [role=tabpanel]');if(panel)selectProjectTab(panel.id.replace('project-panel-',''))},true);
 function bindDiscoverProject(){
  const form=$('#seller-project-form');bindSellingPoints(form);bindSharedProject(form);bindRefineControls();
  form.onsubmit=e=>{e.preventDefault();run(e.submitter,async()=>{updateSellerProject(form);await flushSellerProject();toast('Projekt zapisany.')})};
 }
-function editSellerProject(){view='project';render();$('#discover-project').open=true;$('#prospect-offer').focus()}
+function editSellerProject(){view='project';render();selectProjectTab('project');$('#prospect-offer').focus()}
 
 function renderProjectPicker(){
  const select=$('#active-project');if(!select||!state?.seller_project)return;

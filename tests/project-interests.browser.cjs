@@ -18,7 +18,20 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.evaluate(()=>view),'dashboard');
   assert.equal(await page.evaluate(()=>Object.hasOwn(state,'signals')),false);
   await page.locator('#current-seller-project').click();
-  await page.locator('.project-interest-catalog>summary').click();
+  assert.equal(await page.locator('[data-project-tab]').count(),3);
+  assert.equal(await page.locator('#project-panel-project').isVisible(),true);
+  assert.equal(await page.locator('#project-panel-search').isVisible(),false);
+  await page.locator('#prospect-offer').fill('Industrial engineering');
+  await page.locator('[data-project-tab=search]').click();
+  await page.locator('#prospect-audience').fill('Industrial manufacturers');
+  await page.locator('[data-project-tab=search]').focus();await page.keyboard.press('ArrowRight');
+  assert.equal(await page.locator('[data-project-tab=signals]').getAttribute('aria-selected'),'true');
+  assert.equal(await page.locator('#project-panel-project').isVisible(),false);
+  assert.equal(await page.locator('#project-panel-search').isVisible(),false);
+  assert.equal(await page.locator('#prospect-offer').inputValue(),'Industrial engineering');
+  await page.evaluate(async()=>flushSellerProject());
+  assert.equal(await page.evaluate(()=>state.seller_project.audience),'Industrial manufacturers');
+  await page.locator('[data-project-tab=signals]').click();
   assert.ok(await page.locator('[data-project-interest]').count()>=50);
   await page.locator('[data-project-interest][value=funding]').check();
   await page.locator('[data-project-interest][value=new_factory]').check();
@@ -33,7 +46,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('#new-seller-project-form button.primary').click();
   await page.waitForFunction(id=>state.seller_project.id!==id,first);
   assert.equal(await page.locator('[data-project-interest]:checked').count(),0);
-  await page.locator('.project-interest-catalog>summary').click();
+  await page.locator('[data-project-tab=signals]').click();
   await page.locator('[data-project-interest][value=erp]').check();
   await page.waitForFunction(()=>state.seller_project.signal_interests.includes('erp'));
   await page.locator('#active-project').selectOption(String(first));
@@ -62,10 +75,11 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('[data-discover-person]').count(),2);
   await page.locator('#current-seller-project').click();
   await page.setViewportSize({width:390,height:844});
-  await page.locator('.project-interest-catalog>summary').click();
+  await page.locator('[data-project-tab=signals]').click();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
   await page.evaluate(async()=>{await api('preferences',{ui_language:'en',message_language:'en'});await refresh()});
   assert.match(await page.locator('.project-interest-catalog').innerText(),/Signal catalog/);
+  await page.screenshot({path:'test-results/project-tabs-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
   console.log('PASS: monitoring UI/API/assets removed, project catalog preferences persist and isolate projects, no search wiring, lead and contact acquisition work, mobile and English');
  }finally{await browser?.close();server.kill()}

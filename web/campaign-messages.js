@@ -4,13 +4,22 @@ function campaignMessagePage(id){
  return campaignMessagePages.get(id);
 }
 function findCampaignMessage(id){return campaignMessagePages.get(selectedCampaign)?.messages.find(message=>message.id===id)||campaignWorkspaceMessage(id)||state.messages.find(message=>message.id===id)}
+const deliveryReasonLabels={not_started:'Kampania nie została uruchomiona',paused:'Kampania jest wstrzymana',simulation:'Tryb symulacji blokuje rzeczywistą wysyłkę',smtp_missing:'Skonfiguruj pocztę w Integracjach',contact_inactive:'Kontakt nie jest aktywny — sprawdź jego status',simulated_contact:'Kontakt z symulacji — pomijany w rzeczywistej wysyłce',condition:'Odbiorca nie spełnia warunku sekwencji',previous_step:'Oczekuje na wysłanie wcześniejszego kroku',daily_limit:'Osiągnięto dzienny limit wysyłki',interval:'Przerwa między wiadomościami',scheduled:'Oczekuje na termin kroku',ready:'Gotowa — oczekuje na swoją kolej'};
+function deliveryTime(timestamp){return `<time datetime="${new Date(timestamp*1000).toISOString()}">${esc(new Intl.DateTimeFormat(uiLanguage==='en'?'en-GB':'pl-PL',{timeZone:'Europe/Warsaw',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(timestamp*1000)))}</time>`}
+function messageDeliveryExplanation(message){
+ if(message.delivery_simulated)return '';
+ if(['uncertain','cancelled'].includes(message.status))return `<small class="message-delivery-reason" data-no-translate>${esc(message.error||translateUiText(message.status==='uncertain'?'Sprawdź skrzynkę przed ponowieniem wysyłki.':'Wiadomość nie zostanie wysłana.'))}</small>`;
+ const reason=message.status==='queued'?deliveryReasonLabels[message.delivery_reason]:null;
+ const next=message.status==='queued'&&message.next_attempt_at>Date.now()/1000?`<small class="message-send-schedule"><span>Najwcześniejsza próba:</span> ${deliveryTime(message.next_attempt_at)} <span>(Warszawa)</span></small>`:'';
+ return `${reason?`<small class="message-delivery-reason">${esc(translateUiText(reason))}</small>`:''}${next}`;
+}
 function messageDeliveryProgress(message){
  const status=message.status;
- const scheduled=status==='queued'&&!message.delivery_simulated&&message.due>Date.now()/1000&&state.campaigns.find(c=>c.id===message.campaign_id)?.status==='active';
+ const scheduled=status==='queued'&&!message.delivery_reason&&!message.delivery_simulated&&message.due>Date.now()/1000&&state.campaigns.find(c=>c.id===message.campaign_id)?.status==='active';
  const schedule=scheduled?`<small class="message-send-schedule"><span>Zaplanowano:</span> <time datetime="${new Date(message.due*1000).toISOString()}">${esc(new Intl.DateTimeFormat(uiLanguage==='en'?'en-GB':'pl-PL',{timeZone:'Europe/Warsaw',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(message.due*1000)))}</time></small>`:'';
  const label=status==='sending'?'Wysyłanie…':status==='sent'?(message.delivery_simulated?'Wysłano w symulacji':'Przekazano do serwera pocztowego'):status==='queued'?'Oczekuje na wysyłkę':status==='uncertain'?'Status wysyłki niepotwierdzony':'Wysyłka zatrzymana';
  const progress=['queued','sending','sent'].includes(status)?`<progress max="100" ${status==='sending'?'':`value="${status==='sent'?100:0}"`} aria-label="${esc(translateUiText(label))}"></progress>`:'<span class="message-delivery-track" aria-hidden="true"></span>';
- return `<div class="message-delivery message-delivery-${esc(status)}" data-message-progress="${message.id}">${badge(status)}${message.delivery_replied?badge('replied'):''}${message.delivery_simulated?'<span class="badge warn">Symulacja</span>':''}<div class="message-delivery-bar">${progress}${status==='sent'?'<small>100%</small>':status==='queued'?'<small>0%</small>':''}</div><small title="${esc(translateUiText(label))}">${esc(translateUiText(label))}</small>${schedule}</div>`;
+ return `<div class="message-delivery message-delivery-${esc(status)}" data-message-progress="${message.id}">${badge(status)}${message.delivery_replied?badge('replied'):''}${message.delivery_simulated?'<span class="badge warn">Symulacja</span>':''}<div class="message-delivery-bar">${progress}${status==='sent'?'<small>100%</small>':status==='queued'?'<small>0%</small>':''}</div><small title="${esc(translateUiText(label))}">${esc(translateUiText(label))}</small>${schedule}${messageDeliveryExplanation(message)}</div>`;
 }
 function campaignMessagesPagination(p){
  const pages=Math.max(1,Math.ceil(p.total/p.size));

@@ -24,8 +24,15 @@ function campaignWorkspaceData(w){
  data.summary.replies+=run.replies.length;data.summary.replied=new Set([...data.summary.replied_contact_ids,...run.replies.map(reply=>reply.contact_id)]).size;
  return data;
 }
-function campaignWorkspaceStatus(c,summary){
- if(c.status==='active')return monitoringSimulation?'Symulacja w toku':'Wysyłka w toku';
+function campaignWorkspaceStatus(c,summary,delivery){
+ if(c.status==='active'){
+  if(monitoringSimulation)return 'Symulacja w toku';
+  if(summary?.counts.sending)return 'Wysyłka w toku';
+  if(summary?.counts.uncertain)return 'Wymaga uwagi';
+  if(summary?.messages&&!summary.counts.queued)return 'Brak wiadomości do wysłania';
+  if(delivery)return 'Oczekuje na wysyłkę';
+  return 'Wysyłka w toku';
+ }
  if((summary?.counts.uncertain||0)>0)return 'Wymaga uwagi';
  if(c.status==='paused')return 'Wysyłka wstrzymana';
  return summary?.messages?'Wiadomości przygotowane':'Do przygotowania';
@@ -44,7 +51,12 @@ function campaignMainAction(c,w,summary){
 function renderCampaignWorkspaceHeader(c,w,data){
  const root=$('#campaign-workspace-header');if(!root)return;
  const summary=data?.summary;
- root.innerHTML=`<div class="topline campaign-workspace-top"><div><p class="section-label">KAMPANIA</p><h1 data-no-translate>${esc(c.name)}</h1><p class="muted" data-no-translate>${esc(c.audience||campaignAudience(c))}</p></div><div class="actions campaign-workspace-actions">${campaignMainAction(c,w,summary)}<button type="button" class="secondary" data-action="edit-campaign" data-id="${c.id}">Edytuj kampanię</button><details class="campaign-more"><summary aria-label="${esc(translateUiText('Więcej działań'))}">⋯</summary><div>${['draft','paused'].includes(c.status)&&summary?.messages?`<button type="button" class="link" data-action="prepare" data-id="${c.id}">Przygotuj wiadomości ponownie</button>`:''}<button type="button" class="link danger" data-action="delete-campaign" data-id="${c.id}">Usuń kampanię</button></div></details></div></div><div class="campaign-summary" aria-label="${esc(translateUiText('Podsumowanie kampanii'))}">${[['Odbiorcy',summary?.recipients],['Kroki',summary?.steps],['Wiadomości',summary?.messages]].map(([label,count])=>`<div><strong data-campaign-summary="${label}">${count??'—'}</strong><span>${label}</span></div>`).join('')}<div class="campaign-state"><span class="campaign-state-dot ${c.status==='active'?'active':''}"></span><strong>${campaignWorkspaceStatus(c,summary)}</strong>${monitoringSimulation?'<small>Symulacja</small>':''}</div></div>${summary&&!summary.messages&&summary.recipients?'<p class="campaign-next-step">Kontakty są wybrane. Przygotuj wiadomości, aby sprawdzić treść i uruchomić kampanię.</p>':''}`;
+ root.innerHTML=`<div class="topline campaign-workspace-top"><div><p class="section-label">KAMPANIA</p><h1 data-no-translate>${esc(c.name)}</h1><p class="muted" data-no-translate>${esc(c.audience||campaignAudience(c))}</p></div><div class="actions campaign-workspace-actions">${campaignMainAction(c,w,summary)}<button type="button" class="secondary" data-action="edit-campaign" data-id="${c.id}">Edytuj kampanię</button><details class="campaign-more"><summary aria-label="${esc(translateUiText('Więcej działań'))}">⋯</summary><div>${['draft','paused'].includes(c.status)&&summary?.messages?`<button type="button" class="link" data-action="prepare" data-id="${c.id}">Przygotuj wiadomości ponownie</button>`:''}<button type="button" class="link danger" data-action="delete-campaign" data-id="${c.id}">Usuń kampanię</button></div></details></div></div><div class="campaign-summary" aria-label="${esc(translateUiText('Podsumowanie kampanii'))}">${[['Odbiorcy',summary?.recipients],['Kroki',summary?.steps],['Wiadomości',summary?.messages]].map(([label,count])=>`<div><strong data-campaign-summary="${label}">${count??'—'}</strong><span>${label}</span></div>`).join('')}<div class="campaign-state"><span class="campaign-state-dot ${c.status==='active'?'active':''}"></span><strong>${campaignWorkspaceStatus(c,summary,data?.delivery)}</strong>${monitoringSimulation?'<small>Symulacja</small>':''}</div></div>${renderCampaignDelivery(data)}${summary&&!summary.messages&&summary.recipients?'<p class="campaign-next-step">Kontakty są wybrane. Przygotuj wiadomości, aby sprawdzić treść i uruchomić kampanię.</p>':''}`;
+}
+function renderCampaignDelivery(data){
+ if(!data?.delivery||monitoringSimulation)return '';
+ const delivery=data.delivery;
+ return `<div class="campaign-delivery-summary"><strong>Stan kolejki wysyłki</strong><div class="campaign-delivery-reasons">${Object.entries(delivery.reasons).map(([reason,count])=>`<div><span>${esc(translateUiText(deliveryReasonLabels[reason]||reason))}</span><strong>${count}</strong></div>`).join('')||'<p class="hint">Brak wiadomości oczekujących na wysyłkę.</p>'}</div><p class="hint"><span>Wysłano dziś ze wszystkich projektów:</span> ${delivery.sent_today} / ${delivery.daily_limit} · <span>Odstęp w sekundach:</span> ${delivery.interval_seconds}</p>${delivery.next_attempt_at>Date.now()/1000?`<p class="hint"><span>Najwcześniejsza próba:</span> ${deliveryTime(delivery.next_attempt_at)} <span>(Warszawa)</span></p>`:''}<p class="hint">Terminy uwzględniają limity i odstępy sekwencji. Inne wiadomości w kolejce mogą opóźnić wysyłkę.</p></div>`;
 }
 function campaignRecipientPagination(w,total){
  const pages=Math.max(1,Math.ceil(total/w.size));
