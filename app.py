@@ -761,7 +761,9 @@ class Handler(BaseHTTPRequestHandler):
             with db() as c:
                 project_id=project_scope.active(c);pool=project_scope.contact_pool(c,project_id)
                 activity=dashboard_activity.read(c,project_id)
+                actions=dashboard_activity.actions(c,project_id)
                 result={'dashboard_activity':activity,'dashboard_flow':dashboard_activity.flow(c,project_id),'events':[dict(row) for row in c.execute('SELECT * FROM events ORDER BY id DESC LIMIT 2000')]}
+                result['dashboard_actions']=actions
                 result['contacts']=[dict(row) for row in c.execute('SELECT * FROM contacts WHERE contact_pool=? ORDER BY id DESC LIMIT 2000',(pool,))]
                 result['replies']=[dict(row) for row in c.execute('SELECT r.*,t.email,t.name AS contact_name FROM replies r JOIN contacts t ON t.id=r.contact_id WHERE t.contact_pool=? AND COALESCE(r.project_id,(SELECT MIN(id) FROM seller_projects WHERE deleted=0))=? ORDER BY r.id DESC LIMIT 2000',(pool,project_id))]
                 result['campaigns']=[dict(row) for row in c.execute("SELECT * FROM campaigns WHERE project_id=? AND status!='deleted' ORDER BY id DESC LIMIT 2000",(project_id,))]
@@ -952,6 +954,8 @@ class Handler(BaseHTTPRequestHandler):
                     if not campaign:
                         raise ValueError('Nie znaleziono kampanii')
                     if item['status'] == 'active':
+                        if 'fingerprint' in item and campaign_workspace.read(db,campaign['id'])['fingerprint']!=item['fingerprint']:
+                            raise ValueError('Wiadomości lub odbiorcy zmienili się. Otwórz podsumowanie wysyłki ponownie.')
                         if not smtp_ready():
                             raise ValueError('Skonfiguruj SMTP w pliku .env i uruchom ponownie aplikację')
                         if not c.execute('SELECT 1 FROM messages WHERE campaign_id=? AND deleted=0', (item['id'],)).fetchone():

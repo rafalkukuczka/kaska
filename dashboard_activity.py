@@ -1,6 +1,17 @@
 """Complete project activity counts, independent of paginated message lists."""
 import time
 import project_scope
+from datetime import datetime, timedelta, timezone
+
+
+def actions(c,project_id):
+    cutoff=(datetime.now(timezone.utc).date()-timedelta(days=30)).isoformat()
+    count=lambda sql,params: c.execute(sql,params).fetchone()[0]
+    return {
+        'opportunities':count("SELECT COUNT(*) FROM discovered_opportunities o LEFT JOIN opportunity_reviews r ON r.opportunity_id=o.id WHERE o.project_id=? AND COALESCE(NULLIF(o.published_date,''),o.event_date)>=? AND COALESCE(r.decision,'new')='new'",(project_id,cutoff)),
+        'leads':count("SELECT COUNT(DISTINCT p.email) FROM prospect_candidates p JOIN prospect_runs r ON r.id=p.run_id WHERE r.project_id=? AND p.qualification!='rejected' AND NOT EXISTS(SELECT 1 FROM contacts t WHERE t.email=p.email AND t.contact_pool=?)",(project_id,project_scope.contact_pool(c,project_id))),
+        'campaigns':count("SELECT COUNT(*) FROM campaigns p WHERE p.project_id=? AND p.status IN ('draft','paused') AND EXISTS(SELECT 1 FROM messages m WHERE m.campaign_id=p.id AND m.status='queued' AND m.deleted=0)",(project_id,)),
+        'replies':count('SELECT COUNT(*) FROM replies WHERE project_id=?',(project_id,))}
 
 
 def flow(c,project_id,now=None,days=7):

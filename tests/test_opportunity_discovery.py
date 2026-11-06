@@ -15,6 +15,42 @@ class OpportunityDiscoveryTests(unittest.TestCase):
     setUp=test_app.SystemTests.setUp
     tearDown=test_app.SystemTests.tearDown
 
+    def test_review_persists_across_search_and_rejects_other_project(self):
+        run=self.setup_search();result=self.execute(run);item=result['items'][0]
+        self.manager.post('review',{'id':item['id'],'decision':'interested','project_id':self.project['id']})
+        self.assertEqual(self.manager.state(self.project['id'])['items'][0]['decision'],'interested')
+        other=shared_project.create(app.db,{'name':'Private review project'})
+        with self.assertRaises(ValueError):self.manager.post('review',{'id':item['id'],'decision':'rejected','project_id':other['id']})
+        for value in (True,-1,'1'):
+            with self.assertRaises(ValueError):self.manager.post('review',{'id':value,'decision':'rejected','project_id':self.project['id']})
+        with self.assertRaises(ValueError):self.manager.post('review',{'id':item['id'],'decision':'invalid','project_id':self.project['id']})
+        self.manager.post('review',{'id':item['id'],'decision':'new','project_id':self.project['id']})
+        self.assertEqual(self.manager.state(self.project['id'])['items'][0]['decision'],'new')
+
+    def test_preview_is_read_only_and_history_matches_actual_category_inputs(self):
+        run=self.setup_search(search_languages=['pl','de'])
+        with patch('opportunity_discovery.ai_service.generate_json') as ai:
+            preview=self.manager.state(self.project['id'])['request_preview']
+            ai.assert_not_called()
+        self.assertEqual(len(preview['queries']),2)
+        self.assertEqual(preview['instructions'],od.SEARCH_INSTRUCTIONS)
+        self.assertEqual(preview['queries'][0]['input']['offer'],self.project['offer'])
+        calls=[]
+        def generate(instructions,data,fields,**kwargs):
+            calls.append((instructions,data));return self.response(data['selected_types'][0]['key'])
+        state=self.execute(run,generate)
+        queries=state['runs'][0]['queries']
+        self.assertEqual(len(queries),len(calls))
+        for saved,(instructions,data) in zip(queries,calls):
+            self.assertEqual(saved['instructions'],instructions)
+            self.assertEqual(saved['input'],data)
+            self.assertTrue(saved['web_search'])
+            self.assertNotIn('api_key',saved)
+        shared_project.save(app.db,{'offer':'Changed offer'})
+        changed=self.manager.state(self.project['id'])
+        self.assertEqual(changed['runs'][0]['queries'],queries)
+        self.assertEqual(changed['request_preview']['queries'][0]['input']['offer'],'Changed offer')
+
     def setup_search(self,**fields):
         shared_project.save(app.db,{'offer':'Industrial integration services','audience':'Manufacturers',
             'signal_interests':['new_factory','hiring'],**fields})

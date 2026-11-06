@@ -9,6 +9,12 @@ class DashboardActivityTests(unittest.TestCase):
     setUp=test_app.SystemTests.setUp
     tearDown=test_app.SystemTests.tearDown
 
+    def test_actions_count_prepared_campaigns_and_respect_project_scope(self):
+        app.prepare(1)
+        with app.db() as c:self.assertEqual(dashboard_activity.actions(c,1)['campaigns'],1)
+        other=shared_project.create(app.db,{'name':'Separate dashboard'})
+        with app.db() as c:self.assertEqual(dashboard_activity.actions(c,other['id']),{'opportunities':0,'leads':0,'campaigns':0,'replies':0})
+
     def test_flow_deduplicates_people_and_excludes_simulated_and_future_data(self):
         now=1800000000
         with app.db() as c:

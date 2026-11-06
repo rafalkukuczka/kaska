@@ -1,2 +1,2 @@
 Set-Location $PSScriptRoot
-python app.py
+python launch.py

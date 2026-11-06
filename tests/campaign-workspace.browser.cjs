@@ -36,6 +36,12 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('#campaign-messages tbody tr').first().waitFor();
   assert.equal(await page.locator('#campaign-messages tbody tr').count(),18);
   assert.equal(await page.locator('#campaign-workspace-header [data-action=campaign-status][data-status=active]').isVisible(),true);
+  await page.locator('#campaign-workspace-header [data-action=campaign-status][data-status=active]').click();
+  await page.locator('[data-confirm-send]').waitFor();
+  assert.equal(await page.locator('[data-confirm-send]').isDisabled(),true);
+  assert.match(await page.locator('#modal-content').innerText(),/9/);
+  assert.deepEqual(sends,[]);
+  await page.locator('#modal-content .secondary.close').click();
   await page.locator('[data-campaign-tab=sequence]').click();
   assert.equal(await page.locator('.campaign-sequence-step').count(),2);
   await page.locator('.campaign-sequence-step>summary').first().click();

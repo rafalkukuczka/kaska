@@ -15,6 +15,10 @@ python app.py
 
 Otwórz http://localhost:8787. Kolejne uruchomienia: `python app.py` lub `./start.ps1`. Serwer nasłuchuje wyłącznie na 127.0.0.1. Nie wymaga instalacji zależności ani konta w LeadStrong. Nie uruchamiaj równocześnie kilku instancji na tej samej bazie.
 
+W Windows możesz dwukrotnie kliknąć **start.bat**. Uruchamia serwer, czeka na gotowość i otwiera przeglądarkę. Jeżeli Kaśka już działa na skonfigurowanym porcie, otwiera istniejącą instancję. Okno uruchomionego serwera pozostaw otwarte; Ctrl+C kończy pracę. Obsługiwane są `APP_PORT` z ustawień i lokalne środowisko `.venv`.
+
+W Odkrywaj można filtrować zapisane okazje według kategorii, potwierdzonej lokalizacji, daty, oceny i decyzji oraz sortować po dopasowaniu lub dacie. Decyzje **Interesuje mnie / Odrzuć / Cofnij decyzję** zapisują się osobno dla projektu; odrzucone okazje są domyślnie ukryte. Filtry i decyzje nie uruchamiają AI. Panel dowodów wskazuje brakujące potwierdzenia. Z firmy mającej aktywne kontakty można przygotować kampanię z wybranymi osobami i ofertą projektu — zapis oraz wysyłka pozostają osobnymi działaniami. Dashboard pokazuje liczniki zadań do przejrzenia. Uruchomienie rzeczywistej wysyłki otwiera podsumowanie nadawcy, odbiorców, wiadomości, harmonogramu i limitów z osobnym potwierdzeniem.
+
 ## Praca z systemem
 
 W **Szczegółach projektu → Katalog sygnałów** można zaznaczyć interesujące sytuacje biznesowe. Wybór zapisuje się jako `signal_interests`, osobno dla każdego projektu. W **Odkrywaj → Znajdź okazje** stanowi podstawę wyszukiwania internetowego wraz z ofertą, opisem odbiorców, językami i obszarami projektu. Samo zaznaczenie checkboxów nie uruchamia operacji i nie zmienia zwykłego wyszukiwania Leadów.
