@@ -25,13 +25,25 @@ def configured_port():
 
 def ready(url):
     try:
-        with urllib.request.urlopen(url+'/api/state', timeout=2) as response:
-            data=json.load(response)
+        try:
+            with urllib.request.urlopen(url+'/api/state', timeout=2) as response:
+                data=json.load(response)
+        except urllib.error.HTTPError:
+            raise RuntimeError('Port jest zajęty przez inną aplikację.') from None
         if not isinstance(data,dict) or 'seller_project' not in data or 'campaigns' not in data:
-            raise RuntimeError('Port jest zajety przez inna aplikacje.')
+            raise RuntimeError('Port jest zajęty przez inną aplikację.')
+        for path, marker in (('/contacts.js','function renderContactsView'),('/prospecting-ui.js','function finishProspectDraft')):
+            try:
+                with urllib.request.urlopen(url+path, timeout=2) as response:
+                    source=response.read().decode('utf-8')
+            except urllib.error.HTTPError as error:
+                if error.code == 404:
+                    raise RuntimeError('Uruchomiona Kaśka działa na starszym kodzie. Zamknij jej proces i uruchom ponownie, aby załadować dashboard.') from None
+                raise RuntimeError('Nie można sprawdzić zgodności uruchomionej Kaśki.') from None
+            if marker not in source:
+                raise RuntimeError('Uruchomiona Kaśka ma niezgodną wersję interfejsu. Zamknij jej proces i uruchom ponownie.')
         return True
     except urllib.error.URLError as error:
-        if isinstance(error,urllib.error.HTTPError):raise RuntimeError('Port jest zajety przez inna aplikacje.') from None
         return False
     except (ValueError,TimeoutError):
         raise RuntimeError('Nie mozna potwierdzic gotowosci aplikacji na tym porcie.') from None

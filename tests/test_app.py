@@ -16,14 +16,16 @@ import app
 
 class SystemTests(unittest.TestCase):
     def test_reply_sync_cannot_block_outbound_worker(self):
-        with patch('app.threading.Thread') as thread,patch('app.sync_replies',side_effect=TimeoutError) as sync,patch('app.send_one') as send,patch('app.time.sleep',side_effect=StopIteration):
+        app.STOP_WORKERS.clear()
+        with patch('app.threading.Thread') as thread,patch('app.send_one') as send,patch('app.STOP_WORKERS.wait',side_effect=StopIteration):
             with self.assertRaises(StopIteration):app.worker()
-            thread.assert_called_once_with(target=app.reply_worker,daemon=True,name='mail-replies')
+            thread.assert_called_once_with(target=app.reply_worker,name='mail-replies')
             thread.return_value.start.assert_called_once()
-            sync.assert_not_called();send.assert_called_once()
+            send.assert_called_once()
 
     def test_reply_worker_retries_after_failure(self):
-        with patch.dict(app.os.environ,{'IMAP_HOST':'imap.test'}),patch('app.sync_replies',side_effect=TimeoutError),patch('app.event') as log,patch('app.time.sleep',side_effect=StopIteration):
+        app.STOP_WORKERS.clear()
+        with patch.dict(app.os.environ,{'IMAP_HOST':'imap.test'}),patch('app.sync_replies',side_effect=TimeoutError),patch('app.event') as log,patch('app.STOP_WORKERS.wait',side_effect=StopIteration):
             with self.assertRaises(StopIteration):app.reply_worker()
             self.assertIn('IMAP',log.call_args.args[0])
 
@@ -289,12 +291,12 @@ class SystemTests(unittest.TestCase):
     def test_research_rejects_private_hosts_and_unsafe_urls(self):
         with self.assertRaises(ValueError):
             app.research_website('http://example.com')
-        with patch('app.socket.getaddrinfo', return_value=[(2,1,6,'',('127.0.0.1',443))]):
+        with patch('website_research.socket.getaddrinfo', return_value=[(2,1,6,'',('127.0.0.1',443))]):
             with self.assertRaises(ValueError):
                 app.research_website('https://internal.test')
 
     def test_research_extracts_company_context_without_ai(self):
-        with patch('app.socket.getaddrinfo', return_value=[(2,1,6,'',('93.184.216.34',443))]), patch('app.socket.create_connection'), patch('app.ssl.create_default_context'), patch('app.http.client.HTTPSConnection') as connection:
+        with patch('website_research.socket.getaddrinfo', return_value=[(2,1,6,'',('93.184.216.34',443))]), patch('website_research.socket.create_connection'), patch('website_research.ssl.create_default_context'), patch('website_research.http.client.HTTPSConnection') as connection:
             response = connection.return_value.getresponse.return_value
             response.status = 200
             response.getheader.return_value = 'text/html'
@@ -304,7 +306,7 @@ class SystemTests(unittest.TestCase):
             self.assertFalse(result['ai'])
 
     def test_research_ai_uses_requested_message_language(self):
-        with patch.dict(app.os.environ, {'OPENAI_API_KEY': 'fixture'}), patch('app.socket.getaddrinfo', return_value=[(2,1,6,'',('93.184.216.34',443))]), patch('app.socket.create_connection'), patch('app.ssl.create_default_context'), patch('app.http.client.HTTPSConnection') as connection, patch('app.ai_service.generate_json', return_value={'offer': 'Dienstleistungen für Unternehmen', 'audience': 'Unternehmen'}) as generate:
+        with patch.dict(app.os.environ, {'OPENAI_API_KEY': 'fixture'}), patch('website_research.socket.getaddrinfo', return_value=[(2,1,6,'',('93.184.216.34',443))]), patch('website_research.socket.create_connection'), patch('website_research.ssl.create_default_context'), patch('website_research.http.client.HTTPSConnection') as connection, patch('app.ai_service.generate_json', return_value={'offer': 'Dienstleistungen für Unternehmen', 'audience': 'Unternehmen'}) as generate:
             response = connection.return_value.getresponse.return_value
             response.status = 200
             response.getheader.return_value = 'text/html'
