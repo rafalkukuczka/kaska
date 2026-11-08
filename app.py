@@ -47,6 +47,7 @@ import project_migration
 import project_scope
 import dashboard_activity
 import reports
+import diagnostics
 
 ROOT = Path(__file__).resolve().parent
 for line in (ROOT / '.env').read_text(encoding='utf-8-sig').splitlines() if (ROOT / '.env').exists() else []:
@@ -57,6 +58,8 @@ DATA = Path(os.getenv('APP_DATA_DIR', str(ROOT / 'data'))).resolve()
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / 'katie.sqlite3'
 PORT = int(os.getenv('APP_PORT', '8787'))
+diagnostics.configure(DATA)
+log_error = diagnostics.log_error
 CSRF = secrets.token_urlsafe(32)
 KEY_FILE = DATA / 'unsubscribe.key'
 if not KEY_FILE.exists():
@@ -64,6 +67,7 @@ if not KEY_FILE.exists():
 SIGNING_KEY = KEY_FILE.read_bytes()
 MAIL_LOCK = threading.Lock()
 CONFIG_LOCK = threading.Lock()
+STOP_WORKERS = threading.Event()
 
 
 @contextmanager
@@ -418,7 +422,8 @@ def proof_points_from_website(item):
             page = library.page(url)
             if content_library.domain(page['url']) == domain:
                 pages.append(page)
-        except Exception:
+        except Exception as exc:
+            log_error('Nie udało się pobrać podstrony firmy', exc)
             pass
         if len(seen) >= 4:
             break
@@ -630,7 +635,8 @@ def send_one():
                 smtp.send_message(mail)
             c.execute("UPDATE messages SET status='sent',sent_at=?,error=NULL WHERE id=?", (time.time(), msg['id']))
             c.commit()
-        except Exception:
+        except Exception as exc:
+            log_error('Błąd wysyłki SMTP dla wiadomości id=%s' % msg['id'], exc)
             c.execute("UPDATE messages SET status='uncertain',error='SMTP nie potwierdził wysyłki. Sprawdź skrzynkę i konfigurację; brak automatycznej ponownej próby.' WHERE id=?", (msg['id'],))
             c.execute("UPDATE campaigns SET status='paused' WHERE id=? AND status='active'", (msg['campaign_id'],))
             c.commit()
@@ -676,23 +682,27 @@ def sync_replies():
 
 
 def reply_worker():
-    while True:
+    while not STOP_WORKERS.is_set():
         try:
             if os.getenv('IMAP_HOST'):
                 sync_replies()
-        except Exception:
+        except Exception as exc:
+            log_error('Błąd synchronizacji odpowiedzi IMAP', exc)
             event('Błąd odczytu odpowiedzi. Sprawdź konfigurację IMAP.')
-        time.sleep(60)
+        STOP_WORKERS.wait(60)
 
 
 def worker():
-    threading.Thread(target=reply_worker,daemon=True,name='mail-replies').start()
-    while True:
+    reply = threading.Thread(target=reply_worker, name='mail-replies')
+    reply.start()
+    while not STOP_WORKERS.is_set():
         try:
             send_one()
-        except Exception:
+        except Exception as exc:
+            log_error('Nieobsłużony błąd kolejki wysyłki', exc)
             event('Błąd kolejki wysyłki. Sprawdź konfigurację SMTP.')
-        time.sleep(5)
+        STOP_WORKERS.wait(5)
+    reply.join()
 
 
 def add_contact(c, item):
@@ -979,7 +989,8 @@ class Handler(BaseHTTPRequestHandler):
             self.respond({'ok': True})
         except (ValueError, KeyError, TypeError, IndexError) as exc:
             self.respond({'error': str(exc)}, 400)
-        except Exception:
+        except Exception as exc:
+            log_error('Nieobsłużony błąd żądania API: %s' % urlparse(self.path).path, exc)
             self.respond({'error': 'Błąd operacji. Sprawdź konfigurację integracji i dostępność usługi.'}, 502)
 
 
@@ -991,6 +1002,13 @@ opportunity_finder = opportunity_discovery.Discovery(db)
 
 if __name__ == '__main__':
     init()
-    threading.Thread(target=worker, daemon=True).start()
+    server = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
+    mail_worker = threading.Thread(target=worker, name='mail-queue')
+    mail_worker.start()
     print(f'Katie: http://localhost:{PORT}', flush=True)
-    ThreadingHTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        STOP_WORKERS.set()
+        server.server_close()
+        mail_worker.join()

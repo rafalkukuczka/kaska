@@ -1,6 +1,7 @@
 """On-demand, project-scoped web research grounded in readable publications."""
 import hashlib
 import json
+import diagnostics
 import re
 import threading
 import time
@@ -319,7 +320,9 @@ class Discovery:
             self.finish(run_id,status,'Wyniki gotowe' if successful else 'Nie udało się wyszukać okazji',warnings,added)
         except Cancelled:self.finish(run_id,'cancelled','Wyszukiwanie zatrzymane',warnings,added)
         except Stale:self.finish(run_id,'stale','Zmieniono kryteria projektu. Uruchom nowe wyszukiwanie.',warnings,added)
-        except Exception:self.finish(run_id,'error','Nie udało się ukończyć wyszukiwania. Zapisane wyniki pozostają dostępne.',warnings,added)
+        except Exception as exc:
+            diagnostics.log_error('Nie udało się ukończyć wyszukiwania okazji id=%s' % run_id, exc)
+            self.finish(run_id,'error','Nie udało się ukończyć wyszukiwania. Zapisane wyniki pozostają dostępne.',warnings,added)
         finally:self.lock.release()
 
     def finish(self,run_id,status,stage,warnings,added):

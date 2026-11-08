@@ -15,6 +15,8 @@ python app.py
 
 Otwórz http://localhost:8787. Kolejne uruchomienia: `python app.py` lub `./start.ps1`. Serwer nasłuchuje wyłącznie na 127.0.0.1. Nie wymaga instalacji zależności ani konta w LeadStrong. Nie uruchamiaj równocześnie kilku instancji na tej samej bazie.
 
+Błędy techniczne aplikacji zapisują się lokalnie do `data/katie.log` (rotacja do trzech plików po 2 MB). Log nie zawiera treści wiadomości ani sekretów integracji. Przy Ctrl+C aplikacja zatrzymuje kolejkę wysyłkową i synchronizację odpowiedzi po zakończeniu bieżącej operacji sieciowej; wiadomości, których wyniku SMTP nie da się potwierdzić, pozostają oznaczone jako niepewne i nie są ponawiane automatycznie.
+
 W Windows możesz dwukrotnie kliknąć **start.bat**. Uruchamia serwer, czeka na gotowość i otwiera przeglądarkę. Jeżeli Kaśka już działa na skonfigurowanym porcie, otwiera istniejącą instancję. Okno uruchomionego serwera pozostaw otwarte; Ctrl+C kończy pracę. Obsługiwane są `APP_PORT` z ustawień i lokalne środowisko `.venv`.
 
 W Odkrywaj można filtrować zapisane okazje według kategorii, potwierdzonej lokalizacji, daty, oceny i decyzji oraz sortować po dopasowaniu lub dacie. Decyzje **Interesuje mnie / Odrzuć / Cofnij decyzję** zapisują się osobno dla projektu; odrzucone okazje są domyślnie ukryte. Filtry i decyzje nie uruchamiają AI. Panel dowodów wskazuje brakujące potwierdzenia. Z firmy mającej aktywne kontakty można przygotować kampanię z wybranymi osobami i ofertą projektu — zapis oraz wysyłka pozostają osobnymi działaniami. Dashboard pokazuje liczniki zadań do przejrzenia. Uruchomienie rzeczywistej wysyłki otwiera podsumowanie nadawcy, odbiorców, wiadomości, harmonogramu i limitów z osobnym potwierdzeniem.

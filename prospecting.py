@@ -1,6 +1,7 @@
 import project_scope
 """Bounded, review-first company discovery, contact verification and draft handoff."""
 import json
+import diagnostics
 import os
 import re
 import threading
@@ -258,6 +259,7 @@ class Prospecting:
                 self.verify(run_id)
             self.update(run_id, status='ready', stage='Wyniki gotowe do przeglądu')
         except Exception as exc:
+            diagnostics.log_error('Nie udało się ukończyć wyszukiwania leadów id=%s' % run_id, exc)
             self.update(run_id, status='error', error=str(exc) if isinstance(exc, ValueError) else 'Nie udało się ukończyć operacji. Zapisane wyniki pozostają dostępne.', stage='Operacja zatrzymana')
         finally:
             self.lock.release()
@@ -507,6 +509,7 @@ class Prospecting:
         try:
             self._generate_drafts(run, rows)
         except Exception as exc:
+            diagnostics.log_error('Nie udało się przygotować szkiców dla wyszukiwania id=%s' % run['id'], exc)
             self._draft_error(run['id'], exc)
         finally:
             self.lock.release()
