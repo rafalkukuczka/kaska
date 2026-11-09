@@ -29,6 +29,7 @@ const assert=require('node:assert/strict');
     assert.equal(await page.locator('.dashboard-welcome').isVisible(),true);
     assert.equal(await page.locator('.dashboard-stats').isVisible(),true);
     assert.equal(await page.evaluate(()=>typeof renderProspecting==='function'&&typeof renderContactsView==='function'),true);
+    assert.equal(await page.evaluate(()=>normalizeWebsite('http://example.com/path')),'https://example.com/path');
     await page.locator('#dashboard-audience').fill('Manufacturers operating in Poland');
     assert.equal(await page.locator('#dashboard-search-form button[type=submit]').isDisabled(),false);
 

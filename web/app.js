@@ -7,6 +7,7 @@ function normalizeWebsite(value){
   if(!address)return '';
   if(address.startsWith('//'))address='https:'+address;
   else if(!/^[a-z][a-z0-9+.-]*:/i.test(address))address='https://'+address;
+  else if(/^http:\/\//i.test(address))address=address.replace(/^http:/i,'https:');
   let parsed;try{parsed=new URL(address)}catch{throw Error('Podaj poprawny adres strony, np. firma.pl.');}
   if(parsed.protocol!=='https:'||!parsed.hostname||parsed.username||parsed.password||/\s/.test(address))throw Error('Podaj publiczny adres HTTPS firmy.');
   return parsed.href;

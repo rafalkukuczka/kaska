@@ -588,6 +588,79 @@ td strong{font-weight:600}
 .discover-company-fit .opportunity-fit { padding: 5px 9px; }
 .discover-company-fit .opportunity-fit strong { font-size: 18px; }
 .campaign-delivery-summary { padding: 16px; border: 1px solid var(--line); border-radius: 10px; margin: 16px 0; }
+.campaign-workspace-top { align-items: flex-start; gap: 22px; }
+.campaign-workspace-top > div:first-child { flex: 1 1 0; min-width: 0; }
+.campaign-workspace-top > div:first-child > h1,
+.campaign-workspace-top > div:first-child > .muted { overflow-wrap: anywhere; }
+.campaign-workspace-actions { flex: 0 0 auto; flex-wrap: nowrap; align-items: flex-start; gap: 8px; }
+.campaign-more { position: relative; flex: 0 0 auto; }
+.campaign-more > summary { display: grid; place-items: center; min-width: 36px; min-height: 36px; border: 1px solid var(--line); border-radius: 7px; color: var(--primary); cursor: pointer; list-style: none; }
+.campaign-more > summary::-webkit-details-marker { display: none; }
+.campaign-more[open] > div { position: absolute; z-index: 5; top: calc(100% + 5px); right: 0; min-width: 190px; padding: 7px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface, #fff); box-shadow: 0 8px 24px #24153a1a; }
+.campaign-more[open] > div > button { display: block; width: 100%; text-align: left; }
+.campaign-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
+.campaign-summary > div { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface, #fff); }
+.campaign-summary > div > strong { font-size: 20px; line-height: 1.25; }
+.campaign-summary > div > span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.campaign-summary .campaign-state { position: relative; justify-content: center; gap: 5px; padding-left: 30px; }
+.campaign-state-dot { position: absolute; top: 19px; left: 15px; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.campaign-state-dot.active { background: var(--success, #238636); }
+.campaign-summary .campaign-state > strong { font-size: 13px; line-height: 1.4; }
+.campaign-summary .campaign-state > small { color: var(--muted); font-size: 11px; }
+.campaign-people { display: grid; gap: 10px; margin-top: 16px; }
+.campaign-person { min-width: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--surface, #fff); }
+.campaign-person > summary { display: grid; grid-template-columns: 18px minmax(150px, 1.2fr) minmax(130px, 1fr) auto auto; align-items: center; gap: 8px 14px; padding: 13px 15px; cursor: pointer; list-style: none; }
+.campaign-person > summary::-webkit-details-marker { display: none; }
+.campaign-person-chevron { color: var(--primary); font-size: 16px; transition: transform .15s; }
+.campaign-person[open] .campaign-person-chevron { transform: rotate(90deg); }
+.campaign-person-identity, .campaign-person-company { display: flex; flex-direction: column; gap: 3px; min-width: 0; line-height: 1.4; overflow-wrap: anywhere; }
+.campaign-person-identity strong { font-size: 13px; }
+.campaign-person-identity small, .campaign-person-company small { color: var(--muted); font-size: 11px; }
+.campaign-person > summary > .badge { justify-self: start; white-space: nowrap; }
+.campaign-person-body { padding: 0 15px 14px 47px; }
+.campaign-person-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 10px; }
+.campaign-person-message { padding: 12px 0; border-top: 1px solid var(--line); }
+.campaign-person-message > div:first-child { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+.campaign-sequence-timeline { display: grid; gap: 10px; }
+.campaign-sequence-condition { display: grid; gap: 5px; margin: 0 0 0 22px; padding: 12px 15px; border-left: 3px solid var(--primary); border-radius: 0 8px 8px 0; background: var(--lavender-soft, #f7f3fe); }
+.campaign-sequence-condition > strong { font-size: 12px; }
+.campaign-sequence-condition > p { margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.campaign-sequence-condition > small { color: var(--muted); font-size: 11px; }
+.campaign-sequence-step { min-width: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--surface, #fff); }
+.campaign-sequence-step > summary { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 12px; padding: 13px 15px; cursor: pointer; list-style: none; }
+.campaign-sequence-step > summary::-webkit-details-marker { display: none; }
+.campaign-step-number { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--lavender-soft, #f1eaff); color: var(--primary); font-size: 12px; font-weight: 600; }
+.campaign-sequence-step > summary > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 16px; min-width: 0; }
+.campaign-sequence-step > summary strong { overflow-wrap: anywhere; }
+.campaign-sequence-step > summary small { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.campaign-sequence-step > .message { margin: 0 15px 14px 57px; padding-top: 12px; border-top: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.campaign-offer { margin-top: 16px; border: 1px solid var(--line); border-radius: 9px; padding: 12px 15px; }
+.campaign-offer > summary { cursor: pointer; font-weight: 600; }
+.campaign-offer > p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.campaign-result-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0 20px; }
+.campaign-result-metrics > div { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 13px 15px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface, #fff); }
+.campaign-result-metrics > div > span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.campaign-result-metrics > div > strong { font-size: 21px; line-height: 1.2; }
+.campaign-status-breakdown { display: grid; gap: 8px; }
+.campaign-status-breakdown > div { display: grid; grid-template-columns: minmax(140px, 210px) minmax(80px, 1fr) 36px; align-items: center; gap: 12px; min-width: 0; }
+.campaign-status-breakdown > div > span { font-size: 12px; line-height: 1.4; }
+.campaign-status-breakdown progress { display: block; width: 100%; height: 9px; accent-color: var(--primary); }
+.campaign-status-breakdown > div > strong { text-align: right; font-size: 12px; }
+@media(max-width:700px) {
+ .campaign-workspace-top { display: grid; grid-template-columns: minmax(0, 1fr); }
+ .campaign-workspace-actions { flex-wrap: wrap; }
+ .campaign-result-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+ .campaign-status-breakdown > div { grid-template-columns: minmax(105px, 1.2fr) minmax(55px, 1fr) 28px; gap: 8px; }
+ .campaign-person > summary { grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px 10px; }
+ .campaign-person-identity { grid-column: 2; grid-row: 1; }
+ .campaign-person-company { grid-column: 2; grid-row: 2; }
+ .campaign-person > summary > .badge:nth-last-child(2) { grid-column: 2; grid-row: 3; }
+ .campaign-person > summary > .badge:last-child { grid-column: 3; grid-row: 3; }
+ .campaign-person-body { padding-left: 15px; }
+ .campaign-sequence-condition { margin-left: 12px; }
+ .campaign-sequence-step > summary { padding: 11px; }
+ .campaign-sequence-step > .message { margin-left: 53px; margin-right: 11px; }
+}
 .campaign-tabs { display: flex; gap: 4px; margin: 24px 0 20px; padding: 0 2px; border-bottom: 1px solid var(--line); overflow-x: auto; }
 .campaign-tabs > [role="tab"] { appearance: none; flex: 0 0 auto; border: 0; border-bottom: 3px solid transparent; border-radius: 8px 8px 0 0; background: transparent; color: var(--muted); padding: 13px 18px; font: inherit; font-size: 13px; cursor: pointer; transition: color .15s, background .15s; }
 .campaign-tabs > [role="tab"]:hover { color: var(--primary); background: var(--lavender-soft); }
@@ -599,4 +672,5 @@ td strong{font-weight:600}
 .campaign-delivery-reasons { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(260px,100%),1fr)); gap: 8px 24px; margin-top: 10px; }
 .campaign-delivery-reasons > div { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
 .message-delivery-reason { color: var(--primary); max-width: 260px; white-space: normal; }
+@media(max-width:700px) { .campaign-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media(max-width:600px) { #discover-opportunities .panel-head { flex-wrap: wrap; } .opportunity-card { padding: 12px; } }
