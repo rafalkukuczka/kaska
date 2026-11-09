@@ -149,6 +149,13 @@ class OpenAITests(unittest.TestCase):
         with patch.dict('os.environ', {'OPENAI_API_KEY': 'sk-test'}), patch('app.ai_service.generate_json', return_value={'subject': 'Hello\r\nAnna', 'body': 'Personalized'}) as generate:
             self.assertEqual(app.ai_copy(contact, campaign, step), ('Hello Anna', 'Personalized'))
             generate.assert_called_once()
+            prompt, inputs, _ = generate.call_args.args
+            self.assertIn('specific benefit', prompt)
+            self.assertIn('low-effort question', prompt)
+            self.assertIn('For a follow-up step (position > 0)', prompt)
+            self.assertIn('selected campaign language', prompt)
+            self.assertEqual(inputs['cta'], campaign.get('cta', ''))
+            self.assertEqual(inputs['cta_url'], campaign.get('cta_url', ''))
             generate.reset_mock()
             self.assertEqual(app.ai_copy(contact, campaign, step, use_ai=False)[0], 'Dla Acme')
             generate.assert_not_called()
