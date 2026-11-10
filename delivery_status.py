@@ -33,7 +33,22 @@ def annotate(c, campaign, messages, now=None):
         if code == 'queued':
             person = contacts.get(message['contact_id'])
             previous = [row for row in by_person.get(message['contact_id'], []) if row['position'] < message['position']]
-            if campaign['status'] != 'active':
+            if campaign['channel'] == 'linkedin':
+                if not person or person['status'] != 'active':code = 'contact_inactive'
+                elif person['simulated']:code = 'simulated_contact'
+                elif not sequence_conditions.matches(campaign['conditions'], person, 0):code = 'condition'
+                elif any(row['status'] != 'sent' for row in previous):code = 'previous_step'
+                elif not sequence_conditions.matches(campaign['conditions'], person, message['position'], message['position']-1):code = 'condition'
+                else:
+                    earliest=message['due']
+                    predecessor=next((row for row in previous if row['position']==message['position']-1),None)
+                    if message['position'] and (not predecessor or predecessor['sent_at'] is None or message['position'] not in steps or predecessor['position'] not in steps):
+                        code='previous_step';earliest=None
+                    else:
+                        if predecessor:earliest=max(earliest,predecessor['sent_at']+(steps[message['position']]-steps[predecessor['position']])*86400)
+                        code='scheduled' if earliest>now else 'ready'
+                        if earliest is not None:next_times.append(max(now,earliest))
+            elif campaign['status'] != 'active':
                 code = 'paused' if campaign['status'] == 'paused' else 'not_started'
             elif simulation and simulation['value'] == 'on':
                 code = 'simulation'

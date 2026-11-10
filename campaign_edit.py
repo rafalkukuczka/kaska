@@ -59,7 +59,11 @@ def save(db,library,mail_lock,ai_copy,item):
         status='paused' if current['status']!='draft' or protected is not None else 'draft'
         c.execute('UPDATE campaigns SET name=?,offer=?,audience=?,status=?,revision=revision+1 WHERE id=?',(item['name'].strip(),item['offer'].strip(),str(item.get('audience','')),status,item['id']))
         c.execute('UPDATE campaigns SET website=?,audience_mode=?,contact_ids=?,material_mode=?,material_ids=?,language=?,cta=?,cta_url=?,pain_points=?,value_props=?,proof_points=? WHERE id=?',extra+(item['id'],))
-        c.execute('UPDATE campaigns SET conditions=?,target_group=?,audience_tags=?,tag_match=? WHERE id=?',(json.dumps(conditions),group,json.dumps(tags),match,item['id']))
+        channel=item.get('channel',current.get('channel','email'))
+        if channel not in ('email','linkedin'):raise ValueError('Nieprawidłowy kanał kampanii')
+        if channel!=current.get('channel','email') and c.execute('SELECT 1 FROM messages WHERE campaign_id=? LIMIT 1',(item['id'],)).fetchone():
+            raise ValueError('Nie można zmienić kanału kampanii po przygotowaniu wiadomości.')
+        c.execute('UPDATE campaigns SET conditions=?,target_group=?,audience_tags=?,tag_match=?,channel=? WHERE id=?',(json.dumps(conditions),group,json.dumps(tags),match,channel,item['id']))
         c.execute('DELETE FROM steps WHERE campaign_id=?',(item['id'],))
         c.executemany('INSERT INTO steps(campaign_id,position,delay_days,subject,body) VALUES(?,?,?,?,?)',[(item['id'],step['position'],step['delay_days'],step['subject'],step['body']) for step in validated])
         updated=dict(c.execute('SELECT * FROM campaigns WHERE id=?',(item['id'],)).fetchone())

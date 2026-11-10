@@ -103,9 +103,16 @@ def init():
         contact_tags.init_schema(c)
         campaign_messages.init_schema(c)
         campaign_edit.init_schema(c)
+        if 'channel' not in {row[1] for row in c.execute('PRAGMA table_info(campaigns)')}:
+            c.execute("ALTER TABLE campaigns ADD COLUMN channel TEXT NOT NULL DEFAULT 'email'")
         campaign_workspace.init_schema(c)
         project_scope.migrate(c)
         feature_retirement.retire_monitoring(c)
+        c.execute('''CREATE TABLE IF NOT EXISTS manual_linkedin_signals(
+            id INTEGER PRIMARY KEY,project_id INTEGER NOT NULL REFERENCES seller_projects(id),
+            company TEXT NOT NULL,person TEXT NOT NULL DEFAULT '',role TEXT NOT NULL DEFAULT '',
+            signal TEXT NOT NULL,source_url TEXT NOT NULL DEFAULT '',created REAL NOT NULL)''')
+        c.execute('CREATE INDEX IF NOT EXISTS manual_linkedin_signals_project ON manual_linkedin_signals(project_id,created DESC)')
         # A process interrupted during SMTP may already have delivered a message.
         c.execute("UPDATE messages SET status='uncertain',error='Przerwano proces podczas wysyłki. Sprawdź skrzynkę przed ponowieniem.' WHERE status='sending'")
 
@@ -351,7 +358,7 @@ def send_one():
         if sent >= int(os.getenv('DAILY_SEND_LIMIT', '50')) or time.time() - last < int(os.getenv('SEND_INTERVAL_SECONDS', '60')):
             return
         eligible = c.execute("""SELECT m.*, t.email,t.company,t.role,p.conditions, p.language FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id
-            WHERE m.status='queued' AND m.deleted=0 AND p.status='active' AND t.status='active' AND t.simulated=0 AND m.due<=?
+            WHERE m.status='queued' AND m.deleted=0 AND p.status='active' AND COALESCE(p.channel,'email')='email' AND t.status='active' AND t.simulated=0 AND m.due<=?
             AND campaign_matches(p.conditions,t.email,t.company,t.role)=1
             AND NOT EXISTS(SELECT 1 FROM messages prev WHERE prev.campaign_id=m.campaign_id AND prev.contact_id=m.contact_id AND prev.position<m.position AND prev.status!='sent')
             AND (m.position=0 OR EXISTS(SELECT 1 FROM messages prev
@@ -508,6 +515,25 @@ class Handler(BaseHTTPRequestHandler):
                     if message['status']=='queued':message['body']=sender_placeholders(message['body'])
                 return self.respond(result)
             except (ValueError,TypeError):return self.respond({'error':'Nie można odczytać strony wiadomości.'},400)
+        if path.path == '/api/linkedin/queue':
+            params=parse_qs(path.query)
+            try:
+                with db() as c:
+                    project_id=project_scope.active(c)
+                    project_scope.contact_pool(c,project_id)
+                    now=time.time()
+                    rows=[dict(r) for r in c.execute("""SELECT m.id,m.campaign_id,m.contact_id,m.position,m.subject,m.body,m.due,p.name AS campaign_name,p.conditions,t.name AS contact_name,t.company,t.email,t.role
+                      FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id
+                      WHERE p.project_id=? AND p.channel='linkedin' AND p.status!='deleted' AND m.status='queued' AND m.deleted=0 AND t.status='active' AND t.simulated=0
+                      AND NOT EXISTS(SELECT 1 FROM messages prev WHERE prev.campaign_id=m.campaign_id AND prev.contact_id=m.contact_id AND prev.position<m.position AND prev.status!='sent')
+                      AND campaign_matches(p.conditions,t.email,t.company,t.role)=1
+                      ORDER BY m.due,m.id LIMIT 500""",(project_id,))]
+                    rows=[row for row in rows if sequence_conditions.matches(row['conditions'],row,row['position'],row['position']-1)]
+                    for row in rows:
+                        row['ready']=row['due']<=now
+                        row.pop('conditions',None);row.pop('email',None);row.pop('role',None)
+                return self.respond({'messages':rows})
+            except (ValueError,TypeError):return self.respond({'error':'Nie można odczytać kolejki LinkedIn.'},400)
         if path.path == '/api/reports':
             try:
                 with db() as c:result=reports.read(c,parse_qs(path.query).get('days',['7'])[0])
@@ -531,6 +557,7 @@ class Handler(BaseHTTPRequestHandler):
                 activity=dashboard_activity.read(c,project_id)
                 actions=dashboard_activity.actions(c,project_id)
                 result={'dashboard_activity':activity,'dashboard_flow':dashboard_activity.flow(c,project_id),'events':[dict(row) for row in c.execute('SELECT * FROM events ORDER BY id DESC LIMIT 2000')]}
+                result['linkedin_signals']=[dict(row) for row in c.execute('SELECT id,company,person,role,signal,source_url,created FROM manual_linkedin_signals WHERE project_id=? ORDER BY created DESC LIMIT 100',(project_id,))]
                 result['dashboard_actions']=actions
                 result['contacts']=[dict(row) for row in c.execute('SELECT * FROM contacts WHERE contact_pool=? ORDER BY id DESC LIMIT 2000',(pool,))]
                 result['replies']=[dict(row) for row in c.execute('SELECT r.*,t.email,t.name AS contact_name FROM replies r JOIN contacts t ON t.id=r.contact_id WHERE t.contact_pool=? AND COALESCE(r.project_id,(SELECT MIN(id) FROM seller_projects WHERE deleted=0))=? ORDER BY r.id DESC LIMIT 2000',(pool,project_id))]
@@ -645,6 +672,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(prospector.post(self.path[len('/api/prospecting/'):], item))
             elif self.path == '/api/preferences':
                 return self.respond(languages.save_preferences(db, item))
+            elif self.path == '/api/linkedin/signals':
+                company=item.get('company','').strip();person=item.get('person','').strip();role=item.get('role','').strip();signal=item.get('signal','').strip();source_url=item.get('source_url','').strip()
+                if not company or len(company)>200 or len(person)>200 or len(role)>200 or not signal or len(signal)>2000:
+                    raise ValueError('Uzupełnij firmę i opis sygnału; sprawdź długość pól.')
+                if source_url:
+                    parsed=urlparse(source_url)
+                    host=(parsed.hostname or '').lower().removesuffix('.')
+                    if parsed.scheme!='https' or not (host=='linkedin.com' or host.endswith('.linkedin.com')) or parsed.username or parsed.password or len(source_url)>2000:
+                        raise ValueError('Link źródłowy musi prowadzić do linkedin.com przez HTTPS.')
+                with db() as c:
+                    project_id=project_scope.active(c)
+                    c.execute('INSERT INTO manual_linkedin_signals(project_id,company,person,role,signal,source_url,created) VALUES(?,?,?,?,?,?,?)',(project_id,company,person,role,signal,source_url,time.time()))
+                    c.execute('INSERT INTO events(created,detail) VALUES(?,?)',(time.time(),'Dodano ręczny sygnał LinkedIn: '+company))
+                return self.respond({'ok':True})
             elif self.path == '/api/ai/refine':
                 return self.respond(refine_text(item))
             elif self.path == '/api/ai/translate-search-brief':
@@ -718,7 +759,9 @@ class Handler(BaseHTTPRequestHandler):
                     extra=library.validate_campaign(c,item)
                     target_group=contact_groups.campaign_group(c,item)
                     audience_tags,tag_match=contact_tags.validate_campaign(c,item)
-                    campaign_id = c.execute('INSERT INTO campaigns(name,offer,audience,created,project_id) VALUES(?,?,?,?,?)', (item['name'], item['offer'], item.get('audience', ''), time.time(),project_scope.active(c))).lastrowid
+                    channel=item.get('channel','email')
+                    if channel not in ('email','linkedin'):raise ValueError('Nieprawidłowy kanał kampanii')
+                    campaign_id = c.execute('INSERT INTO campaigns(name,offer,audience,created,project_id,channel) VALUES(?,?,?,?,?,?)', (item['name'], item['offer'], item.get('audience', ''), time.time(),project_scope.active(c),channel)).lastrowid
                     c.execute('UPDATE campaigns SET website=?,audience_mode=?,contact_ids=?,material_mode=?,material_ids=?,language=?,cta=?,cta_url=?,pain_points=?,value_props=?,proof_points=? WHERE id=?',extra+(campaign_id,))
                     c.execute('UPDATE campaigns SET conditions=? WHERE id=?', (json.dumps(conditions), campaign_id))
                     c.execute('UPDATE campaigns SET target_group=? WHERE id=?',(target_group,campaign_id))
@@ -748,6 +791,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not campaign:
                         raise ValueError('Nie znaleziono kampanii')
                     if item['status'] == 'active':
+                        if campaign['channel']=='linkedin':raise ValueError('LinkedIn korzysta z ręcznej kolejki w rozszerzeniu, nie z automatycznej wysyłki')
                         if 'fingerprint' in item and campaign_workspace.read(db,campaign['id'])['fingerprint']!=item['fingerprint']:
                             raise ValueError('Wiadomości lub odbiorcy zmienili się. Otwórz podsumowanie wysyłki ponownie.')
                         if not smtp_ready():
@@ -766,6 +810,25 @@ class Handler(BaseHTTPRequestHandler):
                     changed = c.execute("UPDATE messages SET subject=?,body=? WHERE id=? AND deleted=0 AND status='queued' AND campaign_id IN (SELECT id FROM campaigns WHERE status!='active')", (item['subject'], item['body'], item['id'])).rowcount
                     if not changed:
                         raise ValueError('Przed edycją wstrzymaj kampanię; edytować można tylko oczekujące wiadomości')
+            elif self.path == '/api/linkedin/sent':
+                message_id=item.get('id')
+                if type(message_id)!=int or message_id<1:raise ValueError('Nieprawidłowa wiadomość')
+                with MAIL_LOCK,db() as c:
+                    row=c.execute("SELECT m.campaign_id FROM messages m JOIN campaigns p ON p.id=m.campaign_id WHERE m.id=? AND p.channel='linkedin' AND p.status!='deleted'",(message_id,)).fetchone()
+                    if not row:raise ValueError('Nie znaleziono wiadomości LinkedIn')
+                    project_scope.require_campaign(c,row['campaign_id'])
+                    candidate=c.execute("SELECT m.position,p.conditions,t.email,t.company,t.role FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id WHERE m.id=?",(message_id,)).fetchone()
+                    if not sequence_conditions.matches(candidate['conditions'],candidate,candidate['position'],candidate['position']-1):raise ValueError('Wiadomość nie spełnia warunków kampanii')
+                    sent_at=time.time()
+                    changed=c.execute("""UPDATE messages AS m SET status='sent',sent_at=?,error=NULL WHERE m.id=? AND m.status='queued' AND m.deleted=0 AND m.due<=?
+                      AND NOT EXISTS(SELECT 1 FROM messages prev WHERE prev.campaign_id=m.campaign_id AND prev.contact_id=m.contact_id AND prev.position<m.position AND prev.status!='sent')""",(sent_at,message_id,sent_at)).rowcount
+                    if not changed:raise ValueError('Ta wiadomość nie jest jeszcze gotowa w kolejce LinkedIn')
+                    current=c.execute('SELECT position FROM messages WHERE id=?',(message_id,)).fetchone()[0]
+                    current_step=c.execute('SELECT delay_days FROM steps WHERE campaign_id=? AND position=?',(row['campaign_id'],current)).fetchone()
+                    next_step=c.execute('SELECT delay_days FROM steps WHERE campaign_id=? AND position=?',(row['campaign_id'],current+1)).fetchone()
+                    if current_step and next_step:
+                        c.execute("UPDATE messages SET due=? WHERE campaign_id=? AND contact_id=(SELECT contact_id FROM messages WHERE id=?) AND position=? AND status='queued'",(sent_at+(next_step[0]-current_step[0])*86400,row['campaign_id'],message_id,current+1))
+                event('Oznaczono wiadomość LinkedIn jako wysłaną ręcznie')
             elif self.path == '/api/sync':
                 sync_replies()
             else:

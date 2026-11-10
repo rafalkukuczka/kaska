@@ -38,6 +38,11 @@ function campaignWorkspaceStatus(c,summary,delivery){
  return summary?.messages?'Wiadomości przygotowane':'Do przygotowania';
 }
 function campaignMainAction(c,w,summary){
+ if(c.channel==='linkedin'){
+  if(!summary)return '<span class="badge gray">Wczytuję kampanię…</span>';
+  if(!summary.messages)return `<button type="button" class="primary" data-action="prepare" data-id="${c.id}">Przygotuj wiadomości LinkedIn</button>`;
+  return '<span class="badge gray">Kolejka LinkedIn dostępna w rozszerzeniu PKEY</span>';
+ }
  const pending=[...backgroundRequests.values()].some(request=>['campaign/prepare','campaign/status','campaign/update'].includes(request.path));
  const disabled=pending||(c.status!=='active'&&(!summary||w.loading||!!w.error||w.data.revision!==c.revision));
  const button=(label,attrs)=>`<button type="button" class="primary" ${attrs} ${disabled?'disabled':''}>${label}</button>`;

@@ -47,7 +47,7 @@ Projekt edytuje się na osobnej stronie **Szczegóły**, dostępnej pod listą p
 
 Wiadomości w kampanii mają paginację z wyborem 10/25/50/100 pozycji. Checkbox **Operacje zbiorcze** włącza wybieranie wiadomości i usuwanie zaznaczonych; wybór pozostaje przy zmianie strony, a checkbox w nagłówku obejmuje tylko bieżącą stronę. Usuwanie wymaga wstrzymania aktywnej kampanii i potwierdzenia. Usunięcie oczekującego kroku anuluje późniejsze oczekujące kroki tej osoby. Rekordy wysłanych wiadomości pozostają w bazie dla historii doręczeń, dopasowania odpowiedzi i limitów wysyłki, a usunięte pozycje znikają z listy.
 
-Kreator ma panel pomocy z działającymi skrótami, edytor sekwencji i podgląd dla wybranego aktywnego kontaktu. Panel pomocy jest przewodnikiem, a nie pozorowanym czatem AI. Podgląd personalizuje szablon bez wywoływania modelu; generowanie AI odbywa się podczas przygotowania wiadomości, jeśli skonfigurowano model. Odpowiedzi i rezygnacje zatrzymują sekwencję; ta wersja nie ma graficznego edytora dowolnych rozgałęzień ani wysyłki LinkedIn.
+Kreator ma panel pomocy z działającymi skrótami, edytor sekwencji i podgląd dla wybranego aktywnego kontaktu. Panel pomocy jest przewodnikiem, a nie pozorowanym czatem AI. Podgląd personalizuje szablon bez wywoływania modelu; generowanie AI odbywa się podczas przygotowania wiadomości, jeśli skonfigurowano model. Odpowiedzi i rezygnacje zatrzymują sekwencję; ta wersja nie ma graficznego edytora dowolnych rozgałęzień.
 
 Niezapisany formularz jest zachowywany w localStorage tej przeglądarki i przywracany po ponownym otwarciu kreatora. Nie jest to szkic zapisany na serwerze. Finalny przycisk zapisuje kampanię w SQLite. Sam zapis nie uruchamia wysyłki.
 
@@ -166,9 +166,13 @@ Interfejs korzysta ze spójnej terminologii PL/EN: kontakty, leady, prospekty, f
 
 Przy tworzeniu kampanii w kroku **Odbiorcy** wybierz **Z grupy docelowej** i wskaż grupę kontaktów. Kreator pokazuje liczbę aktywnych osób i ogranicza do nich listę podglądu. Grupa zapisuje się w szkicu oraz kampanii; przygotowanie wiadomości obejmuje jej aktywnych członków w chwili generowania. Pusta lub nieistniejąca grupa nie zastępuje wyboru całą bazą. Osoby wstrzymane i wypisane są pomijane. Zapis kampanii nie uruchamia wysyłki.
 
+### Ręczna kolejka LinkedIn
+
+W ustawieniach kampanii wybierz kanał **LinkedIn**. Po przygotowaniu wiadomości otwórz kartę **Kolejka Katie** w panelu rozszerzenia PKEY Outreach (serwer Katie działa pod `http://localhost:8787`). Skopiuj wiadomość, wyślij ją ręcznie w LinkedIn, a po powrocie do rozszerzenia oznacz ją jako wysłaną. Kolejne kroki pojawiają się po upływie ustawionego odstępu od oznaczonej wysyłki. Ten kanał nie używa SMTP ani automatycznej wysyłki.
+
 Gotowe: CRUD w zakresie dodawania i wstrzymywania kontaktów, import CSV, sekwencje, edycja spersonalizowanych szkiców, opcjonalne OpenAI API, kolejka SMTP, limity, IMAP i zatrzymanie po odpowiedzi, rezygnacje, dziennik zdarzeń oraz trwała baza.
 
-Do rozbudowy według potrzeb: automatyczne wyszukiwanie i wzbogacanie leadów, LinkedIn, integracja CRM, OAuth poczty, kalendarz i rezerwacja spotkań, konta zespołu, wdrożenie serwerowe oraz obsługa dużych baz. Ta wersja nie udaje tych integracji.
+Do rozbudowy według potrzeb: pełna integracja LinkedIn przez zatwierdzone API, integracja CRM, OAuth poczty, kalendarz i rezerwacja spotkań, konta zespołu, wdrożenie serwerowe oraz obsługa dużych baz.
 ## Uzupełnianie kontaktów z wielu źródeł
 
 W Leadach przepływ obejmuje ofertę i kryteria projektu, wyszukanie firm w Hunter Discover, uzupełnienie kontaktów, ocenę dopasowania oraz weryfikację adresów w Hunter. Kampania i zapis do Kontaktów wymagają oddzielnej decyzji użytkownika.
