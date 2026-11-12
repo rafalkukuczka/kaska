@@ -6,6 +6,7 @@ import contact_groups
 import contact_tags
 import project_scope
 import sequence_conditions
+import manual_interaction
 
 
 def init_schema(c):
@@ -60,10 +61,17 @@ def save(db,library,mail_lock,ai_copy,item):
         c.execute('UPDATE campaigns SET name=?,offer=?,audience=?,status=?,revision=revision+1 WHERE id=?',(item['name'].strip(),item['offer'].strip(),str(item.get('audience','')),status,item['id']))
         c.execute('UPDATE campaigns SET website=?,audience_mode=?,contact_ids=?,material_mode=?,material_ids=?,language=?,cta=?,cta_url=?,pain_points=?,value_props=?,proof_points=? WHERE id=?',extra+(item['id'],))
         channel=item.get('channel',current.get('channel','email'))
-        if channel not in ('email','linkedin'):raise ValueError('Nieprawidłowy kanał kampanii')
-        if channel!=current.get('channel','email') and c.execute('SELECT 1 FROM messages WHERE campaign_id=? LIMIT 1',(item['id'],)).fetchone():
-            raise ValueError('Nie można zmienić kanału kampanii po przygotowaniu wiadomości.')
-        c.execute('UPDATE campaigns SET conditions=?,target_group=?,audience_tags=?,tag_match=?,channel=? WHERE id=?',(json.dumps(conditions),group,json.dumps(tags),match,channel,item['id']))
+        if channel not in ('email','linkedin','manual'):raise ValueError('Nieprawidłowy kanał kampanii')
+        scenarios=manual_interaction.validate_scenarios(item.get('manual_scenarios',current.get('manual_scenarios','[]')))
+        if channel=='manual' and not scenarios:raise ValueError('Dodaj co najmniej jeden scenariusz Manual interaction.')
+        old_channel=current.get('channel','email')
+        if channel!=old_channel:
+            if old_channel=='linkedin' and channel=='manual':
+                if c.execute("SELECT 1 FROM messages WHERE campaign_id=? AND status IN ('sending','uncertain') LIMIT 1",(item['id'],)).fetchone():
+                    raise ValueError('Przed przejściem na Manual interaction sprawdź wiadomości w trakcie wysyłki lub z niepotwierdzoną wysyłką.')
+            elif c.execute('SELECT 1 FROM messages WHERE campaign_id=? LIMIT 1',(item['id'],)).fetchone():
+                raise ValueError('Nie można zmienić kanału kampanii po przygotowaniu wiadomości.')
+        c.execute('UPDATE campaigns SET conditions=?,target_group=?,audience_tags=?,tag_match=?,channel=?,manual_scenarios=? WHERE id=?',(json.dumps(conditions),group,json.dumps(tags),match,channel,json.dumps(scenarios,ensure_ascii=False),item['id']))
         c.execute('DELETE FROM steps WHERE campaign_id=?',(item['id'],))
         c.executemany('INSERT INTO steps(campaign_id,position,delay_days,subject,body) VALUES(?,?,?,?,?)',[(item['id'],step['position'],step['delay_days'],step['subject'],step['body']) for step in validated])
         updated=dict(c.execute('SELECT * FROM campaigns WHERE id=?',(item['id'],)).fetchone())

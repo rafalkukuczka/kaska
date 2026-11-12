@@ -4,6 +4,8 @@ import contact_tags
 import campaign_messages
 import campaign_edit
 import campaign_workspace
+import manual_interaction
+import manual_agent
 import discover_contacts
 import hashlib
 import hmac
@@ -103,6 +105,7 @@ def init():
         contact_tags.init_schema(c)
         campaign_messages.init_schema(c)
         campaign_edit.init_schema(c)
+        manual_interaction.init_schema(c)
         if 'channel' not in {row[1] for row in c.execute('PRAGMA table_info(campaigns)')}:
             c.execute("ALTER TABLE campaigns ADD COLUMN channel TEXT NOT NULL DEFAULT 'email'")
         campaign_workspace.init_schema(c)
@@ -534,6 +537,35 @@ class Handler(BaseHTTPRequestHandler):
                         row.pop('conditions',None);row.pop('email',None);row.pop('role',None)
                 return self.respond({'messages':rows})
             except (ValueError,TypeError):return self.respond({'error':'Nie można odczytać kolejki LinkedIn.'},400)
+        if path.path == '/api/manual-interaction/queue':
+            try:
+                with db() as c:
+                    project_id=project_scope.active(c)
+                    rows=[dict(r) for r in c.execute("""SELECT m.id,m.campaign_id,m.contact_id,m.position,m.subject,m.body,m.due,
+                      p.name AS campaign_name,p.status AS campaign_status,p.conditions,p.manual_scenarios,
+                      p.offer,p.audience,p.audience_tags,p.audience_mode,p.target_group AS campaign_target_group,
+                      p.website,p.cta,p.cta_url,p.language,p.pain_points,p.value_props,p.proof_points,
+                      t.name AS contact_name,t.company,t.email,t.role,t.notes,t.tags,t.target_group
+                      FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id
+                      WHERE p.project_id=? AND p.channel='manual' AND p.status IN ('active','paused') AND m.status='queued' AND m.deleted=0
+                      AND t.status='active' AND t.simulated=0
+                      AND NOT EXISTS(SELECT 1 FROM messages prev WHERE prev.campaign_id=m.campaign_id AND prev.contact_id=m.contact_id AND prev.position<m.position AND prev.status!='sent')
+                      AND campaign_matches(p.conditions,t.email,t.company,t.role)=1
+                      ORDER BY m.due,m.id LIMIT 500""",(project_id,))]
+                    now=time.time(); result=[]
+                    for row in rows:
+                        if not sequence_conditions.matches(row['conditions'],row,row['position'],row['position']-1):continue
+                        scenarios=manual_interaction.validate_scenarios(row['manual_scenarios'])
+                        row['ready']=row['due']<=now
+                        row['scenarios']=scenarios
+                        row['variables']=manual_interaction.runtime_variables(row,row,row['subject'],row['body'])
+                        for field in (*manual_interaction.CAMPAIGN_FIELDS,'audience_tags','audience_mode',
+                                      'campaign_target_group','notes','tags','target_group'):
+                            row.pop(field)
+                        row.pop('conditions',None);row.pop('manual_scenarios',None)
+                        result.append(row)
+                return self.respond({'messages':result})
+            except (ValueError,TypeError):return self.respond({'error':'Nie można odczytać kolejki Manual interaction.'},400)
         if path.path == '/api/reports':
             try:
                 with db() as c:result=reports.read(c,parse_qs(path.query).get('days',['7'])[0])
@@ -577,6 +609,7 @@ class Handler(BaseHTTPRequestHandler):
             result['preferences'] = languages.preferences(db)
             result['languages'] = languages.LANGUAGES
             result['data_simulation'] = languages.data_simulation(db)
+            result['manual_interaction_variables'] = manual_interaction.VARIABLE_NAMES
             result['contact_groups'] = contact_groups.names(db)
             result['contact_tags'] = contact_tags.names(db)
             result['tag_catalog'] = contact_tags.state(db)
@@ -597,6 +630,7 @@ class Handler(BaseHTTPRequestHandler):
             '/contacts.js': ('contacts.js', 'text/javascript'),
             '/prospecting-ui.js': ('prospecting-ui.js', 'text/javascript'),
             '/builder.js': ('builder.js', 'text/javascript'),
+            '/manual-interaction-builder.js': ('manual-interaction-builder.js', 'text/javascript'),
             '/builder.css': ('builder.css', 'text/css'),
             '/theme.css': ('theme.css', 'text/css'),
             '/style.css': ('style.css', 'text/css'),
@@ -694,6 +728,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(suggest_audience(item))
             elif self.path == '/api/ai/step-prompt':
                 return self.respond(step_prompt(item))
+            elif self.path == '/api/ai/manual-interaction':
+                return self.respond(manual_interaction.generate_actions(item.get('instructions'),item.get('domain'),item.get('message_example','')))
+            elif self.path == '/api/ai/manual-agent':
+                return self.respond(manual_agent.next_action(item))
             elif self.path == '/api/ai/selling-points':
                 return self.respond(selling_points(item))
             elif self.path == '/api/ai/proof-points':
@@ -705,14 +743,19 @@ class Handler(BaseHTTPRequestHandler):
                 conditions = sequence_conditions.validate(item.get('conditions', []))
                 with db() as c:
                     library.validate_campaign(c,item)
-                    contact=c.execute("SELECT * FROM contacts WHERE id=? AND status='active'",(int(item['preview_contact_id']),)).fetchone()
+                    contact_id=int(item['preview_contact_id'])
+                    if item.get('channel')=='manual':project_scope.require_contact(c,contact_id)
+                    contact=c.execute("SELECT * FROM contacts WHERE id=? AND status='active'",(contact_id,)).fetchone()
                 if not contact:raise ValueError('Wybierz aktywny kontakt do podglądu')
                 if not sequence_conditions.matches(conditions, contact,int(item.get('preview_step',0))):raise ValueError('Wybrany kontakt nie spełnia warunków sekwencji.')
                 campaign=dict(item)
                 campaign['material_ids']=json.dumps(item.get('material_ids',[]))
                 subject,body=ai_copy(contact,campaign,item['steps'][int(item.get('preview_step',0))],use_ai=False)
                 material=library.select(contact,campaign)
-                return self.respond({'subject':subject,'body':body,'material':material,'ai':False})
+                preview={'subject':subject,'body':body,'material':material,'ai':False}
+                if item.get('channel')=='manual':
+                    preview['manual_variables']=manual_interaction.runtime_variables(contact,campaign,subject,body)
+                return self.respond(preview)
             elif self.path == '/api/research':
                 return self.respond(research_website(str(item['url']), item.get('language')))
             elif self.path == '/api/integrations/gmail':
@@ -760,8 +803,10 @@ class Handler(BaseHTTPRequestHandler):
                     target_group=contact_groups.campaign_group(c,item)
                     audience_tags,tag_match=contact_tags.validate_campaign(c,item)
                     channel=item.get('channel','email')
-                    if channel not in ('email','linkedin'):raise ValueError('Nieprawidłowy kanał kampanii')
-                    campaign_id = c.execute('INSERT INTO campaigns(name,offer,audience,created,project_id,channel) VALUES(?,?,?,?,?,?)', (item['name'], item['offer'], item.get('audience', ''), time.time(),project_scope.active(c),channel)).lastrowid
+                    if channel not in ('email','linkedin','manual'):raise ValueError('Nieprawidłowy kanał kampanii')
+                    scenarios=manual_interaction.validate_scenarios(item.get('manual_scenarios',[]))
+                    if channel=='manual' and not scenarios:raise ValueError('Dodaj co najmniej jeden scenariusz Manual interaction.')
+                    campaign_id = c.execute('INSERT INTO campaigns(name,offer,audience,created,project_id,channel,manual_scenarios) VALUES(?,?,?,?,?,?,?)', (item['name'], item['offer'], item.get('audience', ''), time.time(),project_scope.active(c),channel,json.dumps(scenarios,ensure_ascii=False))).lastrowid
                     c.execute('UPDATE campaigns SET website=?,audience_mode=?,contact_ids=?,material_mode=?,material_ids=?,language=?,cta=?,cta_url=?,pain_points=?,value_props=?,proof_points=? WHERE id=?',extra+(campaign_id,))
                     c.execute('UPDATE campaigns SET conditions=? WHERE id=?', (json.dumps(conditions), campaign_id))
                     c.execute('UPDATE campaigns SET target_group=? WHERE id=?',(target_group,campaign_id))
@@ -794,7 +839,7 @@ class Handler(BaseHTTPRequestHandler):
                         if campaign['channel']=='linkedin':raise ValueError('LinkedIn korzysta z ręcznej kolejki w rozszerzeniu, nie z automatycznej wysyłki')
                         if 'fingerprint' in item and campaign_workspace.read(db,campaign['id'])['fingerprint']!=item['fingerprint']:
                             raise ValueError('Wiadomości lub odbiorcy zmienili się. Otwórz podsumowanie wysyłki ponownie.')
-                        if not smtp_ready():
+                        if campaign['channel']=='email' and not smtp_ready():
                             raise ValueError('Skonfiguruj SMTP w pliku .env i uruchom ponownie aplikację')
                         if not c.execute('SELECT 1 FROM messages WHERE campaign_id=? AND deleted=0', (item['id'],)).fetchone():
                             raise ValueError('Najpierw przygotuj i sprawdź wiadomości')
@@ -810,25 +855,27 @@ class Handler(BaseHTTPRequestHandler):
                     changed = c.execute("UPDATE messages SET subject=?,body=? WHERE id=? AND deleted=0 AND status='queued' AND campaign_id IN (SELECT id FROM campaigns WHERE status!='active')", (item['subject'], item['body'], item['id'])).rowcount
                     if not changed:
                         raise ValueError('Przed edycją wstrzymaj kampanię; edytować można tylko oczekujące wiadomości')
-            elif self.path == '/api/linkedin/sent':
+            elif self.path in ('/api/linkedin/sent','/api/manual-interaction/complete'):
                 message_id=item.get('id')
                 if type(message_id)!=int or message_id<1:raise ValueError('Nieprawidłowa wiadomość')
+                expected_channel='linkedin' if self.path=='/api/linkedin/sent' else 'manual'
                 with MAIL_LOCK,db() as c:
-                    row=c.execute("SELECT m.campaign_id FROM messages m JOIN campaigns p ON p.id=m.campaign_id WHERE m.id=? AND p.channel='linkedin' AND p.status!='deleted'",(message_id,)).fetchone()
-                    if not row:raise ValueError('Nie znaleziono wiadomości LinkedIn')
+                    allowed_status="p.status IN ('active','paused')" if expected_channel=='manual' else "p.status='active'"
+                    row=c.execute(f"SELECT m.campaign_id FROM messages m JOIN campaigns p ON p.id=m.campaign_id WHERE m.id=? AND p.channel=? AND {allowed_status}",(message_id,expected_channel)).fetchone()
+                    if not row:raise ValueError('Nie znaleziono aktywnego zadania kampanii')
                     project_scope.require_campaign(c,row['campaign_id'])
                     candidate=c.execute("SELECT m.position,p.conditions,t.email,t.company,t.role FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id WHERE m.id=?",(message_id,)).fetchone()
                     if not sequence_conditions.matches(candidate['conditions'],candidate,candidate['position'],candidate['position']-1):raise ValueError('Wiadomość nie spełnia warunków kampanii')
                     sent_at=time.time()
                     changed=c.execute("""UPDATE messages AS m SET status='sent',sent_at=?,error=NULL WHERE m.id=? AND m.status='queued' AND m.deleted=0 AND m.due<=?
                       AND NOT EXISTS(SELECT 1 FROM messages prev WHERE prev.campaign_id=m.campaign_id AND prev.contact_id=m.contact_id AND prev.position<m.position AND prev.status!='sent')""",(sent_at,message_id,sent_at)).rowcount
-                    if not changed:raise ValueError('Ta wiadomość nie jest jeszcze gotowa w kolejce LinkedIn')
+                    if not changed:raise ValueError('To zadanie nie jest jeszcze gotowe w kolejce')
                     current=c.execute('SELECT position FROM messages WHERE id=?',(message_id,)).fetchone()[0]
                     current_step=c.execute('SELECT delay_days FROM steps WHERE campaign_id=? AND position=?',(row['campaign_id'],current)).fetchone()
                     next_step=c.execute('SELECT delay_days FROM steps WHERE campaign_id=? AND position=?',(row['campaign_id'],current+1)).fetchone()
                     if current_step and next_step:
                         c.execute("UPDATE messages SET due=? WHERE campaign_id=? AND contact_id=(SELECT contact_id FROM messages WHERE id=?) AND position=? AND status='queued'",(sent_at+(next_step[0]-current_step[0])*86400,row['campaign_id'],message_id,current+1))
-                event('Oznaczono wiadomość LinkedIn jako wysłaną ręcznie')
+                event('Zakończono ręczne zadanie w rozszerzeniu' if expected_channel=='manual' else 'Oznaczono wiadomość LinkedIn jako wysłaną ręcznie')
             elif self.path == '/api/sync':
                 sync_replies()
             else:

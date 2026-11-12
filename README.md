@@ -180,3 +180,7 @@ W Leadach przepływ obejmuje ofertę i kryteria projektu, wyszukanie firm w Hunt
 Opcjonalne Apollo podłączysz w Integracjach. Hunter jest pierwszym dostawcą kontaktów; Apollo wypełnia tylko brakujące miejsca w limicie osób na firmę. Klucz Apollo wymaga uprawnień `mixed_people/api_search` i `people/match`. Uzupełnianie może zużywać kredyty; liczba prób wzbogacenia na firmę jest ograniczona do liczby brakujących kontaktów. Integracja nie uruchamia dodatkowego waterfall po stronie Apollo, pobierania prywatnych adresów ani telefonów. Dokumentacja API: [wyszukiwanie](https://docs.apollo.io/reference/people-api-search), [uzupełnianie](https://docs.apollo.io/reference/people-enrichment).
 
 Mechanizm działa także przy szukaniu kontaktów w Odkrywaj. Wyniki zachowują źródła i są deduplikowane według adresu email. W Leadach kontakty obecne w puli projektu są pomijane. Przebieg uzupełniania oraz błędy dostawców można rozwinąć nad wynikami. Awaria dodatkowego źródła nie usuwa znalezionych osób. Deklaracja dostawcy o poprawnym adresie nie zastępuje weryfikacji Hunter; niezweryfikowane kontakty pozostają wstrzymane po imporcie.
+
+# Manual interaction
+
+Campaigns can queue generic browser workflows for the Katie Outreach Chrome extension. Configure a per-domain scenario in the campaign, generate and review its bounded action plan with the connected AI integration, prepare and activate the campaign, then run queued tasks from the extension on the active page or an extension-managed tab. See [MANUAL-INTERACTION.md](MANUAL-INTERACTION.md).

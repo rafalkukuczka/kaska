@@ -27,6 +27,7 @@ function campaignWorkspaceData(w){
 function campaignWorkspaceStatus(c,summary,delivery){
  if(c.status==='active'){
   if(monitoringSimulation)return 'Symulacja w toku';
+  if(c.channel==='manual')return summary?.counts.queued?'Kolejka rozszerzenia aktywna':'Brak oczekujących zadań';
   if(summary?.counts.sending)return 'Wysyłka w toku';
   if(summary?.counts.uncertain)return 'Wymaga uwagi';
   if(summary?.messages&&!summary.counts.queued)return 'Brak wiadomości do wysłania';
@@ -42,6 +43,15 @@ function campaignMainAction(c,w,summary){
   if(!summary)return '<span class="badge gray">Wczytuję kampanię…</span>';
   if(!summary.messages)return `<button type="button" class="primary" data-action="prepare" data-id="${c.id}">Przygotuj wiadomości LinkedIn</button>`;
   return '<span class="badge gray">Kolejka LinkedIn dostępna w rozszerzeniu PKEY</span>';
+ }
+ if(c.channel==='manual'){
+  if(c.status==='active'&&summary&&!(summary.counts.queued||0))return '<span class="badge gray">Brak oczekujących zadań</span>';
+  if(c.status==='active')return `<button type="button" class="secondary" data-action="campaign-status" data-id="${c.id}" data-status="paused">Wstrzymaj scenariusze</button>`;
+  if(!summary)return '<span class="badge gray">Wczytuję kampanię…</span>';
+  if(!summary.messages)return `<button type="button" class="primary" data-action="prepare" data-id="${c.id}">Przygotuj zadania</button>`;
+  if(!campaignHasReview(w))return '<button type="button" class="primary" data-campaign-review>Sprawdź zadania</button>';
+  if(!(summary.counts.queued||0))return '<span class="badge gray">Brak zadań w kolejce</span>';
+  return `<button type="button" class="primary" data-action="campaign-status" data-id="${c.id}" data-status="active">Uruchom kolejkę w rozszerzeniu</button>`;
  }
  const pending=[...backgroundRequests.values()].some(request=>['campaign/prepare','campaign/status','campaign/update'].includes(request.path));
  const disabled=pending||(c.status!=='active'&&(!summary||w.loading||!!w.error||w.data.revision!==c.revision));
@@ -92,6 +102,13 @@ async function showCampaignPreflight(id){
  if(!response.ok)throw Error(data.error);
  if(projectId!==state.seller_project.id)return;
  const campaign=state.campaigns.find(c=>c.id===id);if(!campaign)return;
+ if(campaign.channel==='manual'){
+  const blocked=!data.summary.counts.queued||data.summary.counts.uncertain;
+  const scenarios=campaign.manual_scenarios?JSON.parse(campaign.manual_scenarios):[];
+  modal(`<h2>Uruchom Manual interaction</h2><p data-no-translate>${esc(campaign.name)}</p><dl class="preflight-summary"><dt>Odbiorcy z zadaniami</dt><dd>${data.summary.prepared_recipients}</dd><dt>Oczekujące zadania</dt><dd>${data.summary.counts.queued||0}</dd><dt>Scenariusze stron</dt><dd>${scenarios.map(s=>esc(s.domain)).join(', ')||'Brak'}</dd><dt>Tryby kart</dt><dd>Bieżąca karta i karty zarządzane przez rozszerzenie</dd></dl><p class="hint">Rozszerzenie wykonuje scenariusze po uruchomieniu na karcie. CAPTCHA, MFA i nieoczekiwane strony zatrzymają zadanie do ręcznej obsługi.</p><p class="error" role="alert" data-preflight-error></p><div class="actions"><button type="button" class="primary" data-confirm-send ${blocked?'disabled':''}>Potwierdź i udostępnij kolejkę rozszerzeniu</button><button type="button" class="secondary close">Anuluj</button></div>`);
+  $('[data-confirm-send]').onclick=event=>run(event.currentTarget,async()=>{try{await api('campaign/status',{id,status:'active',fingerprint:data.fingerprint});$('#modal').close();await refresh();toast('Kolejka Manual interaction uruchomiona')}catch(error){if($('[data-preflight-error]'))$('[data-preflight-error]').textContent=error.message;throw error}});
+  syncLanguages();return;
+ }
  const blocked=!state.integrations.smtp||!data.summary.counts.queued||data.summary.counts.uncertain;
  modal(`<h2>Sprawdź przed wysyłką</h2><p data-no-translate>${esc(campaign.name)}</p><dl class="preflight-summary"><dt>Nadawca</dt><dd data-no-translate>${esc(state.integrations.sender_name||'')} &lt;${esc(state.integrations.sender||'')}&gt;</dd><dt>Odbiorcy z wiadomościami</dt><dd>${data.summary.prepared_recipients}</dd><dt>Oczekujące wiadomości</dt><dd>${data.summary.counts.queued||0}</dd><dt>Pomijane lub zatrzymane wiadomości</dt><dd>${data.summary.counts.cancelled||0}</dd><dt>Limit dzienny / odstęp</dt><dd>${data.delivery.daily_limit} / ${data.delivery.interval_seconds} <span>sekund</span></dd></dl><h3>Harmonogram sekwencji</h3>${data.steps.map(step=>`<p><span>Dzień wysyłki</span> ${step.delay_days}: <span data-no-translate>${esc(step.subject)}</span></p>`).join('')}<p class="hint">Terminy kolejnych kroków liczone są od faktycznej wysyłki poprzedniej wiadomości. Limity obejmują wszystkie projekty.</p><details><summary>Przykładowe wiadomości</summary>${data.recipients.slice(0,3).flatMap(person=>person.messages.slice(0,1).map(message=>`<article class="preflight-message"><strong data-no-translate>${esc(person.email)} · ${esc(message.subject)}</strong><p class="message" data-no-translate>${esc(message.body)}</p></article>`)).join('')}</details>${!state.integrations.smtp?'<p class="error">Podłącz pocztę w Integracjach.</p>':''}${data.summary.counts.uncertain?'<p class="error">Sprawdź niepotwierdzone wysyłki w skrzynce przed wznowieniem.</p>':''}<p class="hint">Sprawdź poprawność adresów, treści i wybranych odbiorców. Odpowiedzi zatrzymują dalsze kroki.</p><p class="error" role="alert" data-preflight-error></p><div class="actions"><button type="button" class="primary" data-confirm-send ${blocked?'disabled':''}>Potwierdź i uruchom wysyłkę</button><button type="button" class="secondary close">Anuluj</button></div>`);
  $('[data-confirm-send]').onclick=event=>run(event.currentTarget,async()=>{

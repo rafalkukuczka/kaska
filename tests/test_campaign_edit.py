@@ -61,6 +61,35 @@ class CampaignEditTests(unittest.TestCase):
             self.assertEqual(dict(c.execute('SELECT * FROM messages WHERE id=?',(sent['id'],)).fetchone()),sent)
             self.assertEqual(c.execute('SELECT COUNT(*) FROM (SELECT contact_id,position FROM messages GROUP BY contact_id,position HAVING COUNT(*)>1)').fetchone()[0],0)
 
+    def test_linkedin_can_switch_to_manual_without_rewriting_confirmed_history(self):
+        with app.db() as c:
+            c.execute("UPDATE campaigns SET channel='linkedin',status='paused' WHERE id=1")
+        app.prepare(1)
+        item=self.item()
+        item.update(channel='manual', manual_scenarios=[{
+            'domain':'linkedin.com', 'start_url':'https://www.linkedin.com/feed/',
+            'instructions':'Sprawdź stronę', 'actions':[{'type':'waitFor','selector':'main'}],
+        }])
+        for pending in ('sending','uncertain'):
+            with self.subTest(pending=pending):
+                with app.db() as c:
+                    c.execute('UPDATE messages SET status=? WHERE campaign_id=1 AND position=0',(pending,))
+                with self.assertRaisesRegex(ValueError,'niepotwierdzoną wysyłką'):
+                    self.save(item)
+                self.assertEqual(self.item()['channel'],'linkedin')
+        with app.db() as c:
+            c.execute("UPDATE messages SET status='sent',sent_at=? WHERE campaign_id=1 AND position=0",(time.time(),))
+            before=[dict(row) for row in c.execute('SELECT * FROM messages WHERE campaign_id=1 ORDER BY position')]
+
+        self.assertEqual(self.save(item)['status'],'paused')
+
+        with app.db() as c:
+            campaign=c.execute('SELECT channel,manual_scenarios FROM campaigns WHERE id=1').fetchone()
+            self.assertEqual(campaign['channel'],'manual')
+            self.assertEqual(json.loads(campaign['manual_scenarios'])[0]['domain'],'linkedin.com')
+            after=[dict(row) for row in c.execute('SELECT * FROM messages WHERE campaign_id=1 ORDER BY position')]
+            self.assertEqual(after,before)
+
     def test_stale_revision_invalid_steps_and_foreign_project_do_not_change_campaign(self):
         item=self.item();self.save(item)
         with self.assertRaises(ValueError):self.save(item)

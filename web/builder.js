@@ -25,6 +25,7 @@ function openCampaignBuilder(editing=null){
     <section data-stage="3" hidden><span class="section-label">04 / USTAWIENIA</span><h1>Sprawdź, zanim ruszysz.</h1><p class="muted">Zapisz kampanię jako szkic, przygotuj wiadomości i sprawdź je przed wysyłką.</p><label for="build-channel">Kanał wysyłki</label><select id="build-channel" name="channel"><option value="email">E-mail · kolejka SMTP</option><option value="linkedin">LinkedIn · kolejka do ręcznej wysyłki</option></select><p class="hint">Wiadomości LinkedIn pojawią się w panelu rozszerzenia PKEY. Wyślij je ręcznie w LinkedIn, a potem oznacz jako wysłane.</p><div id="builder-summary"></div><div class="builder-checks"><p>✓ Zatrzymanie sekwencji po odpowiedzi i rezygnacji</p><p>✓ Sprawdzenie wiadomości przed wysyłką</p><p>${state.integrations.smtp?'✓ Poczta wychodząca jest skonfigurowana':'○ Poczta wymaga podłączenia w Integracjach'}</p></div><button class="primary" type="submit">Zapisz szkic kampanii</button></section>
     <div class="builder-footer"><button type="button" class="secondary" data-builder="prev">Wstecz</button><span id="builder-stage-count">Krok 1 z 4</span><button type="button" class="primary" data-builder="next">Zapisz i przejdź dalej →</button></div>
   </form><section class="builder-preview"><div class="builder-pitch-visual" aria-hidden="true"><div class="cradle"><i></i><i></i><i></i><i></i><i></i></div></div><div class="preview-heading"><span class="section-label">PODGLĄD DLA ODBIORCY</span><span class="badge gray">Szkic</span></div><label for="preview-contact">Kontakt</label><select id="preview-contact">${contacts.map(c=>`<option value="${c.id}">${esc(c.name)} · ${esc(c.company)}</option>`).join('')||'<option value="">Brak aktywnych kontaktów</option>'}</select><label for="preview-step">Krok sekwencji</label><select id="preview-step"><option value="0">Pierwsza wiadomość</option></select><button class="secondary" data-builder="preview">↻ Odśwież podgląd</button><div id="builder-preview-content"><div class="preview-art"><span>✉</span></div><h2>Dobry kontekst.<br>Lepsza rozmowa.</h2><p>Uzupełnij ofertę i sekwencję, aby zobaczyć wiadomość dla konkretnej osoby.</p></div><p class="hint">Podgląd personalizuje szablon. Generowanie przez AI, jeśli podłączone, następuje podczas przygotowania wiadomości.</p></section></div>`;
+  mountManualInteractionBuilder();
   bindSellingPoints($('#campaign-form'));bindWebsiteActions($('#campaign-form'));
   addStep();decorateBuilderSteps();
   if(editing){const c=editing.campaign;restoreBuilder({...c,steps:editing.steps,contact_ids:JSON.parse(c.contact_ids),material_ids:JSON.parse(c.material_ids),audience_tags:JSON.parse(c.audience_tags),conditions:JSON.parse(c.conditions)});$('#campaign-form').insertAdjacentHTML('afterbegin','<p class="notice campaign-edit-notice">Zapis zmian wstrzyma aktywną kampanię. Wysłane kroki pozostają zablokowane. Zmienione oczekujące wiadomości zostaną odświeżone według szablonów. Po zmianie szkicu przygotuj wiadomości ponownie.</p>');$('.builder-top .section-label').textContent=translateUiText('EDYCJA KAMPANII');document.querySelector('[data-builder=save-draft]').textContent=translateUiText('Zapisz zmiany');$('#campaign-form [type=submit]').textContent=translateUiText('Zapisz zmiany')}
@@ -145,24 +146,49 @@ function decorateBuilderSteps(){
 async function previewBuilderStep(step){
  const form=$('#campaign-form'),projectId=state.seller_project.id,index=[...form.querySelectorAll('.step')].indexOf(step);
  if(index<0)return;
- const data=builderData(),selected=new Set(data.contact_ids);
+ const data=builderData(),selected=new Set(data.contact_ids),manual=data.channel==='manual';
  const options=[...$('#preview-contact').options].filter(option=>option.value&&(data.audience_mode!=='selected'||selected.has(Number(option.value))));
- modal(`<section data-step-preview><h2><span>Podgląd wiadomości</span> · ${index+1}</h2><label for="step-preview-contact">Kontakt</label><select id="step-preview-contact">${options.map(option=>`<option value="${esc(option.value)}" ${option.value===$('#preview-contact').value?'selected':''} data-no-translate>${esc(option.textContent)}</option>`).join('')}</select><button type="button" class="secondary" data-step-preview-refresh>Odśwież podgląd</button><p class="hint" data-step-preview-status role="status"></p><div data-step-preview-message></div></section>`);
- const host=$('[data-step-preview]'),contact=host.querySelector('select'),status=host.querySelector('[data-step-preview-status]'),message=host.querySelector('[data-step-preview-message]');let request=0;
- if(!options.length){contact.disabled=true;host.querySelector('button').disabled=true;status.textContent=translateUiText('Brak aktywnych kontaktów');return}
+ const scenarios=manual&&!hasManualScenarioInEditor()?manualScenarioDrafts:[];
+ const simulationControls=manual?`<section id="manual-send-simulation">
+  ${scenarios.length>1?`<label for="manual-simulation-scenario">Scenariusz</label><select id="manual-simulation-scenario">${scenarios.map((scenario,i)=>`<option value="${i}" data-no-translate>${esc(scenario.domain)}</option>`).join('')}</select>`:''}
+  <button type="button" class="secondary" data-step-preview-simulate disabled>${manualSendSimulationLabel}</button>
+  </section>`:'';
+ $('#modal-content').innerHTML=`<section data-step-preview><h2><span>Podgląd wiadomości</span> · ${index+1}</h2><label for="step-preview-contact">Kontakt</label><select id="step-preview-contact">${options.map(option=>`<option value="${esc(option.value)}" ${option.value===$('#preview-contact').value?'selected':''} data-no-translate>${esc(option.textContent)}</option>`).join('')}</select><button type="button" class="secondary" data-step-preview-refresh>Odśwież podgląd</button><p class="hint" data-step-preview-status role="status"></p><div data-step-preview-message></div>${simulationControls}</section>`;
+ $('#modal').showModal();
+ const host=$('[data-step-preview]'),contact=host.querySelector('select'),status=host.querySelector('[data-step-preview-status]'),message=host.querySelector('[data-step-preview-message]');
+ const refreshButton=host.querySelector('[data-step-preview-refresh]'),simulateButton=host.querySelector('[data-step-preview-simulate]');
+ const scenarioPicker=host.querySelector('#manual-simulation-scenario');
+ let request=0,preview=null,sendingSimulation=false;
+ if(!options.length){contact.disabled=true;refreshButton.disabled=true;status.textContent=translateUiText('Brak aktywnych kontaktów');return}
+ const sendSimulation=async()=>{
+  if(!preview||sendingSimulation)return;
+  sendingSimulation=true;
+  simulateButton.disabled=true;
+  try{
+   const scenario=hasManualScenarioInEditor()?readManualScenarioForm():scenarios[Number(scenarioPicker?.value??0)];
+   if(!scenario)throw Error('Dodaj scenariusz w ustawieniach kampanii.');
+   await sendManualSendSimulation(scenario,preview.recipient,preview.body,preview.variables);
+   toast('Rozszerzenie uruchomiło symulację.');
+  }catch(error){toast(error.message)}
+  finally{sendingSimulation=false;simulateButton.disabled=!preview}
+ };
+ if(simulateButton)simulateButton.onclick=sendSimulation;
  const load=async()=>{
   const token=++request;status.textContent=translateUiText('Wczytuję podgląd…');message.replaceChildren();
+  preview=null;
+  if(simulateButton)simulateButton.disabled=true;
   try{
    if(!step.isConnected||$('#campaign-form')!==form||state.seller_project.id!==projectId)return;
-   const current=builderData(),position=[...form.querySelectorAll('.step')].indexOf(step);
+   const current=builderData(),position=[...form.querySelectorAll('.step')].indexOf(step),recipient=builderContacts().find(item=>String(item.id)===contact.value);
    const result=await api('campaign/preview',{...current,preview_contact_id:contact.value,preview_step:position});
    if(!host.isConnected||!$('#modal').open||request!==token)return;
    status.textContent='';
    message.innerHTML=`<div class="mail-preview"><div><span>Temat</span><strong data-no-translate>${esc(result.subject)}</strong></div><p data-no-translate>${esc(result.body)}</p></div>${result.material?`<div class="preview-material"><strong data-no-translate>${esc(result.material.title)}</strong><small data-no-translate>${esc(result.material.url)}</small></div>`:''}`;
+   if(recipient){preview={recipient,body:result.body,variables:result.manual_variables};if(simulateButton)simulateButton.disabled=sendingSimulation}
    syncLanguages();
   }catch(error){if(host.isConnected&&request===token)status.textContent=error.message}
  };
- contact.onchange=load;host.querySelector('button').onclick=event=>run(event.currentTarget,load);await load();
+ contact.onchange=load;refreshButton.onclick=event=>run(event.currentTarget,load);await load();
 }
 function showBuilderStage(stage){
  builderStep=Math.max(0,Math.min(3,stage));renderAssistantButtons();renderSequenceMap();$('.builder-preview').dataset.stageIndex=builderStep;document.querySelectorAll('[data-stage]').forEach(s=>s.hidden=Number(s.dataset.stage)!==builderStep);
@@ -188,6 +214,18 @@ document.addEventListener('click',e=>{
   if(action==='prev')showBuilderStage(builderStep-1);
   if(action==='import-project')importCampaignProject();
   if(action==='step-preview')await previewBuilderStep(b.closest('.step'));
+  if(action==='manual-simulation'){
+   const position=Number($('#preview-step').value),contactId=$('#preview-contact').value;
+   const fromEditor=hasManualScenarioInEditor();
+   if(!fromEditor&&manualScenarioDrafts.length>1){await previewBuilderStep($('#steps').children[position]);return}
+   const scenario=fromEditor?readManualScenarioForm():manualScenarioDrafts[0];
+   if(!scenario)throw Error('Dodaj scenariusz w ustawieniach kampanii.');
+   const recipient=builderContacts().find(item=>String(item.id)===contactId);
+   if(!recipient)throw Error('Dodaj aktywny kontakt do podglądu');
+   const result=await api('campaign/preview',{...builderData(),preview_contact_id:contactId,preview_step:position});
+   await sendManualSendSimulation(scenario,recipient,result.body,result.manual_variables);
+   toast('Rozszerzenie uruchomiło symulację.');
+  }
   if(action==='website-shortcut')await assistantPitch('website');
   if(action==='materials-shortcut')await assistantPitch('stories');
   if(action==='preview-shortcut'){showBuilderStage(2);$('#preview-contact').focus()}
