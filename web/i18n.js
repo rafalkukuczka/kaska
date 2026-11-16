@@ -2,6 +2,14 @@
 let uiLanguage='pl';
 try{uiLanguage=localStorage.getItem('kaska-ui-language')==='en'?'en':'pl'}catch{}
 const uiEnglish={
+ 'Firmy':'Companies', 'Kontakty, kwalifikacja i sygnały sprzedażowe w bieżącym projekcie.':'Contacts, qualification and sales signals in the current project.',
+ 'Szukaj po nazwie lub domenie':'Search by name or domain', 'Wczytuję firmy…':'Loading companies…',
+ 'Dopasowanie kontaktów':'Contact fit', 'Sygnały z ostatnich 30 dni':'Signals in the last 30 days',
+ 'Brak firm':'No companies', 'Firmy pojawią się po zapisaniu kontaktów albo po wyszukiwaniu w Leadach lub Odkrywaj.':'Save contacts or run a search in Leads or Discover to see companies here.',
+ 'Brak oceny':'Not assessed', 'Sygnały aktualnej potrzeby':'Recent signals of need', 'Kontakty i oceny z Leadów':'Contacts and lead assessments',
+ 'W kontaktach':'Saved contact', 'Kandydat':'Candidate', 'Dopasowany':'Matched', 'Do sprawdzenia':'To review',
+ 'Odrzucony':'Rejected', 'Interesujący':'Interesting', 'Brak kontaktów.':'No contacts.', 'Sygnały z Odkrywaj':'Signals from Discover',
+ 'Brak zapisanych sygnałów.':'No saved signals.',
  'Kategoria':'Category', 'Wszystkie kategorie':'All categories', 'Okres':'Period', 'Ostatnie 14 dni':'Last 14 days',
  'Kraj / lokalizacja':'Country / location', 'np. Niemcy, Berlin':'e.g. Germany, Berlin', 'Minimalne dopasowanie':'Minimum fit', 'Dowolne':'Any',
  'Decyzja':'Decision', 'Nowe i interesujące':'New and interesting', 'Nowe':'New', 'Interesuje mnie':'Interested', 'Odrzucone':'Rejected', 'Odrzuć':'Reject',
@@ -728,7 +736,7 @@ document.addEventListener('change',e=>{
 document.addEventListener('DOMContentLoaded',()=>applyUiLanguage(uiLanguage));
 window.addEventListener('hashchange',()=>{
   const next=location.hash.slice(1);
-  if(['dashboard','discover','prospecting','contacts','campaigns','signals','inbox','library','reports','settings','administration','project'].includes(next)){
+  if(['dashboard','discover','prospecting','companies','contacts','campaigns','signals','inbox','library','reports','settings','administration','project'].includes(next)){
     view=next;selectedCampaign=null;render();
   }
 });

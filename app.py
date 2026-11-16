@@ -5,6 +5,7 @@ import campaign_messages
 import campaign_edit
 import campaign_workspace
 import manual_interaction
+import company_workspace
 import manual_agent
 import discover_contacts
 import hashlib
@@ -505,6 +506,15 @@ class Handler(BaseHTTPRequestHandler):
         if not self.valid_host():
             return self.respond({'error': 'Nieprawidłowy host'}, 403)
         path = urlparse(self.path)
+        if path.path == '/api/companies':
+            key = parse_qs(path.query).get('key', [None])[0]
+            try:
+                with db() as c:
+                    c.execute('BEGIN')
+                    result = company_workspace.read(c, key)
+                return self.respond(result)
+            except ValueError as error:
+                return self.respond({'error': str(error)}, 400)
         if path.path == '/api/campaign/workspace':
             params=parse_qs(path.query)
             try:return self.respond(campaign_workspace.read(db,params.get('campaign_id',['0'])[0],params.get('page',['1'])[0],params.get('page_size',['25'])[0]))
@@ -631,6 +641,7 @@ class Handler(BaseHTTPRequestHandler):
             '/prospecting-ui.js': ('prospecting-ui.js', 'text/javascript'),
             '/builder.js': ('builder.js', 'text/javascript'),
             '/manual-interaction-builder.js': ('manual-interaction-builder.js', 'text/javascript'),
+            '/company-workspace.js': ('company-workspace.js', 'text/javascript'),
             '/builder.css': ('builder.css', 'text/css'),
             '/theme.css': ('theme.css', 'text/css'),
             '/style.css': ('style.css', 'text/css'),

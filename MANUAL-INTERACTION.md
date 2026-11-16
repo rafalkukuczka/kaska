@@ -13,6 +13,10 @@ Manual interaction campaigns are authored in Katie and run from the **Manual int
 
 Choose **Agent AI** instead of **Zapisane kroki** to run from the scenario description. The agent sends visible control labels, short page context and the contact's name, company and role to the configured AI integration. The extension inserts prepared subject and body values locally. The simulation stops before sending. For a live send, the agent requires an explicit sending instruction, the matching recipient and the prepared message in the open composer. Agent runs are limited to 25 decisions.
 
+Example goal for **Agent AI**:
+
+> Wyszukaj `{{contact_name}} {{company}}` i otwórz profil pasującej osoby. Skrócone nazwisko traktuj jako wskazówkę do otwarcia profilu. Przed rozpoczęciem kontaktu sprawdź pełne nazwisko i firmę. Wybierz akcję otwarcia wiadomości do tej osoby. Jeśli jej nie widać, otwórz menu dodatkowych akcji i odczytaj dostępne pozycje. Po otwarciu formularza w bieżącej lub nowej karcie sprawdź odbiorcę, wpisz `{{subject}}` i `{{message}}`, a następnie kliknij akcję wysłania. Jeśli strona jeszcze się zmienia, poczekaj na nowe kontrolki. Przy niejednoznacznym wyniku wskaż, czego brakuje do potwierdzenia odbiorcy.
+
 The scenario editor lists the supported variables. Contact data includes `{{contact_name}}` (also `{{name}}`), `{{first_name}}`, `{{last_name}}`, `{{email}}`, `{{company}}`, `{{role}}`, `{{notes}}`, `{{tags}}`, and `{{target_group}}`. The first word of the full name supplies `{{first_name}}` and the rest supplies `{{last_name}}`.
 
 The optional `text` field in `waitFor` and `click` matches a visible label inside the selected element. For LinkedIn profile links selected by `[href*="/in/"]` in search results or suggestions, the extension defaults to `{{contact_name}}`. When several profiles share the name, it compares the visible result rows by exact company match, matching campaign audience tags, word overlap with the campaign audience description and tags, and role match, in that order. The run stops if the top profiles still tie.
