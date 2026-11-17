@@ -132,7 +132,7 @@ function requestManualQueue(command,campaignId,messageId){
   const timer=setTimeout(()=>{
    window.removeEventListener('message',receive);
    reject(Error('Brak odpowiedzi Kaśka Outreach. Sprawdź rozszerzenie i odśwież kartę.'));
-  },5000);
+  },command==='login'?45000:5000);
   window.addEventListener('message',receive);
   window.postMessage({type:'KATIE_MANUAL_QUEUE_REQUEST',id,command,campaignId,messageId,csrf:state.csrf},origin);
  });
@@ -255,11 +255,13 @@ function renderManualQueueRuns(campaignId,runs){
   rows.delete(task.id);
   const tileStatus=task.failed===true?'error':task.status;
   if(row.dataset.status!==tileStatus)row.dataset.status=tileStatus;
-  const status=[translateUiText(labels[task.status]||''),task.dryRun?translateUiText('Próba'):''].filter(Boolean).join(' · ');
+  const status=[translateUiText(labels[task.status]||''),task.dryRun?translateUiText('Próba'):'',
+   task.headless?translateUiText('Tryb headless'):''].filter(Boolean).join(' · ');
   const summary=manualQueueRunSummary(task);
   const [head,detail,countdown,progress,progressDetails,summaryLine,actions]=row.children;
   const [contact,statusLine]=head.children;
-  for(const [element,value] of [[contact,task.contactName||''],[statusLine,status],[detail,task.detail||''],[summaryLine,summary]]){
+  const description=[task.detail,task.headless?translateUiText('Przeglądarka nie jest widoczna.'):''].filter(Boolean).join(' ');
+  for(const [element,value] of [[contact,task.contactName||''],[statusLine,status],[detail,description],[summaryLine,summary]]){
    if(element.textContent!==value)element.textContent=value;
   }
   summaryLine.hidden=!summary;
@@ -274,7 +276,8 @@ function renderManualQueueRuns(campaignId,runs){
    else updateManualProgress(progress,'Postęp zadania',task.status==='running'?undefined:Number(task.status==='done'),1);
   }
   const buttons=`
-   ${task.tabId!==undefined?`<button class="secondary" data-manual-queue-command="open" data-message-id="${task.id}">Otwórz kartę</button>`:''}
+   ${!task.headless&&task.tabId!==undefined?`<button class="secondary" data-manual-queue-command="open" data-message-id="${task.id}">Otwórz kartę</button>`:''}
+   ${task.headless&&['paused','needs_review'].includes(task.status)?`<button class="secondary" data-manual-queue-command="login" data-message-id="${task.id}">Zaloguj się w profilu headless</button>`:''}
    ${task.status==='paused'?`<button class="primary" data-manual-queue-command="resume" data-message-id="${task.id}">Wznów zadanie</button>`:''}
    ${task.dryRun&&['needs_review','done'].includes(task.status)?`<button class="secondary" data-manual-queue-command="resume" data-message-id="${task.id}">Ponów próbę</button>`:''}
    ${task.status==='needs_review'&&!task.dryRun?`<button class="secondary" data-manual-queue-command="complete" data-message-id="${task.id}">Oznacz jako wysłane</button>`:''}`;
@@ -289,6 +292,7 @@ async function manualQueueAction(command,campaignId,messageId){
   const result=await requestManualQueue(command,campaignId,messageId);
   if(command==='start')toast(result.count?`Zadania przekazane do kolejki: ${result.count}.`:'Brak nowych gotowych zadań.');
   if(command==='resume'&&!result.count)toast('Zadanie nie jest gotowe do wznowienia.');
+  if(command==='login')toast('Po zalogowaniu zamknij okno Chrome i wznów zadanie.');
   renderManualQueueRuns(campaignId,result.runs);
  }finally{
   if(command==='pause')await refresh();

@@ -27,7 +27,7 @@ function hasManualScenarioInEditor(){
 }
 
 function manualScenarioFieldValues(){
- return [...['domain','start-url','mode','instructions','actions','max-requests','page-wait'].map(key=>$('#manual-'+key).value),$('#manual-dry-run').checked];
+ return [...['domain','start-url','mode','instructions','actions','max-requests','page-wait'].map(key=>$('#manual-'+key).value),$('#manual-dry-run').checked,$('#manual-headless').checked];
 }
 
 function hasUnappliedManualScenario(){
@@ -45,17 +45,18 @@ function readManualScenarioForm(){
  const instructions=$('#manual-instructions').value.trim();
  if(instructions.length<5)throw Error('Opisz, co ma zrobić scenariusz (minimum 5 znaków).');
  const dry_run=$('#manual-dry-run').checked;
+ const headless=$('#manual-headless').checked;
  if($('#manual-mode').value==='agent'){
   const agent_max_requests=$('#manual-max-requests').valueAsNumber;
   if(!Number.isSafeInteger(agent_max_requests)||agent_max_requests<1)throw Error('Limit wywołań agenta musi być dodatnią liczbą całkowitą.');
   const agent_page_wait_seconds=$('#manual-page-wait').valueAsNumber;
   if(!Number.isSafeInteger(agent_page_wait_seconds)||agent_page_wait_seconds<1||agent_page_wait_seconds>maxManualAgentPageWait)throw Error('Podaj prawidłowy czas oczekiwania na stronę w pełnych sekundach.');
-  return {domain,start_url:startUrl.href,instructions,mode:'agent',actions:[],dry_run,agent_max_requests,agent_page_wait_seconds};
+  return {domain,start_url:startUrl.href,instructions,mode:'agent',actions:[],dry_run,headless,agent_max_requests,agent_page_wait_seconds};
  }
  let actions;
  try{actions=JSON.parse($('#manual-actions').value)}catch{throw Error('Podaj kroki scenariusza w poprawnym JSON.');}
  if(!Array.isArray(actions)||!actions.length)throw Error('Dodaj kroki scenariusza.');
- return {domain,start_url:startUrl.href,instructions,actions,dry_run};
+ return {domain,start_url:startUrl.href,instructions,actions,dry_run,headless};
 }
 
 function manualScenarioEditorActions(domain,actions){
@@ -77,7 +78,7 @@ function sendManualSendSimulation(scenario,contact,body,variables){
  const simulation={
   scenario,
   contact:{name:contact.name??'',email:contact.email??'',company:contact.company??'',role:contact.role??''},
-  body,variables,csrf:scenario.mode==='agent'?state.csrf:undefined
+  body,variables,csrf:state.csrf
  };
  return new Promise((resolve,reject)=>{
   const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive)};
@@ -90,7 +91,7 @@ function sendManualSendSimulation(scenario,contact,body,variables){
   const timer=setTimeout(()=>{
    cleanup();
    reject(Error('Brak odpowiedzi z rozszerzenia Kaśka Outreach. Sprawdź, czy jest włączone, i odśwież kartę Kaśki.'));
-  },5000);
+ },scenario.headless===false?5000:45000);
   window.addEventListener('message',receive);
   window.postMessage({type:'KATIE_MANUAL_SIMULATION_REQUEST',id,simulation},origin);
  });
@@ -130,6 +131,7 @@ function mountManualInteractionBuilder(){
    <p class="hint" id="manual-mode-hint"></p>
    <div class="manual-run-settings">
     <label class="check manual-dry-run"><input id="manual-dry-run" type="checkbox" checked aria-describedby="manual-dry-run-hint"> Próba (dry run)</label>
+    <label class="check"><input id="manual-headless" type="checkbox" checked aria-describedby="manual-headless-hint"> Tryb headless</label>
     <div id="manual-agent-settings" hidden>
      <div>
       <label for="manual-max-requests">Limit wywołań agenta</label>
@@ -142,6 +144,7 @@ function mountManualInteractionBuilder(){
     </div>
    </div>
    <p class="hint" id="manual-dry-run-hint">Próba przygotowuje wiadomość, pomija wysłanie i zostawia zadanie w kolejce.</p>
+   <p class="hint" id="manual-headless-hint">W trybie headless Chrome działa w osobnym profilu bez widocznego okna.</p>
    <label for="manual-instructions">Co ma zrobić scenariusz?</label>
    <textarea id="manual-instructions" rows="4" maxlength="6000" placeholder="Otwórz wyszukiwanie. Znajdź kontakt po imieniu, nazwisku i firmie. Otwórz formularz wiadomości i uzupełnij temat oraz treść."></textarea>
    <div id="manual-steps-editor">
@@ -245,7 +248,7 @@ function mountManualInteractionBuilder(){
  function renderManualScenarioList(){
   list.innerHTML=manualScenarioDrafts.map((item,index)=>`
    <article class="signal-card">
-    <div class="panel-head"><strong data-no-translate>${esc(item.domain)}</strong><span><span>${item.mode==='agent'?'Agent AI':'Zapisane kroki'}</span> · <span>${item.dry_run===false?'Wysyłka':'Próba'}</span></span></div>
+    <div class="panel-head"><strong data-no-translate>${esc(item.domain)}</strong><span><span>${item.mode==='agent'?'Agent AI':'Zapisane kroki'}</span> · <span>${item.dry_run===false?'Wysyłka':'Próba'}</span>${item.headless!==false?' · <span>Tryb headless</span>':''}</span></div>
     <p class="hint" data-no-translate>${esc(item.start_url)}</p>
     <div class="actions">
      <button type="button" class="secondary" data-scenario-action="edit" data-index="${index}" aria-controls="manual-scenario-form" aria-expanded="false">Edytuj</button>
@@ -265,6 +268,7 @@ function mountManualInteractionBuilder(){
   $('#manual-instructions').value=item?.instructions||'';
   $('#manual-mode').value=item?.mode||'steps';
   $('#manual-dry-run').checked=item?.dry_run!==false;
+  $('#manual-headless').checked=item?.headless!==false;
   $('#manual-max-requests').value=item?.agent_max_requests??defaultManualAgentMaxRequests;
   $('#manual-page-wait').value=item?.agent_page_wait_seconds??defaultManualAgentPageWait;
   $('#manual-actions').value=item?JSON.stringify(item.actions||[],null,2):'';

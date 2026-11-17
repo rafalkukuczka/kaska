@@ -5,6 +5,7 @@ import campaign_messages
 import campaign_edit
 import campaign_workspace
 import manual_interaction
+import manual_headless
 import company_workspace
 import manual_agent
 import discover_contacts
@@ -57,6 +58,7 @@ for line in (ROOT / '.env').read_text(encoding='utf-8-sig').splitlines() if (ROO
         os.environ.setdefault(key.strip(), value.strip())
 DATA = Path(os.getenv('APP_DATA_DIR', str(ROOT / 'data'))).resolve()
 DATA.mkdir(parents=True, exist_ok=True)
+headless_browser = manual_headless.HeadlessBrowser(ROOT, DATA)
 DB = DATA / 'katie.sqlite3'
 PORT = int(os.getenv('APP_PORT', '8787'))
 diagnostics.configure(DATA)
@@ -694,6 +696,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond({'error': 'Odśwież stronę aplikacji'}, 403)
         try:
             item = json.loads(self.rfile.read(size))
+            if self.path == '/api/manual-interaction/headless':
+                return self.respond(headless_browser.request(item))
             with db() as c:project_scope.guard_request(c,self.path,item)
             if self.path == '/api/admin/tags':
                 with MAIL_LOCK:return self.respond(contact_tags.manage(db,item))

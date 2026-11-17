@@ -132,12 +132,16 @@ class CampaignEditTests(unittest.TestCase):
                     'instructions': 'Sprawdź stronę', 'mode': 'agent'}
         item.update(channel='manual', manual_scenarios=[scenario])
         self.save(item)
-        self.assertEqual(json.loads(self.item()['manual_scenarios'])[0]['agent_page_wait_seconds'], 120)
+        stored = json.loads(self.item()['manual_scenarios'])[0]
+        self.assertEqual(stored['agent_page_wait_seconds'], 120)
+        self.assertIs(stored['headless'], True)
 
         item = self.item()
-        item['manual_scenarios'] = [{**scenario, 'agent_page_wait_seconds': 45}]
+        item['manual_scenarios'] = [{**scenario, 'agent_page_wait_seconds': 45, 'headless': False}]
         self.save(item)
-        self.assertEqual(json.loads(self.item()['manual_scenarios'])[0]['agent_page_wait_seconds'], 45)
+        stored = json.loads(self.item()['manual_scenarios'])[0]
+        self.assertEqual(stored['agent_page_wait_seconds'], 45)
+        self.assertIs(stored['headless'], False)
 
         for invalid in (False, 0, 2.5, '120', 2_147_484):
             with self.subTest(invalid=invalid):

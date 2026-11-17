@@ -9,7 +9,13 @@ Manual interaction campaigns are authored in Katie and run from the **Manual int
 3. Use **Zbuduj kroki z AI**, review the generated JSON action plan and its equivalent JavaScript preview, and correct selectors for that site. To submit a LinkedIn search with Enter, use `fill` followed by `pressEnter` with the same search input selector.
 4. Add the scenario. Repeat for other domains, then save the campaign.
 5. Prepare the campaign tasks, review them, and activate the queue.
-6. In Katie Outreach, open **Manual interaction**, choose a task and scenario, then run it on the active tab or in a managed tab.
+6. Start the queue from the campaign in Katie. Its status appears in **Kolejka scenariuszy** and the extension's **Manual interaction** tab.
+
+## Headless Chrome
+
+**Tryb headless** is enabled by default next to **Próba (dry run)**. Katie starts a separate Chrome process without a visible window. Install the local browser runtime with `npm ci` in the Katie folder. It uses the installed Chrome and requires Node.js 20 or later. Set `KATIE_HEADLESS_CHROME_PATH` if Chrome is installed in a custom location.
+
+The headless browser keeps its own sign-in session in the Katie data folder. If a task needs sign-in, click **Zaloguj się w profilu headless** on the stopped task, sign in in the Chrome window, then close the window before resuming the task. Disable **Tryb headless** in a scenario to run it in a visible tab in Katie Outreach's Chrome session.
 
 Choose **Agent AI** instead of **Zapisane kroki** to run from the scenario description. The agent sends visible control labels, short page context and the contact's name, company and role to the configured AI integration. The extension inserts prepared subject and body values locally. The simulation stops before sending. For a live send, the agent requires an explicit sending instruction, the matching recipient and the prepared message in the open composer. Agent runs are limited to 25 decisions.
 

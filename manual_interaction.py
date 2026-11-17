@@ -89,9 +89,12 @@ def validate_scenarios(value):
         dry_run = scenario.get('dry_run', True)
         if not isinstance(dry_run, bool):
             raise ValueError('Próba musi być włączona albo wyłączona.')
+        headless = scenario.get('headless', True)
+        if not isinstance(headless, bool):
+            raise ValueError('Tryb headless musi być włączony albo wyłączony.')
         actions = [] if mode == 'agent' else validate_actions(scenario.get('actions', []))
         item = {'domain': domain, 'start_url': start_url, 'instructions': instructions.strip(),
-                'actions': actions, 'dry_run': dry_run}
+                'actions': actions, 'dry_run': dry_run, 'headless': headless}
         if mode == 'agent':
             item['mode'] = mode
             max_requests = scenario.get('agent_max_requests', DEFAULT_AGENT_MAX_REQUESTS)
