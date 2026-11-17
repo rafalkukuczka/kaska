@@ -40,7 +40,16 @@ function openCampaignBuilder(editing=null){
   $('#build-language').dataset.previousLanguage=$('#build-language').value;
   $('#build-language').onchange=changeBuilderLanguage;
   $('#project-picker').onchange=e=>{const p=state.library.projects.find(p=>p.website===e.target.value);if(p){$('#company-url').value=p.website;$('#build-offer').value=p.offer;renderBuilderMaterials();persistBuilder()}};
-  $('#campaign-form').onsubmit=e=>{e.preventDefault();if(builderStep!==3){showBuilderStage(builderStep+1);return}run(e.submitter,async()=>{const data=builderData(),edited=builderEditing?.campaign;await api(edited?'campaign/update':'campaigns',edited?{...data,id:edited.id,project_id:edited.project_id,revision:edited.revision}:data);localStorage.removeItem(builderDraftKey());if(edited&&monitoringSimulation){const runs=fetchedSimulation().deliveryRuns;if(runs?.[edited.id]){delete runs[edited.id];saveSimulationResults()}}builderEditing=null;view='campaigns';selectedCampaign=edited?.id||null;await refresh();toast(edited?translateUiText('Zapisano zmiany kampanii. Wysyłka nie została uruchomiona.'):'Kampania zapisana jako szkic. Przygotuj i sprawdź wiadomości.')})};
+  $('#campaign-form').onsubmit=e=>{
+   e.preventDefault();
+   if(builderStep!==3){showBuilderStage(builderStep+1);return}
+   if(hasUnappliedManualScenario()){
+    $('#manual-scenario-title').focus();
+    toast('Najpierw zastosuj zmiany scenariusza lub anuluj edycję.');
+    return;
+   }
+   run(e.submitter,async()=>{const data=builderData(),edited=builderEditing?.campaign;await api(edited?'campaign/update':'campaigns',edited?{...data,id:edited.id,project_id:edited.project_id,revision:edited.revision}:data);localStorage.removeItem(builderDraftKey());if(edited&&monitoringSimulation){const runs=fetchedSimulation().deliveryRuns;if(runs?.[edited.id]){delete runs[edited.id];saveSimulationResults()}}builderEditing=null;view='campaigns';selectedCampaign=edited?.id||null;await refresh();toast(edited?translateUiText('Zapisano zmiany kampanii. Wysyłka nie została uruchomiona.'):'Kampania zapisana jako szkic. Przygotuj i sprawdź wiadomości.')})
+  };
   $('#builder-campaign-title').textContent=$('#build-name').value||'Nowa kampania';
   updateRecipientHint();renderBuilderMaterials();showBuilderStage(0);
 }

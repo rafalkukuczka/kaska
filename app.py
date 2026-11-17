@@ -549,6 +549,10 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError,TypeError):return self.respond({'error':'Nie można odczytać kolejki LinkedIn.'},400)
         if path.path == '/api/manual-interaction/queue':
             try:
+                campaign_id = parse_qs(path.query).get('campaign_id', [None])[0]
+                campaign_id = int(campaign_id) if campaign_id is not None else None
+                message_id = parse_qs(path.query).get('message_id', [None])[0]
+                message_id = int(message_id) if message_id is not None else None
                 with db() as c:
                     project_id=project_scope.active(c)
                     rows=[dict(r) for r in c.execute("""SELECT m.id,m.campaign_id,m.contact_id,m.position,m.subject,m.body,m.due,
@@ -558,10 +562,13 @@ class Handler(BaseHTTPRequestHandler):
                       t.name AS contact_name,t.company,t.email,t.role,t.notes,t.tags,t.target_group
                       FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id
                       WHERE p.project_id=? AND p.channel='manual' AND p.status IN ('active','paused') AND m.status='queued' AND m.deleted=0
+                      AND (? IS NULL OR p.id=?)
+                      AND (? IS NULL OR m.id=?)
                       AND t.status='active' AND t.simulated=0
                       AND NOT EXISTS(SELECT 1 FROM messages prev WHERE prev.campaign_id=m.campaign_id AND prev.contact_id=m.contact_id AND prev.position<m.position AND prev.status!='sent')
                       AND campaign_matches(p.conditions,t.email,t.company,t.role)=1
-                      ORDER BY m.due,m.id LIMIT 500""",(project_id,))]
+                      ORDER BY m.due,m.id LIMIT ?""",(project_id,campaign_id,campaign_id,message_id,message_id,
+                                                       -1 if campaign_id is not None else 500))]
                     now=time.time(); result=[]
                     for row in rows:
                         if not sequence_conditions.matches(row['conditions'],row,row['position'],row['position']-1):continue

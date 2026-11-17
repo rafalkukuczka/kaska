@@ -46,12 +46,12 @@ function campaignMainAction(c,w,summary){
  }
  if(c.channel==='manual'){
   if(c.status==='active'&&summary&&!(summary.counts.queued||0))return '<span class="badge gray">Brak oczekujących zadań</span>';
-  if(c.status==='active')return `<button type="button" class="secondary" data-action="campaign-status" data-id="${c.id}" data-status="paused">Wstrzymaj scenariusze</button>`;
+  if(c.status==='active')return `<button type="button" class="primary" data-manual-queue-command="start">Uruchom kolejkę</button><button type="button" class="secondary" data-manual-queue-command="pause">Wstrzymaj scenariusze</button>`;
   if(!summary)return '<span class="badge gray">Wczytuję kampanię…</span>';
   if(!summary.messages)return `<button type="button" class="primary" data-action="prepare" data-id="${c.id}">Przygotuj zadania</button>`;
   if(!campaignHasReview(w))return '<button type="button" class="primary" data-campaign-review>Sprawdź zadania</button>';
   if(!(summary.counts.queued||0))return '<span class="badge gray">Brak zadań w kolejce</span>';
-  return `<button type="button" class="primary" data-action="campaign-status" data-id="${c.id}" data-status="active">Uruchom kolejkę w rozszerzeniu</button>`;
+  return `<button type="button" class="primary" data-manual-campaign-start="${c.id}">Uruchom kolejkę</button>`;
  }
  const pending=[...backgroundRequests.values()].some(request=>['campaign/prepare','campaign/status','campaign/update'].includes(request.path));
  const disabled=pending||(c.status!=='active'&&(!summary||w.loading||!!w.error||w.data.revision!==c.revision));
@@ -103,11 +103,10 @@ async function showCampaignPreflight(id){
  if(projectId!==state.seller_project.id)return;
  const campaign=state.campaigns.find(c=>c.id===id);if(!campaign)return;
  if(campaign.channel==='manual'){
-  const blocked=!data.summary.counts.queued||data.summary.counts.uncertain;
-  const scenarios=campaign.manual_scenarios?JSON.parse(campaign.manual_scenarios):[];
-  modal(`<h2>Uruchom Manual interaction</h2><p data-no-translate>${esc(campaign.name)}</p><dl class="preflight-summary"><dt>Odbiorcy z zadaniami</dt><dd>${data.summary.prepared_recipients}</dd><dt>Oczekujące zadania</dt><dd>${data.summary.counts.queued||0}</dd><dt>Scenariusze stron</dt><dd>${scenarios.map(s=>esc(s.domain)).join(', ')||'Brak'}</dd><dt>Tryby kart</dt><dd>Bieżąca karta i karty zarządzane przez rozszerzenie</dd></dl><p class="hint">Rozszerzenie wykonuje scenariusze po uruchomieniu na karcie. CAPTCHA, MFA i nieoczekiwane strony zatrzymają zadanie do ręcznej obsługi.</p><p class="error" role="alert" data-preflight-error></p><div class="actions"><button type="button" class="primary" data-confirm-send ${blocked?'disabled':''}>Potwierdź i udostępnij kolejkę rozszerzeniu</button><button type="button" class="secondary close">Anuluj</button></div>`);
-  $('[data-confirm-send]').onclick=event=>run(event.currentTarget,async()=>{try{await api('campaign/status',{id,status:'active',fingerprint:data.fingerprint});$('#modal').close();await refresh();toast('Kolejka Manual interaction uruchomiona')}catch(error){if($('[data-preflight-error]'))$('[data-preflight-error]').textContent=error.message;throw error}});
-  syncLanguages();return;
+  if(!data.summary.counts.queued||data.summary.counts.uncertain)throw Error('Sprawdź oczekujące zadania kampanii.');
+  await api('campaign/status',{id,status:'active',fingerprint:data.fingerprint});
+  try{await manualQueueAction('start',id)}finally{await refresh()}
+  return;
  }
  const blocked=!state.integrations.smtp||!data.summary.counts.queued||data.summary.counts.uncertain;
  modal(`<h2>Sprawdź przed wysyłką</h2><p data-no-translate>${esc(campaign.name)}</p><dl class="preflight-summary"><dt>Nadawca</dt><dd data-no-translate>${esc(state.integrations.sender_name||'')} &lt;${esc(state.integrations.sender||'')}&gt;</dd><dt>Odbiorcy z wiadomościami</dt><dd>${data.summary.prepared_recipients}</dd><dt>Oczekujące wiadomości</dt><dd>${data.summary.counts.queued||0}</dd><dt>Pomijane lub zatrzymane wiadomości</dt><dd>${data.summary.counts.cancelled||0}</dd><dt>Limit dzienny / odstęp</dt><dd>${data.delivery.daily_limit} / ${data.delivery.interval_seconds} <span>sekund</span></dd></dl><h3>Harmonogram sekwencji</h3>${data.steps.map(step=>`<p><span>Dzień wysyłki</span> ${step.delay_days}: <span data-no-translate>${esc(step.subject)}</span></p>`).join('')}<p class="hint">Terminy kolejnych kroków liczone są od faktycznej wysyłki poprzedniej wiadomości. Limity obejmują wszystkie projekty.</p><details><summary>Przykładowe wiadomości</summary>${data.recipients.slice(0,3).flatMap(person=>person.messages.slice(0,1).map(message=>`<article class="preflight-message"><strong data-no-translate>${esc(person.email)} · ${esc(message.subject)}</strong><p class="message" data-no-translate>${esc(message.body)}</p></article>`)).join('')}</details>${!state.integrations.smtp?'<p class="error">Podłącz pocztę w Integracjach.</p>':''}${data.summary.counts.uncertain?'<p class="error">Sprawdź niepotwierdzone wysyłki w skrzynce przed wznowieniem.</p>':''}<p class="hint">Sprawdź poprawność adresów, treści i wybranych odbiorców. Odpowiedzi zatrzymują dalsze kroki.</p><p class="error" role="alert" data-preflight-error></p><div class="actions"><button type="button" class="primary" data-confirm-send ${blocked?'disabled':''}>Potwierdź i uruchom wysyłkę</button><button type="button" class="secondary close">Anuluj</button></div>`);
@@ -118,13 +117,260 @@ async function showCampaignPreflight(id){
  });
  syncLanguages();
 }
+
+function requestManualQueue(command,campaignId,messageId){
+ const id=crypto.randomUUID(),origin=location.origin;
+ return new Promise((resolve,reject)=>{
+  const receive=event=>{
+   if(event.source!==window||event.origin!==origin||event.data?.type!=='KATIE_MANUAL_QUEUE_RESPONSE'||event.data.id!==id)return;
+   clearTimeout(timer);
+   window.removeEventListener('message',receive);
+   const response=event.data.response;
+   if(response?.ok)resolve(response);
+   else reject(Error(response?.error||'Rozszerzenie odrzuciło polecenie kolejki.'));
+  };
+  const timer=setTimeout(()=>{
+   window.removeEventListener('message',receive);
+   reject(Error('Brak odpowiedzi Kaśka Outreach. Sprawdź rozszerzenie i odśwież kartę.'));
+  },5000);
+  window.addEventListener('message',receive);
+  window.postMessage({type:'KATIE_MANUAL_QUEUE_REQUEST',id,command,campaignId,messageId,csrf:state.csrf},origin);
+ });
+}
+
+function manualQueueRunSummary(task){
+ const label=translateUiText;
+ if(task.mode==='steps')return label('Zapisane kroki');
+ if(task.mode!=='agent')return '';
+ const parts=[label('Agent AI')];
+ if(task.timing){
+  const {aiRequests,decisions={},staleDecisions,repeatedDecisions}=task.timing;
+  parts.push(`${label('Wywołania AI')} ${aiRequests}`);
+  const actions={click:'Kliknięcia',fill:'Wypełnianie pól',pressEnter:'Zatwierdzanie',send:'Wysyłanie',wait:'Oczekiwanie',done:'Zakończenie',stop:'Wstrzymanie'};
+  for(const [action,title] of Object.entries(actions)){
+   if(decisions[action])parts.push(`${label(title)} ${decisions[action]}`);
+  }
+  if(staleDecisions)parts.push(`${label('Nieaktualne decyzje')} ${staleDecisions}`);
+  if(repeatedDecisions)parts.push(`${label('Powtórzone decyzje')} ${repeatedDecisions}`);
+ }
+ return parts.join(' · ');
+}
+
+const manualProgressMarkup='<label class="manual-queue-progress-bar"><span data-no-translate></span><progress></progress></label>';
+const manualQueueLayoutKey='kaska-manual-queue-layout';
+function manualQueueLayout(){
+ try{return localStorage.getItem(manualQueueLayoutKey)==='tiles'?'tiles':'list'}catch{return 'list'}
+}
+function setManualQueueLayout(root,layout){
+ root.querySelector('[data-manual-queue-runs]').dataset.layout=layout;
+ for(const button of root.querySelectorAll('[data-manual-queue-layout]')){
+  button.setAttribute('aria-pressed',String(button.dataset.manualQueueLayout===layout));
+ }
+}
+function updateManualProgress(root,label,value,max,showCount=true){
+ const [caption,bar]=root.children;
+ const title=translateUiText(label);
+ const text=value===undefined||!showCount?title:`${title} ${value}/${max}`;
+ if(caption.textContent!==text)caption.textContent=text;
+ if(bar.getAttribute('aria-label')!==title)bar.setAttribute('aria-label',title);
+ if(bar.max!==max)bar.max=max;
+ if(value===undefined)bar.removeAttribute('value');
+ else if(!bar.hasAttribute('value')||bar.value!==value)bar.value=value;
+}
+
+function updateManualAgentProgress(bar,details,task){
+ const {milestones,completed}=task.progress||{};
+ details.hidden=!milestones?.length;
+ if(details.hidden){
+  if(task.status==='done'){
+   updateManualProgress(bar,task.dryRun?'Próba zakończona':'Scenariusz zakończony',1,1,false);
+   return;
+  }
+  const running=task.status==='running';
+  updateManualProgress(bar,running?'Ustalam czynności scenariusza…':'Brak danych o postępie',running?undefined:0,1,false);
+  return;
+ }
+ updateManualProgress(bar,'Wykonane czynności',completed.length,milestones.length);
+ const labels=milestones.map(({label},index)=>`${label} · ${translateUiText(completed.includes(index+1)?'Wykonano':'Do wykonania')}`);
+ const list=details.querySelector('ol'),signature=JSON.stringify(labels);
+ if(list.dataset.signature===signature)return;
+ list.dataset.signature=signature;
+ list.replaceChildren(...labels.map(label=>{
+  const item=document.createElement('li');
+  item.textContent=label;
+  return item;
+ }));
+}
+
+function updateManualWaitCountdown(countdown){
+ const deadline=Number(countdown.dataset.pageWaitUntil);
+ const hidden=!deadline;
+ if(countdown.hidden!==hidden)countdown.hidden=hidden;
+ if(!deadline)return;
+ const seconds=Math.max(0,Math.ceil((deadline-Date.now())/1000));
+ const time=`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;
+ const text=`${translateUiText('Pozostały czas oczekiwania')} ${time}`;
+ if(countdown.textContent!==text)countdown.textContent=text;
+}
+
+function updateManualQueueProgress(root,runs){
+ const aggregate=root.querySelector('[data-manual-queue-progress]');
+ aggregate.hidden=!runs.length;
+ if(!runs.length)return;
+ const [progress,counts,activity]=aggregate.children;
+ const active=runs.filter(task=>task.status==='running');
+ const done=runs.filter(task=>task.status==='done').length;
+ const waiting=runs.filter(task=>task.status==='queued').length;
+ const attention=runs.filter(task=>['paused','needs_review'].includes(task.status)).length;
+ updateManualProgress(progress,'Ukończone zadania',done,runs.length);
+ const totals=[['W trakcie',active.length],['Oczekuje',waiting],['Wstrzymane lub do sprawdzenia',attention]]
+  .map(([label,count])=>`${translateUiText(label)} ${count}`).join(' · ');
+ const current=active.map(task=>[task.contactName,task.detail].filter(Boolean).join(' · ')).join('\n');
+ if(counts.textContent!==totals)counts.textContent=totals;
+ if(activity.textContent!==current)activity.textContent=current;
+ activity.hidden=!current;
+}
+
+function renderManualQueueRuns(campaignId,runs){
+ const root=$('#campaign-manual-queue');
+ if(!root||Number(root.dataset.campaignId)!==campaignId)return;
+ const list=root.querySelector('[data-manual-queue-runs]');
+ const notice=root.querySelector('[data-manual-queue-notice]');
+ const rows=new Map([...list.children].map(row=>[Number(row.dataset.runId),row]));
+ const labels={queued:'Oczekuje',running:'W trakcie',paused:'Wstrzymano',needs_review:'Wymaga sprawdzenia',done:'Zakończono'};
+ root.dataset.loaded='true';
+ updateManualQueueProgress(root,runs);
+ notice.hidden=runs.length>0;
+ const emptyLabel=translateUiText('Nie ma jeszcze uruchomionych zadań.');
+ if(!notice.hidden&&notice.textContent!==emptyLabel)notice.textContent=emptyLabel;
+ for(const task of runs){
+  let row=rows.get(task.id);
+  if(!row){
+   row=document.createElement('article');
+   row.className='signal-card';
+   row.dataset.runId=task.id;
+   row.innerHTML=`<div class="panel-head"><strong data-no-translate></strong><span data-no-translate></span></div><p class="hint" data-no-translate></p><p class="hint manual-wait-countdown" data-no-translate hidden></p>${manualProgressMarkup}<details class="manual-queue-progress-details" hidden><summary>Czynności scenariusza</summary><ol data-no-translate></ol></details><p class="hint" data-no-translate></p><div class="actions"></div>`;
+   list.append(row);
+  }
+  rows.delete(task.id);
+  const tileStatus=task.failed===true?'error':task.status;
+  if(row.dataset.status!==tileStatus)row.dataset.status=tileStatus;
+  const status=[translateUiText(labels[task.status]||''),task.dryRun?translateUiText('Próba'):''].filter(Boolean).join(' · ');
+  const summary=manualQueueRunSummary(task);
+  const [head,detail,countdown,progress,progressDetails,summaryLine,actions]=row.children;
+  const [contact,statusLine]=head.children;
+  for(const [element,value] of [[contact,task.contactName||''],[statusLine,status],[detail,task.detail||''],[summaryLine,summary]]){
+   if(element.textContent!==value)element.textContent=value;
+  }
+  summaryLine.hidden=!summary;
+  if(task.status==='running'&&task.pageWaitUntil)countdown.dataset.pageWaitUntil=task.pageWaitUntil;
+  else delete countdown.dataset.pageWaitUntil;
+  updateManualWaitCountdown(countdown);
+  progress.classList.toggle('manual-queue-progress-error',task.failed===true);
+  if(task.mode==='agent')updateManualAgentProgress(progress,progressDetails,task);
+  else{
+   progressDetails.hidden=true;
+   if(task.totalSteps)updateManualProgress(progress,'Wykonane kroki',task.completedSteps,task.totalSteps);
+   else updateManualProgress(progress,'Postęp zadania',task.status==='running'?undefined:Number(task.status==='done'),1);
+  }
+  const buttons=`
+   ${task.tabId!==undefined?`<button class="secondary" data-manual-queue-command="open" data-message-id="${task.id}">Otwórz kartę</button>`:''}
+   ${task.status==='paused'?`<button class="primary" data-manual-queue-command="resume" data-message-id="${task.id}">Wznów zadanie</button>`:''}
+   ${task.dryRun&&['needs_review','done'].includes(task.status)?`<button class="secondary" data-manual-queue-command="resume" data-message-id="${task.id}">Ponów próbę</button>`:''}
+   ${task.status==='needs_review'&&!task.dryRun?`<button class="secondary" data-manual-queue-command="complete" data-message-id="${task.id}">Oznacz jako wysłane</button>`:''}`;
+  if(actions.dataset.buttons!==buttons){actions.dataset.buttons=buttons;actions.innerHTML=buttons}
+ }
+ for(const row of rows.values())row.remove();
+}
+
+async function manualQueueAction(command,campaignId,messageId){
+ if(command==='pause')await api('campaign/status',{id:campaignId,status:'paused'});
+ try{
+  const result=await requestManualQueue(command,campaignId,messageId);
+  if(command==='start')toast(result.count?`Zadania przekazane do kolejki: ${result.count}.`:'Brak nowych gotowych zadań.');
+  if(command==='resume'&&!result.count)toast('Zadanie nie jest gotowe do wznowienia.');
+  renderManualQueueRuns(campaignId,result.runs);
+ }finally{
+  if(command==='pause')await refresh();
+ }
+}
+
+const manualQueuePolling=new WeakSet();
+async function refreshManualQueue(){
+ const root=$('#campaign-manual-queue');
+ if(!root||root.hidden||document.hidden||manualQueuePolling.has(root))return;
+ manualQueuePolling.add(root);
+ const campaignId=Number(root.dataset.campaignId);
+ try{
+  const result=await requestManualQueue('status',campaignId);
+  if(root.isConnected)renderManualQueueRuns(campaignId,result.runs);
+ }catch(error){
+  const notice=root.querySelector('[data-manual-queue-notice]');
+  if(!root.dataset.loaded&&notice.textContent!==error.message)notice.textContent=error.message;
+ }finally{manualQueuePolling.delete(root)}
+}
+setInterval(refreshManualQueue,2500);
+setInterval(()=>{
+ const root=$('#campaign-manual-queue');
+ if(!root||root.hidden||document.hidden)return;
+ for(const countdown of root.querySelectorAll('[data-page-wait-until]'))updateManualWaitCountdown(countdown);
+},500);
+
+document.addEventListener('click',event=>{
+ const button=event.target.closest('[data-manual-queue-command], [data-manual-campaign-start]');
+ if(!button)return;
+ const campaignId=Number(button.dataset.manualCampaignStart||$('#campaign-manual-queue')?.dataset.campaignId);
+ if(!campaignId)return;
+ void run(button,()=>button.dataset.manualCampaignStart?showCampaignPreflight(campaignId):
+  manualQueueAction(button.dataset.manualQueueCommand,campaignId,Number(button.dataset.messageId)||undefined));
+});
+document.addEventListener('click',event=>{
+ const button=event.target.closest('[data-manual-queue-layout]');
+ const root=button?.closest('#campaign-manual-queue');
+ if(!root)return;
+ const layout=button.dataset.manualQueueLayout;
+ setManualQueueLayout(root,layout);
+ try{localStorage.setItem(manualQueueLayoutKey,layout)}catch{}
+});
 function renderCampaignWorkspace(c){
  const w=campaignWorkspace(c.id),data=campaignWorkspaceData(w);
- $('#content').innerHTML=`<button class="link" data-action="back">← Wszystkie kampanie</button><section id="campaign-workspace-header"></section><div id="campaign-workspace-error">${campaignWorkspaceError(w)}</div><div class="campaign-tabs" role="tablist" aria-label="${esc(translateUiText('Widoki kampanii'))}">${[['recipients','Odbiorcy'],['sequence','Sekwencja'],['messages','Wiadomości'],['results','Wyniki']].map(([tab,label])=>`<button type="button" id="campaign-tab-${tab}" role="tab" data-campaign-tab="${tab}" aria-controls="${tab==='messages'?'campaign-messages':'campaign-'+tab}" aria-selected="${w.tab===tab}" tabindex="${w.tab===tab?'0':'-1'}">${label}</button>`).join('')}</div><section class="panel campaign-tab-panel" id="campaign-recipients" role="tabpanel" aria-labelledby="campaign-tab-recipients"></section><section class="panel campaign-tab-panel" id="campaign-sequence" role="tabpanel" aria-labelledby="campaign-tab-sequence"></section><section class="panel campaign-tab-panel" id="campaign-messages" data-campaign-id="${c.id}" role="tabpanel" aria-labelledby="campaign-tab-messages"></section><section class="panel campaign-tab-panel" id="campaign-results" role="tabpanel" aria-labelledby="campaign-tab-results"></section>`;
+ const manual=c.channel==='manual';
+ if(manual&&$('#campaign-manual-queue')?.dataset.workspaceKey===w.key){
+  const messages=campaignMessagePage(c.id);
+  if(!messages.loading&&!messages.polling&&!messages.busy)void loadCampaignMessages(c.id,{silent:true});
+  else void loadCampaignWorkspace(c.id);
+  return;
+ }
+ const tabs=[['recipients','Odbiorcy'],['sequence','Sekwencja'],['messages','Wiadomości'],['results','Wyniki']];
+ if(manual)tabs.push(['manual-queue','Kolejka scenariuszy']);
+ if(!tabs.some(([tab])=>tab===w.tab))w.tab='recipients';
+ $('#content').innerHTML=`<button class="link" data-action="back">← Wszystkie kampanie</button>
+  <section id="campaign-workspace-header"></section>
+  <div id="campaign-workspace-error">${campaignWorkspaceError(w)}</div>
+  <div class="campaign-tabs" role="tablist" aria-label="${esc(translateUiText('Widoki kampanii'))}">${tabs.map(([tab,label])=>`<button type="button" id="campaign-tab-${tab}" role="tab" data-campaign-tab="${tab}" aria-controls="campaign-${tab}">${label}</button>`).join('')}</div>
+  ${tabs.map(([tab,label])=>`<section class="panel campaign-tab-panel" id="campaign-${tab}" data-campaign-id="${c.id}" role="tabpanel" aria-labelledby="campaign-tab-${tab}" hidden>
+   ${tab==='manual-queue'?`
+    <div class="panel-head manual-queue-header">
+     <h2>${label}</h2>
+     <div class="manual-queue-layout" role="group" aria-label="${esc(translateUiText('Widok kolejki'))}">
+      <button type="button" class="secondary" data-manual-queue-layout="list">Lista</button>
+      <button type="button" class="secondary" data-manual-queue-layout="tiles">Kafelki</button>
+     </div>
+    </div>
+    <div data-manual-queue-progress hidden>${manualProgressMarkup}<p class="hint" data-no-translate></p><p class="hint manual-queue-activity" data-no-translate hidden></p></div>
+    <p class="hint" data-manual-queue-notice role="status">${esc(translateUiText('Wczytuję kolejkę…'))}</p>
+    <div data-manual-queue-runs></div>`:''}
+  </section>`).join('')}`;
+ if(manual){
+  const queue=$('#campaign-manual-queue');
+  queue.dataset.workspaceKey=w.key;
+  setManualQueueLayout(queue,manualQueueLayout());
+ }
  renderCampaignWorkspaceHeader(c,w,data);renderCampaignRecipients(w,data);renderCampaignSequence(c,data);renderCampaignResults(data);updateCampaignTab(w);mountCampaignMessages(c);loadCampaignWorkspace(c.id);
 }
 function updateCampaignTab(w){
  for(const button of document.querySelectorAll('[data-campaign-tab]')){const selected=button.dataset.campaignTab===w.tab;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;$('#'+button.getAttribute('aria-controls')).hidden=!selected}
+ if(w.tab==='manual-queue')void refreshManualQueue();
 }
 async function loadCampaignWorkspace(id){
  const w=campaignWorkspace(id),token=++w.request;w.controller?.abort();w.controller=new AbortController();w.loading=true;w.error='';

@@ -3,6 +3,7 @@ const appIconPaths={
  dashboard:'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
  compass:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM16 8l-3 5-5 3 3-5Z',
  search:'M21 21l-5-5M10.5 18a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Z',
+ building:'M3 21h18M5 21V3h14v18M9 7h1m4 0h1M9 11h1m4 0h1M9 15h1m4 0h1M10 21v-3h4v3',
  users:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM17 4a4 4 0 0 1 0 8M22 21v-2a4 4 0 0 0-3-3.87',
  send:'m22 2-7 20-4-9-9-4ZM22 2 11 13',
  activity:'M2 12h4l3-9 6 18 3-9h4',
@@ -22,7 +23,7 @@ const appIconPaths={
  project:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM5 19a7 7 0 0 1 14 0'
 };
 function decorateAppIcons(){
- const nav={dashboard:'dashboard',discover:'compass',prospecting:'search',contacts:'users',campaigns:'send',inbox:'inbox',library:'book',reports:'chart',settings:'plug',administration:'sliders'};
+ const nav={dashboard:'dashboard',discover:'compass',prospecting:'search',companies:'building',contacts:'users',campaigns:'send',inbox:'inbox',library:'book',reports:'chart',settings:'plug',administration:'sliders'};
  const actions={'new-contact':'plus','new-campaign':'plus',prepare:'send','delete-campaign':'trash',import:'import','upload-csv':'import',message:'edit',back:'left','connect-gmail':'mail',sync:'refresh'};
  const builder={'import-project':'project','add-step':'plus',prev:'left',next:'right','header-next':'right',exit:'left','save-draft':'save',preview:'eye'};
  document.querySelectorAll('nav [data-view],button[data-action],button[data-builder],#current-seller-project,[data-message-delete]').forEach(element=>{

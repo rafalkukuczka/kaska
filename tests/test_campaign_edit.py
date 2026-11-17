@@ -86,9 +86,65 @@ class CampaignEditTests(unittest.TestCase):
         with app.db() as c:
             campaign=c.execute('SELECT channel,manual_scenarios FROM campaigns WHERE id=1').fetchone()
             self.assertEqual(campaign['channel'],'manual')
-            self.assertEqual(json.loads(campaign['manual_scenarios'])[0]['domain'],'linkedin.com')
+            stored = json.loads(campaign['manual_scenarios'])[0]
+            self.assertEqual(stored['domain'], 'linkedin.com')
+            self.assertIs(stored['dry_run'], True)
             after=[dict(row) for row in c.execute('SELECT * FROM messages WHERE campaign_id=1 ORDER BY position')]
             self.assertEqual(after,before)
+
+    def test_manual_scenario_saves_explicit_sending_mode_and_send_step(self):
+        item = self.item()
+        actions = [{'type': 'ifVisible', 'selector': 'form', 'then': [
+            {'type': 'send', 'selector': '#send-message', 'text': 'Send'},
+        ]}]
+        item.update(channel='manual', manual_scenarios=[{
+            'domain': 'example.com', 'start_url': 'https://example.com/',
+            'instructions': 'Wyślij wiadomość', 'dry_run': False, 'actions': actions,
+        }])
+        self.save(item)
+        scenario = json.loads(self.item()['manual_scenarios'])[0]
+        self.assertIs(scenario['dry_run'], False)
+        self.assertEqual(scenario['actions'][0]['then'], actions[0]['then'])
+
+    def test_manual_agent_request_limit_defaults_and_persists(self):
+        item = self.item()
+        scenario = {'domain': 'example.com', 'start_url': 'https://example.com/',
+                    'instructions': 'Sprawdź stronę', 'mode': 'agent'}
+        item.update(channel='manual', manual_scenarios=[scenario])
+        self.save(item)
+        self.assertEqual(json.loads(self.item()['manual_scenarios'])[0]['agent_max_requests'], 50)
+
+        item = self.item()
+        item['manual_scenarios'] = [{**scenario, 'agent_max_requests': 75}]
+        self.save(item)
+        self.assertEqual(json.loads(self.item()['manual_scenarios'])[0]['agent_max_requests'], 75)
+
+        for invalid in (False, 0, 1.5, '50'):
+            with self.subTest(invalid=invalid):
+                item = self.item()
+                item['manual_scenarios'] = [{**scenario, 'agent_max_requests': invalid}]
+                with self.assertRaisesRegex(ValueError, 'Limit wywołań agenta'):
+                    self.save(item)
+
+    def test_manual_agent_page_wait_defaults_and_persists(self):
+        item = self.item()
+        scenario = {'domain': 'example.com', 'start_url': 'https://example.com/',
+                    'instructions': 'Sprawdź stronę', 'mode': 'agent'}
+        item.update(channel='manual', manual_scenarios=[scenario])
+        self.save(item)
+        self.assertEqual(json.loads(self.item()['manual_scenarios'])[0]['agent_page_wait_seconds'], 120)
+
+        item = self.item()
+        item['manual_scenarios'] = [{**scenario, 'agent_page_wait_seconds': 45}]
+        self.save(item)
+        self.assertEqual(json.loads(self.item()['manual_scenarios'])[0]['agent_page_wait_seconds'], 45)
+
+        for invalid in (False, 0, 2.5, '120', 2_147_484):
+            with self.subTest(invalid=invalid):
+                item = self.item()
+                item['manual_scenarios'] = [{**scenario, 'agent_page_wait_seconds': invalid}]
+                with self.assertRaisesRegex(ValueError, 'czas oczekiwania'):
+                    self.save(item)
 
     def test_stale_revision_invalid_steps_and_foreign_project_do_not_change_campaign(self):
         item=self.item();self.save(item)

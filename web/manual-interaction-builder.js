@@ -1,6 +1,9 @@
 let manualScenarioDrafts=[];
 let manualScenarioEditing=-1;
 const manualSendSimulationLabel='Wyślij symulację';
+const defaultManualAgentMaxRequests=50;
+const defaultManualAgentPageWait=120;
+const maxManualAgentPageWait=Math.floor((2**31-1)/1000);
 
 function manualScenarioDomain(value){
  const input=value.trim().toLowerCase();
@@ -23,6 +26,16 @@ function hasManualScenarioInEditor(){
   ($('#manual-mode')?.value==='agent'&&Boolean($('#manual-instructions')?.value.trim()));
 }
 
+function manualScenarioFieldValues(){
+ return [...['domain','start-url','mode','instructions','actions','max-requests','page-wait'].map(key=>$('#manual-'+key).value),$('#manual-dry-run').checked];
+}
+
+function hasUnappliedManualScenario(){
+ const editor=$('#manual-scenario-form');
+ return $('#build-channel').value==='manual'&&editor&&!editor.hidden&&
+  editor.dataset.initialValues!==JSON.stringify(manualScenarioFieldValues());
+}
+
 function readManualScenarioForm(){
  const domain=manualScenarioDomain($('#manual-domain').value);
  let startUrl;
@@ -31,11 +44,18 @@ function readManualScenarioForm(){
  if(startUrl.hostname.replace(/^www\./,'')!==domain)throw Error('Adres początkowy musi należeć do podanej domeny.');
  const instructions=$('#manual-instructions').value.trim();
  if(instructions.length<5)throw Error('Opisz, co ma zrobić scenariusz (minimum 5 znaków).');
- if($('#manual-mode').value==='agent')return {domain,start_url:startUrl.href,instructions,mode:'agent',actions:[]};
+ const dry_run=$('#manual-dry-run').checked;
+ if($('#manual-mode').value==='agent'){
+  const agent_max_requests=$('#manual-max-requests').valueAsNumber;
+  if(!Number.isSafeInteger(agent_max_requests)||agent_max_requests<1)throw Error('Limit wywołań agenta musi być dodatnią liczbą całkowitą.');
+  const agent_page_wait_seconds=$('#manual-page-wait').valueAsNumber;
+  if(!Number.isSafeInteger(agent_page_wait_seconds)||agent_page_wait_seconds<1||agent_page_wait_seconds>maxManualAgentPageWait)throw Error('Podaj prawidłowy czas oczekiwania na stronę w pełnych sekundach.');
+  return {domain,start_url:startUrl.href,instructions,mode:'agent',actions:[],dry_run,agent_max_requests,agent_page_wait_seconds};
+ }
  let actions;
  try{actions=JSON.parse($('#manual-actions').value)}catch{throw Error('Podaj kroki scenariusza w poprawnym JSON.');}
  if(!Array.isArray(actions)||!actions.length)throw Error('Dodaj kroki scenariusza.');
- return {domain,start_url:startUrl.href,instructions,actions};
+ return {domain,start_url:startUrl.href,instructions,actions,dry_run};
 }
 
 function manualScenarioEditorActions(domain,actions){
@@ -88,14 +108,79 @@ function mountManualInteractionBuilder(){
  previewButton.textContent=manualSendSimulationLabel;
  document.querySelector('.builder-preview [data-builder="preview"]').after(previewButton);
  const stage=form.querySelector('[data-stage="3"]');
- const section=document.createElement('section');section.className='manual-interaction-editor';section.innerHTML=`<h2>Manual interaction</h2><p class="hint">Opisz operacje na stronie. AI przygotuje sprawdzalne kroki. Rozszerzenie wykonuje je dopiero po uruchomieniu zadania na wybranej karcie.</p><input type="hidden" name="manual_scenarios" value="[]"><div class="manual-scenario-list"></div><div class="manual-scenario-form"><label for="manual-domain">Domena strony</label><input id="manual-domain" placeholder="portal.example.com" autocomplete="url"><label for="manual-start-url">Adres początkowy</label><input id="manual-start-url" placeholder="https://portal.example.com/login" autocomplete="url"><label for="manual-instructions">Co ma zrobić scenariusz?</label><textarea id="manual-instructions" rows="4" maxlength="6000" placeholder="Jeśli nie ma menu konta, zaloguj się. Wpisz wiadomość i zatwierdź."></textarea><div class="actions"><button type="button" class="secondary" data-manual-action="generate">✧ Zbuduj kroki z AI</button><button type="button" class="primary" data-manual-action="save">Dodaj scenariusz</button><button type="button" class="link" data-manual-action="cancel" hidden>Anuluj edycję</button></div><label for="manual-actions">Kroki do wykonania (możesz poprawić)</label><textarea id="manual-actions" rows="12" spellcheck="false" placeholder='[\n  {"type":"ifNotVisible","selector":".account-menu","then":[...],"else":[]},\n  {"type":"fill","selector":"textarea[name=message]","value":"{{message}}"},\n  {"type":"confirm","prompt":"Sprawdź wiadomość przed zatwierdzeniem."},\n  {"type":"click","selector":"button[type=submit]"}\n]'></textarea><p class="hint">Dostępne zmienne: <span data-no-translate>${variableNames.map(name=>esc('{{'+name+'}}')).join(', ')}</span>. Dane logowania rozszerzenie pyta przy uruchomieniu i nie zapisuje ich w kampanii. CAPTCHA/MFA zatrzymują zadanie do ręcznej obsługi.</p></div>`;
+ const section=document.createElement('section');
+ section.className='manual-interaction-editor';
+ section.innerHTML=`
+  <h2>Scenariusze na stronach</h2>
+  <input type="hidden" name="manual_scenarios" value="[]">
+  <div class="manual-scenario-list"></div>
+  <button type="button" class="secondary" data-manual-action="add" aria-controls="manual-scenario-form" aria-expanded="false">+ Nowy scenariusz</button>
+  <section id="manual-scenario-form" class="manual-scenario-form" aria-labelledby="manual-scenario-title" hidden>
+   <h3 id="manual-scenario-title" tabindex="-1"></h3>
+   <p class="manual-scenario-site" id="manual-scenario-site" data-no-translate hidden></p>
+   <label for="manual-domain">Domena strony</label>
+   <input id="manual-domain" placeholder="portal.example.com" autocomplete="off" spellcheck="false">
+   <label for="manual-start-url">Adres strony, od której zacznie rozszerzenie</label>
+   <input id="manual-start-url" placeholder="https://portal.example.com/" inputmode="url" spellcheck="false">
+   <label for="manual-mode">Sposób wykonania</label>
+   <select id="manual-mode" aria-describedby="manual-mode-hint">
+    <option value="steps">Zapisane kroki</option>
+    <option value="agent">Agent AI</option>
+   </select>
+   <p class="hint" id="manual-mode-hint"></p>
+   <div class="manual-run-settings">
+    <label class="check manual-dry-run"><input id="manual-dry-run" type="checkbox" checked aria-describedby="manual-dry-run-hint"> Próba (dry run)</label>
+    <div id="manual-agent-settings" hidden>
+     <div>
+      <label for="manual-max-requests">Limit wywołań agenta</label>
+      <input id="manual-max-requests" type="number" min="1" step="1" value="${defaultManualAgentMaxRequests}">
+     </div>
+     <div>
+      <label for="manual-page-wait">Czas oczekiwania na stronę (s)</label>
+      <input id="manual-page-wait" type="number" min="1" max="${maxManualAgentPageWait}" step="1" value="${defaultManualAgentPageWait}">
+     </div>
+    </div>
+   </div>
+   <p class="hint" id="manual-dry-run-hint">Próba przygotowuje wiadomość, pomija wysłanie i zostawia zadanie w kolejce.</p>
+   <label for="manual-instructions">Co ma zrobić scenariusz?</label>
+   <textarea id="manual-instructions" rows="4" maxlength="6000" placeholder="Otwórz wyszukiwanie. Znajdź kontakt po imieniu, nazwisku i firmie. Otwórz formularz wiadomości i uzupełnij temat oraz treść."></textarea>
+   <div id="manual-steps-editor">
+    <div class="manual-steps-heading">
+     <label for="manual-actions">Kroki do wykonania (JSON)</label>
+     <button type="button" class="secondary" data-manual-action="generate">Wygeneruj kroki z AI</button>
+    </div>
+    <textarea id="manual-actions" rows="8" spellcheck="false" aria-describedby="manual-mode-hint"></textarea>
+    <details><summary>Podgląd JavaScript</summary><pre id="manual-js-preview" class="manual-js-preview"></pre></details>
+   </div>
+   <details class="manual-scenario-variables">
+    <summary>Dostępne zmienne</summary>
+    <p class="hint" data-no-translate>${variableNames.map(name=>esc('{{'+name+'}}')).join(', ')}</p>
+    <p class="hint" id="manual-credentials-hint">Przy zapisanych krokach rozszerzenie prosi o dane logowania podczas uruchamiania i nie zapisuje ich w kampanii.</p>
+   </details>
+   <div class="actions manual-scenario-save">
+    <button type="button" class="primary" data-manual-action="save"></button>
+    <button type="button" class="secondary" data-manual-action="cancel">Anuluj</button>
+   </div>
+   <p class="hint">Po zastosowaniu scenariusza zapisz kampanię.</p>
+  </section>`;
  stage.append(section);
- $('#manual-instructions').insertAdjacentHTML('afterend','<label for="manual-mode">Tryb wykonania</label><select id="manual-mode"><option value="steps">Zapisane kroki</option><option value="agent">Agent AI</option></select><p class="hint" id="manual-agent-hint" hidden>AI wybiera następny krok na podstawie widocznych kontrolek. Symulacja zatrzymuje się przed wysłaniem wiadomości.</p>');
- const jsPreview=document.createElement('details');jsPreview.innerHTML='<summary>Podgląd równoważnego JavaScript</summary><pre id="manual-js-preview" class="manual-js-preview"></pre>';section.querySelector('#manual-actions').after(jsPreview);
+ const list=section.querySelector('.manual-scenario-list');
+ const editor=$('#manual-scenario-form');
+ const add=section.querySelector('[data-manual-action="add"]');
+ const save=section.querySelector('[data-manual-action="save"]');
+ const generate=section.querySelector('[data-manual-action="generate"]');
+ const generateLabel='Wygeneruj kroki z AI';
+ let editorRevision=0;
  const syncMode=()=>{
   const agent=$('#manual-mode').value==='agent';
-  for(const element of [section.querySelector('[data-manual-action="generate"]'),section.querySelector('[for="manual-actions"]'),$('#manual-actions'),jsPreview])element.hidden=agent;
-  $('#manual-agent-hint').hidden=!agent;
+  $('#manual-steps-editor').hidden=agent;
+  $('#manual-agent-settings').hidden=!agent;
+  $('#manual-max-requests').disabled=!agent;
+  $('#manual-page-wait').disabled=!agent;
+  $('#manual-credentials-hint').hidden=agent;
+  $('#manual-mode-hint').textContent=agent
+   ?'Agent wybiera kolejne działania według opisu i widocznych kontrolek. Symulacja zatrzymuje się przed wysłaniem wiadomości.'
+   :'Rozszerzenie wykonuje kroki zapisane w JSON. Wygeneruj je z opisu lub wpisz samodzielnie.';
  };
  $('#manual-mode').addEventListener('change',syncMode);
  const sync=()=>{const hidden=form.elements.manual_scenarios;try{manualScenarioDrafts=JSON.parse(hidden.value||'[]');if(!Array.isArray(manualScenarioDrafts))manualScenarioDrafts=[]}catch{manualScenarioDrafts=[]}renderManualScenarioList()};
@@ -107,30 +192,114 @@ function mountManualInteractionBuilder(){
  const syncChannel=()=>{section.hidden=previewButton.hidden=channel.value!=='manual'};
  channel.addEventListener('input',syncChannel);
  channel.addEventListener('change',syncChannel);
- section.querySelector('[data-manual-action="generate"]').onclick=async e=>{
-  const button=e.currentTarget;
+ generate.onclick=async ()=>{
+  const revision=editorRevision;
+  const values=JSON.stringify(manualScenarioFieldValues());
   try{
    const domain=manualScenarioDomain($('#manual-domain').value),instructions=$('#manual-instructions').value.trim();
    if(!instructions)throw Error('Opisz kroki scenariusza.');
-   button.disabled=true;button.textContent='AI przygotowuje kroki…';
+   generate.disabled=true;generate.textContent='AI przygotowuje kroki…';
    const result=await api('ai/manual-interaction',{domain,instructions,message_example:$('#steps .step [name=body]')?.value||''});
+   if(!editor.isConnected||revision!==editorRevision||values!==JSON.stringify(manualScenarioFieldValues()))return;
    showActions(domain,JSON.parse(result.actions));toast('Kroki i podgląd JavaScript gotowe do sprawdzenia.');
   }
-  catch(error){toast(error instanceof Error?error.message:'Nie udało się wygenerować kroków.')}
-  finally{button.disabled=false;button.textContent='✧ Zbuduj kroki z AI';}
+  catch(error){if(editor.isConnected&&revision===editorRevision)toast(error instanceof Error?error.message:'Nie udało się wygenerować kroków.')}
+  finally{if(revision===editorRevision){generate.disabled=false;generate.textContent=generateLabel}}
  };
- section.querySelector('[data-manual-action="save"]').onclick=()=>{
+ save.onclick=()=>{
   try{
    const scenario=readManualScenarioForm();
-   if(manualScenarioEditing<0)manualScenarioDrafts.push(scenario);else manualScenarioDrafts[manualScenarioEditing]=scenario;
-   form.elements.manual_scenarios.value=JSON.stringify(manualScenarioDrafts);manualScenarioEditing=-1;clearManualScenarioForm();renderManualScenarioList();persistBuilder();
+   const index=manualScenarioEditing<0?manualScenarioDrafts.length:manualScenarioEditing;
+   manualScenarioDrafts[index]=scenario;
+   form.elements.manual_scenarios.value=JSON.stringify(manualScenarioDrafts);
+   closeEditor();
+   list.querySelector(`[data-scenario-action="edit"][data-index="${index}"]`)?.focus();
+   persistBuilder();
+   toast('Scenariusz zastosowany. Zapisz kampanię, aby zachować zmiany.');
   }catch(error){toast(error.message||'Nie można zapisać scenariusza.');}
  };
- section.querySelector('[data-manual-action="cancel"]').onclick=()=>{manualScenarioEditing=-1;clearManualScenarioForm();renderManualScenarioList()};
+ add.onclick=()=>openEditor(-1);
+ section.querySelector('[data-manual-action="cancel"]').onclick=()=>{
+  const index=manualScenarioEditing;
+  closeEditor();
+  const trigger=index<0?add:list.querySelector(`[data-scenario-action="edit"][data-index="${index}"]`);
+  trigger?.focus();
+ };
  $('#manual-actions').addEventListener('input',renderManualJavaScript);
- section.querySelector('.manual-scenario-list').addEventListener('click',e=>{const button=e.target.closest('[data-scenario-action]');if(!button)return;const index=Number(button.dataset.index),action=button.dataset.scenarioAction;if(action==='remove'){manualScenarioDrafts.splice(index,1);if(manualScenarioEditing===index){manualScenarioEditing=-1;clearManualScenarioForm()}else if(manualScenarioEditing>index)manualScenarioEditing--;form.elements.manual_scenarios.value=JSON.stringify(manualScenarioDrafts);persistBuilder();renderManualScenarioList()}else if(action==='edit'){const item=manualScenarioDrafts[index];manualScenarioEditing=index;$('#manual-domain').value=item.domain;$('#manual-start-url').value=item.start_url;$('#manual-instructions').value=item.instructions;$('#manual-mode').value=item.mode||'steps';showActions(item.domain,item.actions||[]);syncMode();section.querySelector('[data-manual-action="save"]').textContent='Zapisz scenariusz';section.querySelector('[data-manual-action="cancel"]').hidden=false}});
- function renderManualScenarioList(){const root=section.querySelector('.manual-scenario-list');root.innerHTML=manualScenarioDrafts.map((item,index)=>`<article class="signal-card"><div class="panel-head"><strong data-no-translate>${esc(item.domain)}</strong><span>${item.mode==='agent'?'Agent AI':`${item.actions?.length||0} kroków`}</span></div><p class="hint" data-no-translate>${esc(item.start_url)}</p><div class="actions"><button type="button" class="link" data-scenario-action="edit" data-index="${index}">Edytuj</button><button type="button" class="link danger" data-scenario-action="remove" data-index="${index}">Usuń</button></div></article>`).join('')||'<p class="hint">Dodaj scenariusz dla każdej domeny, do której prowadzi kampania.</p>';}
- function clearManualScenarioForm(){$('#manual-domain').value='';$('#manual-start-url').value='';$('#manual-instructions').value='';$('#manual-actions').value='';$('#manual-mode').value='steps';syncMode();renderManualJavaScript();section.querySelector('[data-manual-action="save"]').textContent='Dodaj scenariusz';section.querySelector('[data-manual-action="cancel"]').hidden=true;}
+ $('#manual-dry-run').addEventListener('change',renderManualJavaScript);
+ list.addEventListener('click',e=>{
+  const button=e.target.closest('[data-scenario-action]');
+  if(!button||!editor.hidden)return;
+  const index=Number(button.dataset.index);
+  if(button.dataset.scenarioAction==='edit'){
+   openEditor(index,button);
+   return;
+  }
+  manualScenarioDrafts.splice(index,1);
+  form.elements.manual_scenarios.value=JSON.stringify(manualScenarioDrafts);
+  renderManualScenarioList();
+  persistBuilder();
+  const next=list.querySelectorAll('[data-scenario-action="edit"]');
+  (next[index]||next[index-1]||add).focus();
+ });
+ function renderManualScenarioList(){
+  list.innerHTML=manualScenarioDrafts.map((item,index)=>`
+   <article class="signal-card">
+    <div class="panel-head"><strong data-no-translate>${esc(item.domain)}</strong><span><span>${item.mode==='agent'?'Agent AI':'Zapisane kroki'}</span> · <span>${item.dry_run===false?'Wysyłka':'Próba'}</span></span></div>
+    <p class="hint" data-no-translate>${esc(item.start_url)}</p>
+    <div class="actions">
+     <button type="button" class="secondary" data-scenario-action="edit" data-index="${index}" aria-controls="manual-scenario-form" aria-expanded="false">Edytuj</button>
+     <button type="button" class="link danger" data-scenario-action="remove" data-index="${index}">Usuń</button>
+    </div>
+   </article>`).join('')||'<p class="hint">Nie ma jeszcze scenariuszy w tej kampanii.</p>';
+ }
+ function openEditor(index,trigger=add){
+  const item=manualScenarioDrafts[index];
+  manualScenarioEditing=index;
+  $('#manual-scenario-title').textContent=item?'Edycja scenariusza':'Nowy scenariusz';
+  const site=$('#manual-scenario-site');
+  site.textContent=item?.domain||'';
+  site.hidden=!item;
+  $('#manual-domain').value=item?.domain||'';
+  $('#manual-start-url').value=item?.start_url||'';
+  $('#manual-instructions').value=item?.instructions||'';
+  $('#manual-mode').value=item?.mode||'steps';
+  $('#manual-dry-run').checked=item?.dry_run!==false;
+  $('#manual-max-requests').value=item?.agent_max_requests??defaultManualAgentMaxRequests;
+  $('#manual-page-wait').value=item?.agent_page_wait_seconds??defaultManualAgentPageWait;
+  $('#manual-actions').value=item?JSON.stringify(item.actions||[],null,2):'';
+  renderManualJavaScript();
+  save.textContent=item?'Zastosuj zmiany':'Dodaj do kampanii';
+  syncMode();
+  editor.dataset.initialValues=JSON.stringify(manualScenarioFieldValues());
+  const card=trigger.closest('article');
+  if(card)card.after(editor);
+  editor.hidden=false;
+  list.querySelectorAll('[data-scenario-action]').forEach(button=>{button.disabled=true});
+  add.hidden=true;
+  add.disabled=true;
+  trigger.setAttribute('aria-expanded','true');
+  $('#manual-scenario-title').focus();
+ }
+ function closeEditor(){
+  editorRevision++;
+  manualScenarioEditing=-1;
+  editor.hidden=true;
+  add.after(editor);
+  add.hidden=false;
+  add.disabled=false;
+  add.setAttribute('aria-expanded','false');
+  for(const key of ['domain','start-url','instructions','actions'])$('#manual-'+key).value='';
+  $('#manual-mode').value='steps';
+  $('#manual-max-requests').value=defaultManualAgentMaxRequests;
+  $('#manual-page-wait').value=defaultManualAgentPageWait;
+  syncMode();
+  generate.disabled=false;
+  generate.textContent=generateLabel;
+  editor.querySelectorAll('details').forEach(details=>{details.open=false});
+  renderManualJavaScript();
+  renderManualScenarioList();
+ }
  function renderManualJavaScript(){
   let actions=[];try{actions=JSON.parse($('#manual-actions').value||'[]')}catch{}
   const quote=value=>JSON.stringify(String(value??''));
@@ -148,22 +317,23 @@ function mountManualInteractionBuilder(){
    if(cursor<raw.length)parts.push(quote(raw.slice(cursor)));
    return parts.join(' + ');
   };
-  const lines=(items,depth)=>{const pad='  '.repeat(depth);return (items||[]).flatMap(action=>{
+  const lines=(items,depth)=>{const pad='  '.repeat(depth);return (Array.isArray(items)?items:[]).flatMap(action=>{
+   if(!action||typeof action!=='object')return [];
    if(action.type==='fill')return [`${pad}await page.fill(${quote(action.selector)}, ${valueCode(action.value)});`];
    if(action.type==='pressEnter')return [`${pad}await page.press(${quote(action.selector)}, "Enter");`];
-   if(action.type==='click')return [`${pad}await page.click(${quote(action.selector)}${action.text===undefined?'':`, { text: ${valueCode(action.text)} }`});`];
+   if(action.type==='click'||action.type==='send')return [`${pad}${action.type==='send'?'if (!dryRun) ':''}await page.click(${quote(action.selector)}${action.text===undefined?'':`, { text: ${valueCode(action.text)} }`});`];
    if(action.type==='waitFor')return [`${pad}await page.waitFor(${quote(action.selector)}, { timeout: ${Number(action.timeout_ms)||10000}${action.text===undefined?'':`, text: ${valueCode(action.text)}`} });`];
    if(action.type==='assertVisible')return [`${pad}await page.assertVisible(${quote(action.selector)});`];
    if(action.type==='confirm')return [`${pad}await page.confirm(${quote(action.prompt)});`];
    if(action.type==='ifVisible'||action.type==='ifNotVisible')return [`${pad}if (${action.type==='ifNotVisible'?'!':''}await page.isVisible(${quote(action.selector)})) {`,...lines(action.then,depth+1),`${pad}}${action.else?.length?' else {':''}`,...(action.else?.length?lines(action.else,depth+1):[]),...(action.else?.length?[`${pad}}`]:[])];
    return [`${pad}// Nieznany krok: ${String(action.type||'')}`];
   })};
-  const code=`async function run({ page, variables }) {\n${lines(actions,1).join('\n')}\n}`;
+  const code=`async function run({ page, variables, dryRun = ${$('#manual-dry-run').checked} }) {\n${lines(actions,1).join('\n')}\n}`;
   const output=$('#manual-js-preview');if(output)output.textContent=code;
  }
  const previousRestore=window.restoreBuilder;
  if(typeof previousRestore==='function'){
-  window.restoreBuilder=function(draft){previousRestore(draft);let scenarios=draft.manual_scenarios||[];try{if(typeof scenarios==='string')scenarios=JSON.parse(scenarios)}catch{scenarios=[]}manualScenarioDrafts=Array.isArray(scenarios)?scenarios:[];form.elements.manual_scenarios.value=JSON.stringify(manualScenarioDrafts);renderManualScenarioList();syncChannel()};
+  window.restoreBuilder=function(draft){previousRestore(draft);if(!form.isConnected)return;let scenarios=draft.manual_scenarios||[];try{if(typeof scenarios==='string')scenarios=JSON.parse(scenarios)}catch{scenarios=[]}manualScenarioDrafts=Array.isArray(scenarios)?scenarios:[];form.elements.manual_scenarios.value=JSON.stringify(manualScenarioDrafts);closeEditor();syncChannel()};
  }
  sync();syncChannel();syncMode();
 }

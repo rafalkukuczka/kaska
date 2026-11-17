@@ -9,7 +9,10 @@ import contact_tags
 MAX_SCENARIOS = 20
 MAX_ACTIONS = 60
 MAX_DEPTH = 3
-PAGE_ACTION_TYPES = {'fill', 'click', 'pressEnter', 'waitFor', 'assertVisible'}
+DEFAULT_AGENT_MAX_REQUESTS = 50
+DEFAULT_AGENT_PAGE_WAIT_SECONDS = 120
+MAX_AGENT_PAGE_WAIT_SECONDS = (2**31 - 1) // 1000
+PAGE_ACTION_TYPES = {'fill', 'click', 'send', 'pressEnter', 'waitFor', 'assertVisible'}
 SELECTOR_ACTION_TYPES = PAGE_ACTION_TYPES | {'ifVisible', 'ifNotVisible'}
 ACTION_TYPES = SELECTOR_ACTION_TYPES | {'confirm'}
 CAMPAIGN_FIELDS = ('offer', 'audience', 'website', 'cta', 'cta_url', 'language', 'pain_points', 'value_props', 'proof_points')
@@ -83,10 +86,22 @@ def validate_scenarios(value):
         mode = scenario.get('mode', 'steps')
         if mode not in ('steps', 'agent'):
             raise ValueError('Wybierz poprawny tryb scenariusza.')
+        dry_run = scenario.get('dry_run', True)
+        if not isinstance(dry_run, bool):
+            raise ValueError('Próba musi być włączona albo wyłączona.')
         actions = [] if mode == 'agent' else validate_actions(scenario.get('actions', []))
-        item = {'domain': domain, 'start_url': start_url, 'instructions': instructions.strip(), 'actions': actions}
+        item = {'domain': domain, 'start_url': start_url, 'instructions': instructions.strip(),
+                'actions': actions, 'dry_run': dry_run}
         if mode == 'agent':
             item['mode'] = mode
+            max_requests = scenario.get('agent_max_requests', DEFAULT_AGENT_MAX_REQUESTS)
+            if type(max_requests) is not int or not 1 <= max_requests <= 2**53 - 1:
+                raise ValueError('Limit wywołań agenta musi być dodatnią liczbą całkowitą.')
+            item['agent_max_requests'] = max_requests
+            page_wait = scenario.get('agent_page_wait_seconds', DEFAULT_AGENT_PAGE_WAIT_SECONDS)
+            if type(page_wait) is not int or not 1 <= page_wait <= MAX_AGENT_PAGE_WAIT_SECONDS:
+                raise ValueError('Podaj prawidłowy czas oczekiwania na stronę w pełnych sekundach.')
+            item['agent_page_wait_seconds'] = page_wait
         result.append(item)
     return result
 
@@ -114,7 +129,7 @@ def validate_actions(actions, depth=0, counter=None, path='', *, omit_confirm=Fa
             if not isinstance(selector, str) or not selector.strip() or len(selector) > 500:
                 raise ValueError('Każdy krok strony wymaga selektora CSS (do 500 znaków).')
             clean['selector'] = selector.strip()
-        if kind in ('click', 'waitFor') and 'text' in action:
+        if kind in ('click', 'send', 'waitFor') and 'text' in action:
             text = action['text']
             if not isinstance(text, str) or not text.strip() or len(text) > 500:
                 raise ValueError(f'Krok {position}. Podaj tekst elementu (do 500 znaków).')
@@ -168,7 +183,7 @@ def generate_actions(instructions, domain, message_example=''):
         raise ValueError('Podaj poprawną domenę strony.')
     instruction = (
         'Create a browser interaction plan for the requested website task. Return valid JSON in the actions field. '
-        'Allowed action types only: fill(selector,value), click(selector,text?), pressEnter(selector), waitFor(selector,timeout_ms,text?), '
+        'Allowed action types only: fill(selector,value), click(selector,text?), send(selector,text?), pressEnter(selector), waitFor(selector,timeout_ms,text?), '
         'assertVisible(selector), ifVisible(selector,then,else), ifNotVisible(selector,then,else). '
         'Use CSS selectors. Include a login conditional only when requested. '
         'The optional text field matches the exact visible label inside the selected element and supports contact placeholders. '
@@ -184,6 +199,8 @@ def generate_actions(instructions, domain, message_example=''):
         'Use {{contact_name}} to match the result label even when the search query contains more fields. '
         'Use {{username}} and {{password}} for credentials and {{message}} for the prepared campaign message. '
         'Return concrete page steps that perform the task using the available variables. '
+        'Use send for the control that actually sends the prepared message, including when a normal click would submit it. '
+        'Use click for opening the message form, searching, navigating and logging in. '
         'Omit all confirm steps, including before and after a final submit and inside conditional branches. '
         'Never include real credentials, arbitrary JavaScript, network requests, CAPTCHA solving, MFA bypass, '
         'or instructions to evade site controls. '
