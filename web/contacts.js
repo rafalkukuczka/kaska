@@ -4,6 +4,19 @@ function contactTags(value){
  const values=Array.isArray(value)?value:String(value||'').split(';'),seen=new Set();
  return values.map(tag=>String(tag).normalize('NFC').trim()).filter(tag=>{const key=tag.toLocaleLowerCase();if(!tag||seen.has(key))return false;seen.add(key);return true});
 }
+function contactResearchDetails(data){
+ if(!data||!Object.keys(data).length)return '';
+ const labels={first_name:'Imię',last_name:'Nazwisko',domain:'Domena firmy',work_phone:'Telefon służbowy',department:'Dział',
+  seniority:'Szczebel stanowiska',city:'Miasto',state:'Region',country:'Kraj',provider:'Dostawca danych'};
+ const attributes=Object.entries(labels).filter(([key])=>data[key]).map(([key,label])=>
+  `<div><dt>${label}</dt><dd data-no-translate>${esc(data[key])}</dd></div>`).join('');
+ const sources=(data.sources||[]).map(item=>`<li>${sourceLink(item.url)||esc(item.url)}
+  ${item.last_seen?`<small data-no-translate>${esc(item.last_seen)}</small>`:''}</li>`).join('');
+ return `<details class="contact-research-details"><summary>Dodatkowe dane i źródła</summary>
+  ${attributes?`<dl>${attributes}</dl>`:''}
+  ${data.linkedin?`<p>${sourceLink(data.linkedin,'Profil LinkedIn')||esc(data.linkedin)}</p>`:''}
+  ${sources?`<ul>${sources}</ul>`:''}</details>`;
+}
 function contactTagsControl(value='',id='contact-tags'){
  const selected=contactTags(value),known=new Map();
  [...(state.contact_tags||[]),...selected].forEach(tag=>{if(!known.has(tag.toLocaleLowerCase()))known.set(tag.toLocaleLowerCase(),tag)});
@@ -119,5 +132,5 @@ async function applyBulkContactTags(){
  }finally{contactBulkBusy=false;if(view==='contacts')renderContactsView()}
 }
 function visibleContacts(q=contactSearch){q=q.toLowerCase();return state.contacts.filter(c=>(contactGroupFilter==='all'||(contactGroupFilter==='ungrouped'?!contactTags(c).length:contactTags(c).some(tag=>'group:'+tag===contactGroupFilter)))&&[c.name,c.email,c.company,c.role,contactTags(c).join(' ')].join(' ').toLowerCase().includes(q))}
-function renderContacts(q){$('#contacts-body').innerHTML=visibleContacts(q).map(c=>`<tr>${contactBulkMode?`<td class="contact-bulk-check"><input type="checkbox" data-contact-bulk-id="${c.id}" aria-label="Zaznacz kontakt" ${contactBulkSelected.has(c.id)?'checked':''} ${contactBulkBusy?'disabled':''}></td>`:''}<td><strong>${esc(c.name)}</strong>${c.simulated?'<span class="badge warn">Symulacja</span>':''}<small>${esc(c.email)}</small></td><td>${esc(c.company)||'—'}<small>${esc(c.role)}</small></td><td><span data-no-translate>${contactTags(c).map(tag=>`<span class="badge gray">${esc(tag)}</span>`).join(' ')||esc(translateUiText('Bez tagów'))}</span><br><button class="link" data-action="contact-group" data-id="${c.id}">Edytuj tagi</button></td><td>${badge(c.status)}</td><td><button class="link" data-action="contact-status" data-id="${c.id}" data-status="paused">Wstrzymaj</button><button class="link" data-action="contact-status" data-id="${c.id}" data-status="unsubscribed">Rezygnacja</button></td></tr>`).join('')||'<tr><td colspan="'+(contactBulkMode?6:5)+'">'+translateUiText('Brak kontaktów. Dodaj osobę lub zaimportuj plik CSV.')+'</td></tr>';syncContactBulkControls()}
+function renderContacts(q){$('#contacts-body').innerHTML=visibleContacts(q).map(c=>`<tr>${contactBulkMode?`<td class="contact-bulk-check"><input type="checkbox" data-contact-bulk-id="${c.id}" aria-label="Zaznacz kontakt" ${contactBulkSelected.has(c.id)?'checked':''} ${contactBulkBusy?'disabled':''}></td>`:''}<td><strong>${esc(c.name)}</strong>${c.simulated?'<span class="badge warn">Symulacja</span>':''}<small>${esc(c.email)}</small>${contactResearchDetails(c.research_data)}</td><td>${esc(c.company)||'—'}<small>${esc(c.role)}</small></td><td><span data-no-translate>${contactTags(c).map(tag=>`<span class="badge gray">${esc(tag)}</span>`).join(' ')||esc(translateUiText('Bez tagów'))}</span><br><button class="link" data-action="contact-group" data-id="${c.id}">Edytuj tagi</button></td><td>${badge(c.status)}</td><td><button class="link" data-action="contact-status" data-id="${c.id}" data-status="paused">Wstrzymaj</button><button class="link" data-action="contact-status" data-id="${c.id}" data-status="unsubscribed">Rezygnacja</button></td></tr>`).join('')||'<tr><td colspan="'+(contactBulkMode?6:5)+'">'+translateUiText('Brak kontaktów. Dodaj osobę lub zaimportuj plik CSV.')+'</td></tr>';syncContactBulkControls()}
 

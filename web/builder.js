@@ -7,6 +7,11 @@ function campaignAudience(c){if(c.audience_mode==='tags')return translateUiText(
 function campaignRecipientNotice(c){if(c.audience_mode==='tags')return translateUiText('Odbiorcy według tagów:')+' '+contactTags(c.audience_tags).join('; ')+' · '+translateUiText(c.tag_match==='all'?'Wszystkie wybrane tagi (I)':'Dowolny z wybranych tagów (LUB)');if(c.audience_mode==='group')return translateUiText('Przygotowanie obejmuje aktywne kontakty należące do wybranej grupy w chwili generowania.')+' '+translateUiText('Grupa docelowa')+': '+c.target_group+'.';if(c.audience_mode==='selected')return 'Przygotowanie obejmuje wyłącznie wybrane, nadal aktywne kontakty. Lista jest zapisana w kampanii.';return 'Przygotowanie obejmuje wszystkie aktywne kontakty w bazie w chwili generowania.'}
 const companyMaterials=website=>{try{return state.library.materials.filter(m=>!m.simulated&&new URL(m.website).hostname.replace(/^www\./,'')===new URL(website).hostname.replace(/^www\./,''))}catch{return []}};
 
+function showBuilderEditing(){
+ $('.builder-top .section-label').textContent=translateUiText('EDYCJA KAMPANII');
+ if(!$('.campaign-edit-notice'))$('#campaign-form').insertAdjacentHTML('afterbegin','<p class="notice campaign-edit-notice">Zapis zmian wstrzyma aktywną kampanię. Wysłane kroki pozostają zablokowane. Zmienione oczekujące wiadomości zostaną odświeżone według szablonów. Po zmianie szkicu przygotuj wiadomości ponownie.</p>');
+}
+
 async function editCampaign(id){const data=await api('campaign/edit-data',{id});if(data.campaign.project_id!==state.seller_project.id)return;openCampaignBuilder(data)}
 function openCampaignBuilder(editing=null){
   builderEditing=editing;
@@ -20,7 +25,7 @@ function openCampaignBuilder(editing=null){
   <form id="campaign-form" class="builder-form">
     <div class="actions builder-small-actions"><button type="button" class="secondary" data-builder="import-project">Importuj z projektu</button><span class="hint" data-no-translate>${esc(sellerProject().name||'')}</span></div>
     <section data-stage="0"><span class="section-label">01 / ODBIORCY</span><h1>Z kim chcesz porozmawiać?</h1><p class="muted">Oferta i grupa docelowa są ustalane osobno dla każdej kampanii.</p><label for="build-name">Nazwa kampanii</label><input id="build-name" name="name" required placeholder="np. Wprowadzenie nowej usługi"><label for="build-audience">Opis grupy docelowej</label><input id="build-audience" name="audience" placeholder="Stanowiska, firmy, potrzeby…"><label for="build-mode">Sposób doboru odbiorców</label><select id="build-mode" name="audience_mode"><option value="tags" ${(state.contact_tags||[]).length?'selected':''}>Według tagów</option><option value="all" ${!(state.contact_tags||[]).length?'selected':''}>Wszystkie aktywne kontakty w bazie</option><option value="selected">Wybrane kontakty</option></select><div id="builder-target-tags" hidden><fieldset class="campaign-tag-picker"><legend>Tagi odbiorców</legend>${(state.contact_tags||[]).map(tag=>`<label class="check"><input type="checkbox" name="audience_tags" value="${esc(tag)}"><span data-no-translate>${esc(tag)}</span></label>`).join('')||'<p class="hint">Najpierw dodaj tagi do kontaktów.</p>'}</fieldset><label for="build-tag-match">Sposób dopasowania tagów</label><select id="build-tag-match" name="tag_match"><option value="any">Dowolny z wybranych tagów (LUB)</option><option value="all">Wszystkie wybrane tagi (I)</option></select><p class="hint">Kontakt bierze udział w kampanii tylko raz, nawet gdy pasuje do kilku tagów.</p></div><div id="builder-recipients" class="recipient-picker" hidden>${contacts.map(c=>`<label class="check"><input type="checkbox" name="contact_ids" value="${c.id}"><span><strong>${esc(c.name)}</strong><small>${esc(c.company)} · ${esc(c.email)}</small></span></label>`).join('')||'<p class="hint">Najpierw dodaj kontakty w zakładce Kontakty.</p>'}</div><p id="builder-recipient-hint" class="hint"></p></section>
-    <section data-stage="1" hidden><span class="section-label">02 / OFERTA</span><h1>Co wyróżnia Twoją ofertę?</h1><p class="muted">Podaj stronę dowolnej firmy albo opisz ofertę własnymi słowami.</p><label for="company-url">Strona firmy, w imieniu której piszesz</label><input id="company-url" name="website" type="text" inputmode="url" autocapitalize="none" spellcheck="false" placeholder="firma.pl"><div class="actions builder-small-actions"><button type="button" class="secondary" data-builder="discover">↗ Pobierz ofertę i materiały</button><select id="project-picker" aria-label="Zapisany projekt firmy"><option value="">Wybierz zapisany projekt…</option>${state.library.projects.map(p=>`<option value="${esc(p.website)}">${esc(p.name)}</option>`).join('')}</select></div><p id="research-status" class="hint">Brak domyślnej firmy. Każda domena ma oddzielną bibliotekę materiałów.</p><label for="build-offer">Co oferujesz i jaką korzyść daje to klientowi?</label><textarea id="build-offer" name="offer" rows="5" required placeholder="Opisz konkretny produkt lub usługę."></textarea>${sellingPointsSection('builder')}<div class="row"><div><label for="build-language">Język wiadomości</label><select id="build-language" name="language">${messageLanguageOptions(state.preferences.message_language)}</select></div><div><label for="build-cta">Wezwanie do działania</label><input id="build-cta" name="cta" placeholder="np. Umów rozmowę"></div></div><label for="build-cta-url">Link do następnego kroku (opcjonalnie)</label><input id="build-cta-url" name="cta_url" type="url" placeholder="https://twoja-firma.pl/kontakt"><label for="build-material-mode">Materiał dla odbiorcy</label><select id="build-material-mode" name="material_mode"><option value="none">Bez dodatkowego materiału</option><option value="auto">Dobierz ze strony według kontekstu odbiorcy</option><option value="manual">Wybiorę artykuł lub case study</option></select><div id="builder-material-list"></div><p class="hint">Automatyczny dobór korzysta z podobieństwa słów w stanowisku, notatkach, grupie docelowej. Bez dopasowania nie dodaje linku. Wybór ręczny dołącza jeden z wybranych materiałów.</p></section>
+    <section data-stage="1" hidden><span class="section-label">02 / OFERTA</span><h1>Co wyróżnia Twoją ofertę?</h1><p class="muted">Podaj stronę dowolnej firmy albo opisz ofertę własnymi słowami.</p><label for="company-url">Strona firmy, w imieniu której piszesz</label><input id="company-url" name="website" type="text" inputmode="url" autocapitalize="none" spellcheck="false" placeholder="firma.pl"><div class="actions builder-small-actions"><button type="button" class="secondary" data-builder="discover">↗ Pobierz ofertę i materiały</button><select id="project-picker" aria-label="Zapisany projekt firmy"><option value="">Wybierz zapisany projekt…</option>${state.library.projects.map(p=>`<option value="${esc(p.website)}">${esc(p.name)}</option>`).join('')}</select></div><p id="research-status" class="hint">Brak domyślnej firmy. Każda domena ma oddzielną bibliotekę materiałów.</p><label for="build-offer">Co oferujesz i jaką korzyść daje to klientowi?</label><textarea id="build-offer" name="offer" rows="5" required placeholder="Opisz konkretny produkt lub usługę."></textarea>${sellingPointsSection('builder')}<div class="row"><div><label for="build-language">Język wiadomości</label><select id="build-language" name="language">${messageLanguageOptions(projectMessageLanguage())}</select><button type="button" class="link" id="build-language-reset">Użyj języka projektu</button></div><div><label for="build-cta">Wezwanie do działania</label><input id="build-cta" name="cta" placeholder="np. Umów rozmowę"></div></div><label for="build-cta-url">Link do następnego kroku (opcjonalnie)</label><input id="build-cta-url" name="cta_url" type="url" placeholder="https://twoja-firma.pl/kontakt"><label for="build-material-mode">Materiał dla odbiorcy</label><select id="build-material-mode" name="material_mode"><option value="none">Bez dodatkowego materiału</option><option value="auto">Dobierz ze strony według kontekstu odbiorcy</option><option value="manual">Wybiorę artykuł lub case study</option></select><div id="builder-material-list"></div><p class="hint">Automatyczny dobór korzysta z podobieństwa słów w stanowisku, notatkach, grupie docelowej. Bez dopasowania nie dodaje linku. Wybór ręczny dołącza jeden z wybranych materiałów.</p></section>
     <section data-stage="2" hidden><span class="section-label">03 / SEKWENCJA</span><h1>Każda wiadomość ma swój moment.</h1><p class="muted">Ustaw kroki, odstępy i treść. Odpowiedź lub rezygnacja zatrzyma dalszą wysyłkę.</p><div id="sequence-map" class="sequence-map"></div><div class="flow-start">○ Aktywny odbiorca z adresem email</div><div id="steps"></div><button type="button" class="secondary" data-builder="add-step">+ Dodaj follow-up</button><p class="hint">Dni liczone od uruchomienia kampanii. Zmienne: {{name}}, {{company}}, {{offer}}, {{signal_title}}, {{material_title}}, {{material_url}}, {{cta}}. Edycja szablonu nie wysyła wiadomości.</p></section>
     <section data-stage="3" hidden><span class="section-label">04 / USTAWIENIA</span><h1>Sprawdź, zanim ruszysz.</h1><p class="muted">Zapisz kampanię jako szkic, przygotuj wiadomości i sprawdź je przed wysyłką.</p><label for="build-channel">Kanał wysyłki</label><select id="build-channel" name="channel"><option value="email">E-mail · kolejka SMTP</option><option value="linkedin">LinkedIn · kolejka do ręcznej wysyłki</option></select><p class="hint">Wiadomości LinkedIn pojawią się w panelu rozszerzenia PKEY. Wyślij je ręcznie w LinkedIn, a potem oznacz jako wysłane.</p><div id="builder-summary"></div><div class="builder-checks"><p>✓ Zatrzymanie sekwencji po odpowiedzi i rezygnacji</p><p>✓ Sprawdzenie wiadomości przed wysyłką</p><p>${state.integrations.smtp?'✓ Poczta wychodząca jest skonfigurowana':'○ Poczta wymaga podłączenia w Integracjach'}</p></div><button class="primary" type="submit">Zapisz szkic kampanii</button></section>
     <div class="builder-footer"><button type="button" class="secondary" data-builder="prev">Wstecz</button><span id="builder-stage-count">Krok 1 z 4</span><button type="button" class="primary" data-builder="next">Zapisz i przejdź dalej →</button></div>
@@ -28,7 +33,7 @@ function openCampaignBuilder(editing=null){
   mountManualInteractionBuilder();
   bindSellingPoints($('#campaign-form'));bindWebsiteActions($('#campaign-form'));
   addStep();decorateBuilderSteps();
-  if(editing){const c=editing.campaign;restoreBuilder({...c,steps:editing.steps,contact_ids:JSON.parse(c.contact_ids),material_ids:JSON.parse(c.material_ids),audience_tags:JSON.parse(c.audience_tags),conditions:JSON.parse(c.conditions)});$('#campaign-form').insertAdjacentHTML('afterbegin','<p class="notice campaign-edit-notice">Zapis zmian wstrzyma aktywną kampanię. Wysłane kroki pozostają zablokowane. Zmienione oczekujące wiadomości zostaną odświeżone według szablonów. Po zmianie szkicu przygotuj wiadomości ponownie.</p>');$('.builder-top .section-label').textContent=translateUiText('EDYCJA KAMPANII');document.querySelector('[data-builder=save-draft]').textContent=translateUiText('Zapisz zmiany');$('#campaign-form [type=submit]').textContent=translateUiText('Zapisz zmiany')}
+  if(editing){const c=editing.campaign;restoreBuilder({...c,steps:editing.steps,contact_ids:JSON.parse(c.contact_ids),material_ids:JSON.parse(c.material_ids),audience_tags:JSON.parse(c.audience_tags),conditions:JSON.parse(c.conditions)});showBuilderEditing()}
   try{const draft=JSON.parse(localStorage.getItem(builderDraftKey())||'null');if(draft&&(!editing||draft.revision===editing.campaign.revision))restoreBuilder(draft)}catch{}
   $('#campaign-form').oninput=()=>{persistBuilder();updateRecipientHint();renderSequenceMap();$('#builder-campaign-title').textContent=$('#build-name').value||'Nowa kampania'};
   $('#campaign-form').addEventListener('focusin',e=>{const row=e.target.closest('#steps .step');if(row){builderSelectedStep=[...document.querySelectorAll('#steps .step')].indexOf(row);renderSequenceMap()}});
@@ -39,16 +44,58 @@ function openCampaignBuilder(editing=null){
   $('#company-url').onchange=()=>{renderBuilderMaterials();persistBuilder()};
   $('#build-language').dataset.previousLanguage=$('#build-language').value;
   $('#build-language').onchange=changeBuilderLanguage;
+  $('#build-language-reset').onclick=()=>{
+   const select=$('#build-language'),language=projectMessageLanguage();
+   if(select.value===language)return;
+   select.value=language;
+   changeBuilderLanguage();
+  };
   $('#project-picker').onchange=e=>{const p=state.library.projects.find(p=>p.website===e.target.value);if(p){$('#company-url').value=p.website;$('#build-offer').value=p.offer;renderBuilderMaterials();persistBuilder()}};
-  $('#campaign-form').onsubmit=e=>{
+  const form=$('#campaign-form');
+  const saveButton=$('[data-builder=save-draft]');
+  const returnButton=form.querySelector('button[type=submit]');
+  saveButton.setAttribute('form',form.id);
+  saveButton.type='submit';
+  saveButton.textContent=translateUiText('Zapisz kampanię');
+  returnButton.textContent=translateUiText('Zapisz i wróć');
+  let saving=false;
+  form.onsubmit=e=>{
    e.preventDefault();
-   if(builderStep!==3){showBuilderStage(builderStep+1);return}
+   if(saving)return;
+   const returnToList=e.submitter===returnButton;
    if(hasUnappliedManualScenario()){
+    if(builderStep!==3)showBuilderStage(3);
     $('#manual-scenario-title').focus();
     toast('Najpierw zastosuj zmiany scenariusza lub anuluj edycję.');
     return;
    }
-   run(e.submitter,async()=>{const data=builderData(),edited=builderEditing?.campaign;await api(edited?'campaign/update':'campaigns',edited?{...data,id:edited.id,project_id:edited.project_id,revision:edited.revision}:data);localStorage.removeItem(builderDraftKey());if(edited&&monitoringSimulation){const runs=fetchedSimulation().deliveryRuns;if(runs?.[edited.id]){delete runs[edited.id];saveSimulationResults()}}builderEditing=null;view='campaigns';selectedCampaign=edited?.id||null;await refresh();toast(edited?translateUiText('Zapisano zmiany kampanii. Wysyłka nie została uruchomiona.'):'Kampania zapisana jako szkic. Przygotuj i sprawdź wiadomości.')})
+   saving=true;
+   const headerButton=$('[data-builder=header-next]');
+   const buttons=[saveButton,returnButton,headerButton];
+   buttons.forEach(button=>button.disabled=true);
+   form.inert=true;
+   run(null,async()=>{
+    try{
+     const data=builderData(),edited=builderEditing?.campaign,draftKey=builderDraftKey();
+     const result=await api(edited?'campaign/update':'campaigns',edited?{...data,id:edited.id,project_id:edited.project_id,revision:edited.revision}:data);
+     if(edited&&monitoringSimulation){const runs=fetchedSimulation().deliveryRuns;if(runs?.[edited.id]){delete runs[edited.id];saveSimulationResults()}}
+     if(!form.isConnected||view!=='builder')return;
+     try{localStorage.removeItem(draftKey)}catch{}
+     if(returnToList){
+      builderEditing=null;view='campaigns';selectedCampaign=null;render();
+     }else if(edited){
+      edited.revision=result.revision;
+      edited.status=result.status;
+     }else{
+      builderEditing={campaign:{id:result.id,project_id:result.project_id,revision:result.revision},selected_contacts:[]};
+      showBuilderEditing();
+     }
+     await refresh();
+     toast('Zapisano kampanię.');
+    }finally{
+     saving=false;form.inert=false;buttons.forEach(button=>button.disabled=false);
+    }
+   });
   };
   $('#builder-campaign-title').textContent=$('#build-name').value||'Nowa kampania';
   updateRecipientHint();renderBuilderMaterials();showBuilderStage(0);
@@ -204,7 +251,7 @@ function showBuilderStage(stage){
  $('.builder-preview').hidden=builderStep<2;$('.builder-layout').dataset.stageIndex=builderStep;
  document.querySelectorAll('[data-builder-step]').forEach(b=>{b.classList.toggle('selected',Number(b.dataset.builderStep)===builderStep);b.setAttribute('aria-current',Number(b.dataset.builderStep)===builderStep?'step':'false')});
  $('#builder-stage-count').textContent=`Krok ${builderStep+1} z 4`;document.querySelector('[data-builder=prev]').disabled=builderStep===0;document.querySelector('[data-builder=next]').hidden=builderStep===3;
- document.querySelector('[data-builder=header-next]').textContent=builderStep===3?(builderEditing?translateUiText('Zapisz zmiany'):'Zapisz kampanię'):'Zapisz i przejdź dalej';
+ document.querySelector('[data-builder=header-next]').textContent=translateUiText(builderStep===3?'Zapisz i wróć':'Zapisz i przejdź dalej');
  $('#builder-help').textContent=['Wybierz osoby, do których pasuje oferta. Każda kampania ma własną listę odbiorców.','Strona firmy może być źródłem oferty, argumentów i materiałów. Sprawdź pobraną treść przed wysyłką.','Zaplanuj pierwszy kontakt i kolejne wiadomości. Po prawej sprawdzisz wynik dla wybranego odbiorcy.','Zapisz szkic. Samo zapisanie nie uruchamia wysyłki; kolejkę uruchomisz w widoku kampanii.'][builderStep];
  if(builderStep===3){const d=builderData();$('#builder-summary').innerHTML=`<dl class="builder-summary"><dt>Kampania</dt><dd>${esc(d.name)||'Brak nazwy'}</dd><dt>Strona nadawcy</dt><dd>${esc(d.website)||'Oferta wpisana ręcznie'}</dd><dt>Odbiorcy</dt><dd>${d.audience_mode==='tags'?esc(translateUiText('Tagi')+': '+d.audience_tags.join('; ')+' · '+translateUiText(d.tag_match==='all'?'Wszystkie wybrane tagi (I)':'Dowolny z wybranych tagów (LUB)')):d.audience_mode==='selected'?d.contact_ids.length+' wybranych kontaktów':'Wszystkie aktywne kontakty'}</dd><dt>Sekwencja</dt><dd>${d.steps.length} wiadomości · dni ${d.steps.map(s=>s.delay_days).join(', ')}</dd><dt>Materiały</dt><dd>${{none:'Bez materiałów',auto:'Dobór według kontekstu',manual:'Ręczny wybór'}[d.material_mode]}</dd></dl>`}
 }
@@ -216,10 +263,14 @@ function renderLibrary(){
 document.addEventListener('click',e=>{
  const b=e.target.closest('button');if(!b)return;
  if(b.dataset.builderStep!==undefined){showBuilderStage(Number(b.dataset.builderStep));return}
- const action=b.dataset.builder;if(action)run(b,async()=>{
+ const action=b.dataset.builder;
+ if(action==='save-draft')return;
+ if(action==='header-next'&&builderStep===3){
+  const form=$('#campaign-form');form.requestSubmit(form.querySelector('button[type=submit]'));return;
+ }
+ if(action)run(b,async()=>{
   if(action==='exit'){persistBuilder();selectedCampaign=builderEditing?.campaign.id||null;builderEditing=null;view='campaigns';render()}
-  if(action==='next'||action==='header-next'){if(builderStep===3)$('#campaign-form').requestSubmit();else showBuilderStage(builderStep+1)}
-  if(action==='save-draft'){showBuilderStage(3);$('#campaign-form').requestSubmit()}
+  if(action==='next'||action==='header-next')showBuilderStage(builderStep+1);
   if(action==='prev')showBuilderStage(builderStep-1);
   if(action==='import-project')importCampaignProject();
   if(action==='step-preview')await previewBuilderStep(b.closest('.step'));

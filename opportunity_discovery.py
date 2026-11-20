@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import ai_service
+import openai_usage
 import content_library
 import languages
 import opportunity_catalog
@@ -126,6 +127,18 @@ def supports_date(day,proof):
     return any(int(number)==day.day for number in numbers if len(number)<=2) and any(public_data.has_phrase(normalized,months.split()[day.month-1]) for months in month_sets)
 
 
+def read_publication(url, cache, fetch=None):
+    key=canonical_url(url)
+    if key not in cache:
+        html,final=(fetch or content_library.fetch_public)(key)
+        final=canonical_url(final)
+        parser=content_library.Page();parser.feed(html)
+        body=' '.join(parser.parts)[:100000]
+        if len(body)<60:raise ValueError('Publikacja nie zawiera wystarczającej treści do sprawdzenia dowodu.')
+        cache[key]={'url':final,'body':body,'links':[urljoin(final,link[0]) for link in parser.links[:200]]}
+    return cache[key]
+
+
 class Cancelled(Exception):pass
 class Stale(Exception):pass
 
@@ -172,7 +185,8 @@ class Discovery:
             with self.db() as c:
                 run_id=c.execute("INSERT INTO opportunity_searches(project_id,signature,request,status,stage,total,created,updated) VALUES(?,?,?,'running','Przygotowanie wyszukiwania',?,?,?)",
                     (project['id'],signature(project),json.dumps(request,ensure_ascii=False),len(groups),now,now)).lastrowid
-            threading.Thread(target=self.execute,args=(run_id,project,groups,request),daemon=True).start()
+            threading.Thread(target=openai_usage.run,args=('discover/opportunities/start',None,project['id'],
+                self.execute,run_id,project,groups,request),daemon=True).start()
             return {'id':run_id,'total':len(groups)}
         except Exception:
             if run_id:
@@ -196,15 +210,7 @@ class Discovery:
             with self.db() as c:c.execute("UPDATE opportunity_searches SET stage=?,updated=? WHERE id=? AND status='running'",(stage,time.time(),run_id))
 
     def page(self,url,cache):
-        key=canonical_url(url)
-        if key not in cache:
-            html,final=content_library.fetch_public(key)
-            final=canonical_url(final)
-            parser=content_library.Page();parser.feed(html)
-            body=' '.join(parser.parts)[:100000]
-            if len(body)<60:raise ValueError('Publikacja nie zawiera wystarczającej treści do sprawdzenia dowodu.')
-            cache[key]={'url':final,'body':body,'links':[urljoin(final,link[0]) for link in parser.links[:200]]}
-        return cache[key]
+        return read_publication(url,cache)
 
     def validate(self,row,kinds,citations,cache):
         if not isinstance(row,dict):raise ValueError('Nieprawidłowy wynik wyszukiwania.')

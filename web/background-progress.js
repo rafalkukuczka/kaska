@@ -7,7 +7,17 @@ const backgroundLabels={
  'campaign/messages/delete':'Usuwanie wiadomości',
  'contacts/tags/bulk':'Przypisywanie tagów do kontaktów',
  'discover/contacts/search':'Wyszukiwanie kontaktów firmy', 'discover/contacts/add':'Dodawanie kontaktów do grupy', 'discover/contacts/add-simulation':'Zapisywanie kontaktów z symulacji',
+ 'lead-search/contact-search':'Wyszukiwanie kontaktów firmy', 'lead-search/contact-add':'Zapisywanie kontaktów',
  'contact/group':'Zapisywanie grupy kontaktu',
+ 'lead-search/start':'Wyszukiwanie firm','lead-search/job':'Praca agentów',
+ 'discovery-pilot/search':'Wyszukiwanie firm w Discover',
+ 'discovery-pilot/qualify':'Kwalifikacja firmy',
+ 'ai/manual-agent':'Decyzja agenta AI','ai/manual-interaction':'Przygotowywanie scenariusza',
+ 'extension/manual-agent':'Rozszerzenie · Decyzja agenta AI',
+ 'extension/generate':'Rozszerzenie · Generowanie wiadomości',
+ 'extension/refine':'Rozszerzenie · Poprawianie wiadomości',
+ 'extension/article':'Rozszerzenie · Dobór artykułu',
+ 'extension/translate':'Rozszerzenie · Tłumaczenie',
  'ai/suggest-audience':'Przygotowywanie filtra wyszukiwania',
  'research':'Odczyt strony i oferty','ai/refine':'Poprawianie tekstu z AI',
  'ai/selling-points':'Przygotowywanie problemów i wartości','ai/proof-points':'Odczyt dowodów ze strony',
@@ -58,3 +68,51 @@ async function pollBackgroundProgress(){
 }
 setInterval(()=>{if(backgroundJobs.length||backgroundRequests.size||state?.discovery_opportunities?.runs.some(r=>['running','cancelling'].includes(r.status))||state?.prospecting?.runs.some(r=>['searching','verifying','drafting'].includes(r.status)))pollBackgroundProgress().catch(()=>{})},3000);
 document.addEventListener('DOMContentLoaded',()=>pollBackgroundProgress().catch(()=>{}));
+
+let openAIUsagePolling=false;
+function openAIUsageLabel(row){
+ return translateUiText(backgroundLabels[row.action]||'Operacja OpenAI')+(row.reference?' '+row.reference:'');
+}
+function openAIUsdFormatter(locale){
+ const currency=new Intl.NumberFormat(locale,{style:'currency',currency:'USD',currencyDisplay:'code',
+  minimumFractionDigits:4,maximumFractionDigits:8});
+ return amount=>amount===null?translateUiText('Koszt niedostępny'):'≈ '+currency.format(Number(amount));
+}
+function renderOpenAIUsage(operations){
+ const list=$('#openai-cost-items');
+ $('#openai-cost-empty').hidden=Boolean(operations.length);
+ list.hidden=!operations.length;
+ const locale=uiLanguage==='en'?'en-US':'pl-PL';
+ const number=new Intl.NumberFormat(locale);
+ const cost=openAIUsdFormatter(locale);
+ const metrics=row=>{
+  const tokens=number.format(row.input_tokens+row.output_tokens);
+  return `${tokens} ${translateUiText('tokenów')} · ${cost(row.cost_usd)}`;
+ };
+ const items=operations.map(row=>`<li><strong>${esc(openAIUsageLabel(row))}</strong><span>${esc(metrics(row))}</span>
+  <small>${esc(translateUiText('Zapytania'))}: ${number.format(row.calls)} · ${number.format(row.input_tokens)} ${esc(translateUiText('wejściowych'))} · ${number.format(row.output_tokens)} ${esc(translateUiText('wyjściowych'))}
+  ${row.web_calls?' · Web Search: '+number.format(row.web_calls):''}</small></li>`).join('');
+ if(list._items!==items){list.innerHTML=items;list._items=items}
+}
+async function pollOpenAIUsage(){
+ if(openAIUsagePolling||document.hidden)return;
+ openAIUsagePolling=true;
+ try{
+  const response=await fetch('/api/openai-usage');
+  if(response.ok)renderOpenAIUsage((await response.json()).operations);
+ }catch{}finally{openAIUsagePolling=false}
+}
+document.addEventListener('DOMContentLoaded',pollOpenAIUsage);
+document.addEventListener('visibilitychange',pollOpenAIUsage);
+setInterval(pollOpenAIUsage,2500);
+document.addEventListener('click',event=>{
+ const menu=$('#openai-cost-menu');
+ if(menu.open&&!menu.contains(event.target))menu.open=false;
+});
+document.addEventListener('keydown',event=>{
+ const menu=$('#openai-cost-menu');
+ if(event.key==='Escape'&&menu.open&&!$('#modal').open){
+  menu.open=false;
+  $('#openai-cost-bell').focus();
+ }
+});

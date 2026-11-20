@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import test_app
 import app
+import languages
 import shared_project
 
 
@@ -41,6 +42,21 @@ class SharedProjectTests(unittest.TestCase):
             with self.subTest(value=value),self.assertRaises(ValueError):shared_project.save(app.db,{'search_languages':value})
         shared_project.save(app.db,{'search_languages':[]})
         self.assertEqual(shared_project.get(app.db)['search_languages'],[])
+
+    def test_message_language_inherits_global_settings_and_supports_project_override(self):
+        languages.save_preferences(app.db,{'message_language':'en'})
+        first=shared_project.get(app.db)['id']
+        self.assertEqual(shared_project.message_language(app.db,first),'en')
+        shared_project.save(app.db,{'message_language':'de'})
+        second=shared_project.create(app.db,{'name':'Other'})['id']
+        languages.save_preferences(app.db,{'message_language':'fr'})
+        self.assertEqual(shared_project.message_language(app.db,first),'de')
+        self.assertEqual(shared_project.message_language(app.db,second),'fr')
+        for invalid in (None,'xx',[]):
+            with self.subTest(invalid=invalid),self.assertRaises(ValueError):
+                shared_project.save(app.db,{'project_id':first,'message_language':invalid})
+        shared_project.save(app.db,{'project_id':first,'message_language':''})
+        self.assertEqual(shared_project.message_language(app.db,first),'fr')
 
     def test_one_time_migration_prefers_latest_search_to_library(self):
         with app.db() as c:

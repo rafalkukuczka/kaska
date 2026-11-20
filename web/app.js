@@ -1,6 +1,11 @@
 let contactSearch='',contactGroupFilter='all',contactBulkMode=false,contactBulkTags=[],contactBulkBusy=false,contactBulkScope='';
 const contactBulkSelected=new Set();
-let state, view=['dashboard','discover','prospecting','companies','contacts','campaigns','inbox','library','reports','settings','administration','project'].includes(location.hash.slice(1))?location.hash.slice(1):'dashboard', selectedCampaign=null;
+const leadWorkspaceRoutes = {
+ 'lead-discover': 'discover',
+ prospecting: 'prospecting/kontakty',
+ discover: 'prospecting/okazje',
+};
+let state, view=viewFromHash(location.hash)||'dashboard', selectedCampaign=null;
 const $=s=>document.querySelector(s);
 function normalizeWebsite(value){
   let address=String(value||'').trim();
@@ -51,6 +56,15 @@ function renderInbox(){
 }
 function renderTop(title,sub,action=''){if(title==='Integracje')action='<button class="primary" data-action="connect-gmail">Podłącz Gmail</button>';return `<div class="topline"><div><h1>${title}</h1><p class="muted">${sub}</p></div>${action}</div>${monitoringSimulation?'<p class="notice app-simulation-notice">Symulowane są pobieranie danych, wysyłka i odpowiedzi. Twoje wpisy i konfiguracja są zapisywane normalnie. Wiadomości nie są wysyłane do klientów.</p>':''}`}
 const dashboardSearchDrafts=new Map();
+const dashboardCompanyLimits=[5,10,30,50,100];
+const dashboardCompanyLimitKey=projectId=>'kaska-lead-company-limit:'+projectId;
+function dashboardCompanyLimit(projectId){
+ try{
+  const stored=Number(localStorage.getItem(dashboardCompanyLimitKey(projectId)));
+  if(dashboardCompanyLimits.includes(stored))return stored;
+ }catch{}
+ return 30;
+}
 function searchRefinement(project){
  const cached=dashboardSearchDrafts.get(project.id);
  if(cached?.source===leadBriefSource(project))return cached.text;
@@ -67,41 +81,120 @@ function refinedLeadBrief(project,refinement){
 function dashboardCanSearch(project,refinement=''){
  return [project.offer,project.audience,refinement].some(value=>String(value||'').trim().length>=10);
 }
-function dashboardWelcomePanel(leads=false){
+function leadSearchForm(leads=false){
  const project=sellerProject(),draft=searchRefinement(project);
- return `<section class="hero dashboard-welcome"><div class="welcome-decoration welcome-decoration-left" aria-hidden="true"></div><div class="welcome-decoration welcome-decoration-right" aria-hidden="true"></div><div class="welcome-content"><div class="welcome-intro"><img src="/assets/kaska.png" alt="" class="welcome-avatar"><div><p class="welcome-greeting">Dobrze Cię widzieć!</p><h2>Kogo dziś szukamy?</h2></div></div><${leads?'div':'form'} id="dashboard-search-form" data-project-id="${project.id}" data-search-view="${leads?'leads':'dashboard'}"><label class="welcome-search-label" for="dashboard-audience">Doprecyzuj wyszukiwanie (opcjonalnie)</label><div class="welcome-search"><input id="dashboard-audience" value="${esc(draft)}" maxlength="3000" placeholder="np. tym razem tylko producenci żywności"><button type="submit" class="primary" ${leads?'id="prospect-search" form="prospect-form"':''} ${dashboardCanSearch(project,draft)?'':'disabled'}>Szukaj <span aria-hidden="true">↗</span></button></div><p class="hint dashboard-search-context"><span>Korzystasz z kryteriów projektu</span> <strong data-no-translate>${esc(project.name)}</strong> <button type="button" class="link" data-view="project">Zmień kryteria</button></p><p class="hint">Puste pole oznacza wyszukiwanie według projektu. Doprecyzowanie dotyczy tylko tego wyszukiwania.</p></${leads?'div':'form'}><div class="welcome-shortcuts"><button type="button" class="secondary" data-view="discover">Odkryj firmy</button><button type="button" class="secondary" data-view="contacts">Twoje kontakty</button><button type="button" class="secondary" data-view="reports">Zobacz raporty</button><button type="button" class="secondary" data-action="new-campaign">Nowa kampania</button></div><p class="welcome-project"><span>Bieżący projekt:</span> <strong data-no-translate>${esc(project.name)}</strong></p></div></section>`;
+ const limit=dashboardCompanyLimit(project.id);
+ return `<${leads?'div':'form'} id="dashboard-search-form" data-project-id="${project.id}" data-search-view="${leads?'leads':'dashboard'}">
+   <label class="welcome-search-label" for="dashboard-audience">Doprecyzuj wyszukiwanie (opcjonalnie)</label>
+   <div class="welcome-search"><input id="dashboard-audience" value="${esc(draft)}" maxlength="${leads?3000:1200}" placeholder="np. tym razem tylko producenci żywności">
+     <button type="submit" class="primary" ${leads?'id="prospect-search" form="prospect-form"':''} ${dashboardCanSearch(project,draft)?'':'disabled'}>Szukaj <span aria-hidden="true">↗</span></button></div>
+   ${leads?'':`<label class="dashboard-company-limit" for="lead-company-limit">Limit firm
+     <select id="lead-company-limit" name="company_limit">${dashboardCompanyLimits.map(option=>`<option value="${option}" ${option===limit?'selected':''}>${option}</option>`).join('')}</select></label>`}
+   <p class="hint dashboard-search-context">${leads ? '<span>Puste pole oznacza wyszukiwanie według projektu.</span>' :
+     `<span>Korzystasz z kryteriów projektu</span> <strong data-no-translate>${esc(project.name)}</strong> <button type="button" class="link" data-view="project">Zmień kryteria</button>`}</p>
+   ${leads?'':'<p class="hint">Puste pole oznacza wyszukiwanie według projektu. Doprecyzowanie dotyczy tylko tego wyszukiwania.</p>'}
+ </${leads?'div':'form'}>`;
 }
-function bindDashboardWelcome(){
- const form=$('#dashboard-search-form');if(!form)return;
- const projectId=state.seller_project.id,input=$('#dashboard-audience'),leads=form.dataset.searchView==='leads';let submitting=false;
- const button=form.querySelector('button[type=submit]'),sync=()=>{button.disabled=submitting||!dashboardCanSearch(sellerProject(),input.value)||(leads&&($('#prospect-form')?.dataset.searching==='true'||$('#prospect-form')?.dataset.translating==='true'||!state.prospecting?.hunter||state.prospecting.runs.some(r=>['searching','verifying','drafting'].includes(r.status))||leadImportBusy.size>0))};
- input.oninput=()=>{const project=sellerProject();setSearchRefinement(project,input.value);if(leads){const brief=refinedLeadBrief(project,input.value.trim());$('#prospect-lead-brief').value=brief;cacheLeadBrief(project,brief);$('#prospect-lead-brief').oninput()}sync()};sync();
- if(leads){input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();if(!button.disabled)$('#prospect-form').requestSubmit(button)}};return}
- form.onsubmit=event=>{event.preventDefault();if(submitting||!dashboardCanSearch(sellerProject(),input.value))return;submitting=true;run(event.submitter||button,async()=>{try{
-  const refinement=input.value.trim();await flushSellerProject();
-  if(state.seller_project.id!==projectId)return;
+function dashboardWelcomePanel(){
+ return welcomePanel('Kogo dziś szukamy?', leadSearchForm(), dashboardShortcuts());
+}
+function dashboardShortcuts(){
+ return `<div class="welcome-shortcuts"><button type="button" class="secondary" data-view="contacts">Twoje kontakty</button><button type="button" class="secondary" data-view="reports">Zobacz raporty</button><button type="button" class="secondary" data-action="new-campaign">Nowa kampania</button></div>`;
+}
+function welcomePanel(title, search, shortcuts=''){
+ const project=sellerProject();
+ return `<section class="hero dashboard-welcome"><div class="welcome-decoration welcome-decoration-left" aria-hidden="true"></div><div class="welcome-decoration welcome-decoration-right" aria-hidden="true"></div><div class="welcome-content"><div class="welcome-intro"><img src="/assets/kaska.png" alt="" class="welcome-avatar"><div><p class="welcome-greeting">Dobrze Cię widzieć!</p><h2>${title}</h2></div></div>${search}${shortcuts}<p class="welcome-project"><span>Bieżący projekt:</span> <strong data-no-translate>${esc(project.name)}</strong></p></div></section>`;
+}
+function renderLeadWorkspace(){
+ const projectId=sellerProject().id;
+ let root=$('#lead-workspace');
+ if(!root){
+  $('#content').innerHTML=renderTop('Narzędzia pozyskiwania','Wyszukuj kontakty i sprawdzaj okazje sprzedażowe.',
+    '<button type="button" class="secondary" data-view="dashboard">Wróć do Dashboardu</button>')+`
+    <section id="lead-workspace">
+      <div class="lead-workspace-modes" role="group" aria-label="Tryb wyszukiwania">
+        <button type="button" class="secondary" data-view="prospecting">Firmy i kontakty</button>
+        <button type="button" class="secondary" data-view="discover">Okazje sprzedażowe</button>
+      </div>
+      <section class="panel lead-search-panel" id="lead-workspace-search"></section>
+      <div id="lead-workspace-body"></div>
+    </section>`;
+  root=$('#lead-workspace');
+ }
+ $('#breadcrumb').innerHTML='Przestrzeń robocza / <span>Narzędzia pozyskiwania</span>';
+ if(root.dataset.mode!==view||root.dataset.project!==String(projectId)){
+  root.dataset.mode=view;
+  root.dataset.project=projectId;
+  root.querySelectorAll('.lead-workspace-modes button').forEach(button=>{
+   button.setAttribute('aria-pressed',String(button.dataset.view===view));
+  });
+  $('#lead-workspace-body').replaceChildren();
+  $('#lead-workspace-search').innerHTML=leadWorkspaceSearch(view);
+ }
+ if(view==='prospecting')renderProspecting();
+ if(view==='discover')renderDiscover();
+}
+
+function leadWorkspaceSearch(mode){
+ const project=sellerProject();
+ const heading=title=>`<div class="lead-search-heading"><img src="/assets/kaska.png" alt="" width="44" height="44" class="welcome-avatar"><h2>${title}</h2></div>`;
+ if(mode==='prospecting')return `
+  <div class="panel-head">${heading('Znajdź firmy i osoby')}<button type="button" class="link" data-view="project">Zmień kryteria projektu</button></div>
+  ${leadSearchForm(true)}`;
+ return `
+  <div class="panel-head">${heading('Znajdź sygnały sprzedażowe')}<button type="button" class="link" data-open-project-catalog>Wybierz sygnały</button></div>
+  <p class="hint">Sprawdź publiczne zdarzenia pasujące do oferty projektu <strong data-no-translate>${esc(project.name)}</strong>.</p>
+  <button type="button" class="primary" data-find-opportunities disabled>Znajdź okazje <span aria-hidden="true">↗</span></button>`;
+}
+
+function bindProspectingSearch(){
+ const input=$('#dashboard-audience'), button=$('#prospect-search');
+ input.oninput=()=>{
   const project=sellerProject();
-  const brief=refinedLeadBrief(project,refinement);
-  if(brief.length>3000)throw Error(translateUiText('Opis wyszukiwania jest za długi. Skróć doprecyzowanie lub kryteria projektu.'));
+  setSearchRefinement(project,input.value);
+  const brief=refinedLeadBrief(project,input.value.trim()), field=$('#prospect-lead-brief');
+  field.value=brief;
   cacheLeadBrief(project,brief);
-  setSearchRefinement(project,refinement);view='prospecting';render();syncLanguages();
-  $('#prospect-lead-brief').value=brief;
-  const search=$('#prospect-search');
-  if(search.disabled){
-   const message=translateUiText(!state.prospecting?.hunter?'Podłącz Hunter w Integracjach.':'Operacja już trwa. Poczekaj na jej zakończenie.');
-   $('#prospect-feedback').textContent=message;toast(message);return;
+  field.oninput();
+ };
+ input.onkeydown=event=>{
+  if(event.key==='Enter'){
+   event.preventDefault();
+   if(!button.disabled)$('#prospect-form').requestSubmit(button);
   }
-  $('#prospect-form').requestSubmit(search);
- }finally{submitting=false}}).finally(sync)};
+ };
 }
-function render(){if(state&&view==='dashboard'&&document.activeElement?.id==='dashboard-audience'&&Number($('#dashboard-search-form')?.dataset.projectId)===state.seller_project.id)return;renderSimulationControl();renderBackgroundProgress();if(state)renderProjectPicker();if(!state||view==='builder')return;history.replaceState(null,'','#'+view);document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('selected',b.dataset.view===view));$('#breadcrumb').textContent='Przestrzeń robocza / '+({dashboard:'Dashboard',reports:'Raporty',administration:'Administracja',project:'Projekt',companies:'Firmy',contacts:'Kontakty',campaigns:'Kampanie',inbox:'Odpowiedzi',settings:'Integracje',signals:'Sygnały sprzedażowe'}[view]);const el=$('#content');if(view==='prospecting'){$('#breadcrumb').textContent='Przestrze\u0144 robocza / Znajd\u017a klient\u00f3w';renderProspecting();return}if(view==='discover'){$('#breadcrumb').textContent='Przestrze\u0144 robocza / Discover';renderDiscover();return}if(view==='companies'){void renderCompanies();return}if(view==='library'){renderLibrary();return}if(view==='project'){renderSellerProject();return}if(view==='reports'){renderReports();return}
-if(view==='dashboard'){const sent=state.messages.filter(m=>m.status==='sent').length;el.innerHTML=renderTop('Dashboard',new Intl.DateTimeFormat(uiLanguage==='en'?'en-GB':'pl-PL',{dateStyle:'long',timeZone:'Europe/Warsaw'}).format(new Date()))+dashboardWelcomePanel()+dashboardActionsPanel()+`<div class="stats">${[['Kontakty',state.totals.contacts,'Twoja baza potencjalnych klientów'],['Aktywne kampanie',state.campaigns.filter(c=>c.status==='active').length,'Sekwencje pracujące dla Ciebie'],['Wysłane wiadomości',sent,'Oznaczone jako wysłane'],['Odpowiedzi',state.replies.length,'Rozmowy wykryte przez IMAP']].map(([l,n,t])=>`<div class="stat"><p>${l}</p><strong>${n}</strong><small>${t}</small></div>`).join('')}</div><div class="grid"><section class="panel"><div class="panel-head"><h2>Twoje kampanie</h2><button class="link" data-view="campaigns">Zobacz wszystkie →</button></div>${campaignTable()}</section><section class="panel"><h2>Ostatnia aktywność</h2>${state.events.slice(0,7).map(e=>`<div class="activity">${esc(e.detail)}<small>${date(e.created)}</small></div>`).join('')||empty('Czysta karta','Tutaj pojawią się zdarzenia z Twoich kampanii.')}<button class="link" data-view="settings">Sprawdź integracje →</button></section></div>`}
-if(view==='dashboard'){const stats=$('#content .stats');stats.classList.add('dashboard-stats');stats.children[0].insertAdjacentHTML('afterend',projectCoverageTile());bindProjectCoverageTile();stats.insertAdjacentHTML('beforebegin',dashboardFlowPanel());stats.insertAdjacentHTML('afterend',dashboardActivityPanel());bindDashboardWelcome();renderDashboardActivity()}
+function render(){renderSimulationControl();renderBackgroundProgress();if(state)renderProjectPicker();if(!state||view==='builder')return;history.replaceState(null,'','#'+(leadWorkspaceRoutes[view]||view));document.querySelectorAll('aside [data-view]').forEach(b=>b.classList.toggle('selected',b.dataset.view===(['prospecting','discover'].includes(view)?'dashboard':view)));$('#breadcrumb').textContent='Przestrzeń robocza / '+({dashboard:'Dashboard',reports:'Raporty',administration:'Administracja',project:'Projekt',companies:'Firmy',contacts:'Kontakty',campaigns:'Kampanie',inbox:'Odpowiedzi',settings:'Integracje',signals:'Sygnały sprzedażowe'}[view]);const el=$('#content');if(view==='lead-discover'){$('#breadcrumb').textContent='Przestrze\u0144 robocza / Discover';renderLeadDiscoverPage();return}if(leadWorkspaceRoutes[view]){renderLeadWorkspace();return}if(view==='companies'){void renderCompanies();return}if(view==='library'){renderLibrary();return}if(view==='project'){renderSellerProject();return}if(view==='reports'){renderReports();return}
+if(view==='dashboard'){renderDashboard();return}
 if(view==='contacts'){renderContactsView()}
 if(view==='campaigns'){if(selectedCampaign){renderCampaign();return}el.innerHTML=renderTop('Kampanie','Od pierwszego kontaktu do następnej rozmowy.',`<button class="primary" data-action="new-campaign">+ Nowa kampania</button>`)+`<section class="panel">${campaignTable()}</section>`}
 if(view==='inbox'){renderInbox()}
 if(view==='administration'){renderAdministration()}
 if(view==='settings'){renderSettings()}}
+
+function renderDashboard(){
+ const project=sellerProject();
+ let dashboard=$('#dashboard-workspace');
+ if(dashboard?.dataset.project!==String(project.id)){
+  $('#content').innerHTML=`<div id="dashboard-workspace" data-project="${project.id}">
+    <div id="dashboard-title"></div>${dashboardWelcomePanel()}${dashboardLeadResults()}<div id="dashboard-overview"></div>
+  </div>`;
+  dashboard=$('#dashboard-workspace');
+  bindDashboardLeadSearch(dashboard.querySelector('#dashboard-lead-results'),project);
+ }
+ dashboard.querySelector('#dashboard-lead-results')._syncSearch();
+ dashboard.querySelector('#dashboard-title').innerHTML=renderTop('Dashboard',new Intl.DateTimeFormat(uiLanguage==='en'?'en-GB':'pl-PL',{dateStyle:'long',timeZone:'Europe/Warsaw'}).format(new Date()));
+ const overview=dashboard.querySelector('#dashboard-overview');
+ const sent=state.messages.filter(m=>m.status==='sent').length;
+ overview.innerHTML=dashboardActionsPanel()+`<div class="stats">${[['Kontakty',state.totals.contacts,'Twoja baza potencjalnych klientów'],['Aktywne kampanie',state.campaigns.filter(c=>c.status==='active').length,'Sekwencje pracujące dla Ciebie'],['Wysłane wiadomości',sent,'Oznaczone jako wysłane'],['Odpowiedzi',state.replies.length,'Rozmowy wykryte przez IMAP']].map(([l,n,t])=>`<div class="stat"><p>${l}</p><strong>${n}</strong><small>${t}</small></div>`).join('')}</div><div class="grid"><section class="panel"><div class="panel-head"><h2>Twoje kampanie</h2><button class="link" data-view="campaigns">Zobacz wszystkie →</button></div>${campaignTable()}</section><section class="panel"><h2>Ostatnia aktywność</h2>${state.events.slice(0,7).map(e=>`<div class="activity">${esc(e.detail)}<small>${date(e.created)}</small></div>`).join('')||empty('Czysta karta','Tutaj pojawią się zdarzenia z Twoich kampanii.')}<button class="link" data-view="settings">Sprawdź integracje →</button></section></div>`;
+ const stats=overview.querySelector('.stats');
+ stats.classList.add('dashboard-stats');
+ stats.children[0].insertAdjacentHTML('afterend',projectCoverageTile());
+ bindProjectCoverageTile();
+ stats.insertAdjacentHTML('beforebegin',dashboardFlowPanel());
+ stats.insertAdjacentHTML('afterend',dashboardActivityPanel());
+ renderDashboardActivity();
+}
 function renderCampaign(){const campaign=state.campaigns.find(c=>c.id===selectedCampaign);if(!campaign){selectedCampaign=null;render();return}renderCampaignWorkspace(campaign)}
 function newCampaign(){openCampaignBuilder()}
 function confirmCampaignDelete(id){
@@ -126,7 +219,7 @@ function confirmCampaignDelete(id){
   });
   $('[data-delete-cancel]').focus();
 }
-function addStep(){const n=document.querySelectorAll('.step').length;if(n>=6)return toast('Maksymalnie 6 kroków');const lang=$('#build-language')?.value||state.preferences.message_language,spec=state.languages[lang];$('#steps').insertAdjacentHTML('beforeend',`<div class="step"><h3>Krok ${n+1}</h3><label>Dzień wysyłki</label><input name="delay" type="number" min="0" max="365" value="${n*3}" required><label>Temat</label><input name="subject" value="${esc(n?spec.follow_subject:spec.subject)}" required><label>Treść</label><textarea name="body" required>${esc(n?spec.follow_body:spec.body)}</textarea></div>`)}
+function addStep(){const n=document.querySelectorAll('.step').length;if(n>=6)return toast('Maksymalnie 6 kroków');const lang=$('#build-language')?.value||projectMessageLanguage(),spec=state.languages[lang];$('#steps').insertAdjacentHTML('beforeend',`<div class="step"><h3>Krok ${n+1}</h3><label>Dzień wysyłki</label><input name="delay" type="number" min="0" max="365" value="${n*3}" required><label>Temat</label><input name="subject" value="${esc(n?spec.follow_subject:spec.subject)}" required><label>Treść</label><textarea name="body" required>${esc(n?spec.follow_body:spec.body)}</textarea></div>`)}
 async function run(button,fn){if(button)button.disabled=true;try{await fn()}catch(e){toast(e.message)}finally{if(button)button.disabled=false}}
 document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.classList.contains('close'))return $('#modal').close();if(b.dataset.view){view=b.dataset.view;selectedCampaign=null;render();return}const a=b.dataset.action,id=Number(b.dataset.id);if(!a)return;run(b,async()=>{if(a==='new-contact'){modal(`<h2>Dodaj kontakt</h2><form id="contact-form">${contactTagsControl()}<label>Imię i nazwisko</label><input name="name" required><label>Email</label><input name="email" type="email" required><div class="row"><div><label>Firma</label><input name="company"></div><div><label>Stanowisko</label><input name="role"></div></div><label>Kontekst / notatki dla AI</label><textarea name="notes"></textarea><button class="primary">Zapisz kontakt</button></form>`);$('#contact-form').onsubmit=async e=>{e.preventDefault();await run(e.submitter,async()=>{await api('contacts',Object.fromEntries(new FormData(e.target)));$('#modal').close();await refresh();toast('Kontakt zapisany')})}}if(a==='import'){modal(`<h2>Import kontaktów</h2><p>CSV z nagłówkami: <code>name,email,company,role,notes,tags</code>. Wymagana jest kolumna email; duplikaty są pomijane. Maksymalnie 2 MB.</p>${contactTagsControl()}<label>Plik CSV</label><input id="csv-file" type="file" accept=".csv,text/csv"><p class="hint">Obsługiwany separator: przecinek lub średnik. W razie błędnego adresu cały import jest wycofywany.</p><button class="primary" data-action="upload-csv">Importuj kontakty</button>`)}if(a==='upload-csv'){const file=$('#csv-file').files[0];if(!file)throw Error('Wybierz plik CSV');await api('import',{csv:await file.text(),tags:$('#contact-tags').value});$('#modal').close();await refresh();toast('Import zakończony')}if(a==='delete-campaign')confirmCampaignDelete(id);if(a==='new-campaign')newCampaign();if(a==='edit-campaign')await editCampaign(id);if(a==='add-step')addStep();if(a==='campaign'){selectedCampaign=id;view='campaigns';render()}if(a==='back'){selectedCampaign=null;render()}if(a==='prepare'){toast('Przygotowuję wiadomości. Przy użyciu AI może to potrwać kilka minut.');await api('campaign/prepare',{id});await refresh();toast('Wiadomości gotowe do sprawdzenia')}if(a==='campaign-status'){if(b.dataset.status==='active'&&!monitoringSimulation){await showCampaignPreflight(id);return}await api('campaign/status',{id,status:b.dataset.status});await refresh();toast(b.dataset.status==='active'?'Kampania uruchomiona':'Kampania wstrzymana')}if(a==='contact-group')contactGroupForm(id);if(a==='contact-status'){await api('contact/status',{id,status:b.dataset.status});await refresh();toast('Zatrzymano dalsze wiadomości do kontaktu')}if(a==='sync'){await api('sync',{});await refresh();toast('Poczta zsynchronizowana')}if(a==='message'){const m=findCampaignMessage(id);if(!m)throw Error('Nie znaleziono wiadomości.');const editable=m.status==='queued'&&state.campaigns.find(c=>c.id===m.campaign_id)?.status!=='active';modal(`<h2>Wiadomość · krok ${m.position+1}</h2><form id="message-form"><label>Temat</label><input name="subject" value="${esc(m.subject)}" ${editable?'':'readonly'}><label>Treść</label><textarea name="body" rows="12" ${editable?'':'readonly'}>${esc(m.body)}</textarea>${editable?'<button class="primary">Zapisz zmiany</button>':'<p class="hint">Aby edytować oczekującą wiadomość, wstrzymaj kampanię.</p>'}</form>`);$('#message-form').onsubmit=async e=>{e.preventDefault();await run(e.submitter,async()=>{await api('message',{id,...Object.fromEntries(new FormData(e.target))});$('#modal').close();await refresh();toast('Zapisano wiadomość')})}}})});
 document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const a=b.dataset.action;if(a==='research')run(b,async()=>{const url=$('#company-url').value;if(!url)throw Error('Podaj adres strony firmy');$('#research-status').textContent='Pobieram kontekst firmy…';const result=await api('research',{url});$('#campaign-form [name=offer]').value=result.offer;$('#campaign-form [name=audience]').value=result.audience;$('#research-status').textContent=`Źródło: ${result.source}. ${result.ai?'Opis i grupa klientów zaproponowane przez AI — sprawdź je.':'Pobrano opis ze strony. Uzupełnij ofertę i grupę klientów; AI nie jest podłączone.'}`});if(a==='connect-gmail'){modal(`<h2>Podłącz Gmail / Google Workspace</h2><p>Sprawdzimy logowanie do wysyłki i odczytu odpowiedzi. Nie wyślemy wiadomości testowej.</p><form id="gmail-form"><label>Adres email</label><input name="email" type="email" autocomplete="username" required placeholder="ty@twoja-firma.pl"><label>Hasło aplikacji Google</label><input name="password" type="password" autocomplete="new-password" required placeholder="16 liter hasła aplikacji"><p class="hint">Użyj hasła aplikacji, nie zwykłego hasła do konta Google. <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">Utwórz hasło aplikacji ↗</a>. Dostępność zależy od ustawień konta i administratora Workspace. <a href="https://support.google.com/a/answer/176600" target="_blank" rel="noopener">Instrukcja Google</a>.</p><p class="hint">Dane zostaną zapisane w lokalnym pliku .env, pomijanym przez Git. Dostęp do pliku powinien mieć tylko właściciel tego komputera.</p><button class="primary">Sprawdź i podłącz</button></form>`);$('#gmail-form').onsubmit=async e=>{e.preventDefault();await run(e.submitter,async()=>{await api('integrations/gmail',Object.fromEntries(new FormData(e.target)));e.target.reset();$('#modal').close();$('#modal-content').innerHTML='';await refresh();toast('Gmail podłączony. Logowanie SMTP i IMAP działa.')})}}});
@@ -225,7 +318,7 @@ function bindSellingPoints(container){
     section.querySelector('[data-read-proof]').disabled=true;
     const status=section.querySelector('[data-points-status]');status.textContent='Przygotowuję propozycje problemów i wartości…';
     try{
-      const result=await api('ai/selling-points',{offer,audience,language:prospect?$('#prospect-language').value:$('#build-language').value});
+      const result=await api('ai/selling-points',{offer,audience,language:prospect?projectMessageLanguage():$('#build-language').value});
       if(!section.isConnected)return;
       $('#modal-content').innerHTML=`<h2>Propozycje AI do sprawdzenia</h2><p>Sprawdź problemy i korzyści. Zastosowanie zastąpi aktualne listy.</p><form id="points-proposal-form"><label for="suggested-pains">Problemy odbiorców</label><textarea id="suggested-pains" name="pain_points" rows="5" required>${esc(result.pain_points)}</textarea><label for="suggested-values">Propozycje wartości</label><textarea id="suggested-values" name="value_props" rows="5" required>${esc(result.value_props)}</textarea><button class="primary">Zastosuj punkty</button></form>`;
       $('#modal').showModal();status.textContent='Propozycje gotowe do sprawdzenia.';
@@ -316,7 +409,7 @@ function bindRefineControls(){
       if(scan)scan.disabled=true;
       status.textContent='AI poprawia tekst…';
       try{
-        const result=await api('ai/refine',{field,text:original,language:field==='offer'?$('#prospect-language').value:state.preferences.ui_language});
+        const result=await api('ai/refine',{field,text:original,language:field==='offer'?projectMessageLanguage():state.preferences.ui_language});
         if(!input.isConnected)return;
         if(input.value===original)apply(result.text);
         else{pendingSource=currentSource;pendingScan=false;proposal.querySelector('textarea').value=result.text;proposal.hidden=false;status.textContent='W międzyczasie zmieniono tekst. Możesz zastosować propozycję AI poniżej.'}
@@ -329,7 +422,7 @@ function bindRefineControls(){
       $('#prospect-website').value=url;
       button.disabled=true;status.textContent='Skanuję stronę i odczytuję ofertę…';
       try{
-        const result=await api('research',{url,language:$('#prospect-language').value});
+        const result=await api('research',{url,language:projectMessageLanguage()});
         if(!input.isConnected)return;
         const source=new URL(result.source);
         if(source.protocol!=='https:'||source.username||source.password||typeof result.offer!=='string'||!result.offer.trim())throw Error('Strona nie zwróciła poprawnego opisu oferty.');
@@ -359,3 +452,10 @@ setInterval(()=>{if(view==='prospecting'&&state?.prospecting?.runs.some(r=>['sea
 
 document.addEventListener('DOMContentLoaded',()=>refresh().catch(e=>toast(e.message)));setInterval(()=>{if(!$('#modal').open&&!document.activeElement?.closest('#dashboard-search-form')&&!['settings','administration','project'].includes(view))refresh().catch(()=>{})},15000);
 
+function viewFromHash(hash) {
+ const route = hash.slice(1);
+ if (['prospecting','lead-search','discovery-pilot','prospecting/discovery-b2b'].includes(route))return 'dashboard';
+ return Object.keys(leadWorkspaceRoutes).find(view => leadWorkspaceRoutes[view] === route) ||
+  (Object.hasOwn(leadWorkspaceRoutes,route) ? route : null) ||
+  (['dashboard','companies','contacts','campaigns','signals','inbox','library','reports','settings','administration','project'].includes(route) ? route : null);
+}

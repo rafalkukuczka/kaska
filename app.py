@@ -9,6 +9,8 @@ import manual_headless
 import company_workspace
 import manual_agent
 import discover_contacts
+import discovery_pilot
+import lead_search
 import hashlib
 import hmac
 import html
@@ -36,6 +38,7 @@ from urllib.parse import urlparse, parse_qs
 import public_data
 import content_library
 import ai_service
+import openai_usage
 import prospecting
 import languages
 import sequence_conditions
@@ -88,6 +91,7 @@ def db():
 
 
 def init():
+    openai_usage.configure(DB.with_name('openai-usage.sqlite3'))
     with db() as c:
         project_migration.migrate(c)
         c.executescript('''
@@ -113,6 +117,8 @@ def init():
             c.execute("ALTER TABLE campaigns ADD COLUMN channel TEXT NOT NULL DEFAULT 'email'")
         campaign_workspace.init_schema(c)
         project_scope.migrate(c)
+        discovery_pilot.init_schema(c)
+        lead_search.init_schema(c)
         feature_retirement.retire_monitoring(c)
         c.execute('''CREATE TABLE IF NOT EXISTS manual_linkedin_signals(
             id INTEGER PRIMARY KEY,project_id INTEGER NOT NULL REFERENCES seller_projects(id),
@@ -321,6 +327,8 @@ def prepare(campaign_id):
             raise ValueError('Przed przygotowaniem wiadomości wstrzymaj kampanię.')
         contacts = campaign_edit.recipients(c,campaign)
         existing={(row['contact_id'],row['position']):dict(row) for row in c.execute('SELECT * FROM messages WHERE campaign_id=?',(campaign_id,))}
+        restorable={key for key,row in existing.items() if row['status']=='cancelled' and row['deleted']
+                    and row['error']==campaign_edit.REMOVED_RECIPIENT_REASON}
         incremental=campaign['status']=='paused' or any(row['sent_at'] or row['status'] in ('sent','sending','uncertain') for row in existing.values())
         steps = c.execute('SELECT * FROM steps WHERE campaign_id=? ORDER BY position', (campaign_id,)).fetchall()
     if not contacts:
@@ -328,12 +336,14 @@ def prepare(campaign_id):
     messages = []
     for contact in contacts:
         history=[row for row in existing.values() if row['contact_id']==contact['id']]
-        if incremental and any(row['status'] in ('uncertain','sending') or ((row['status']=='cancelled' or row['deleted']) and row['position']<len(steps)) for row in history):continue
+        if incremental and any(row['status'] in ('uncertain','sending') or
+                ((row['status']=='cancelled' or row['deleted']) and row['position']<len(steps)
+                 and (contact['id'],row['position']) not in restorable) for row in history):continue
         first=existing.get((contact['id'],0))
         baseline=(first['sent_at'] or first['due'])-steps[0]['delay_days']*86400 if first else time.time()
         for step in steps:
             old=existing.get((contact['id'],step['position']))
-            if incremental and old and (old['status']!='queued' or old['deleted'] or old['sent_at']):continue
+            if incremental and old and (contact['id'],step['position']) not in restorable and (old['status']!='queued' or old['deleted'] or old['sent_at']):continue
             subject, body = ai_copy(contact, campaign, step)
             due=old['due'] if incremental and old else baseline+step['delay_days']*86400
             messages.append((campaign_id, contact['id'], step['position'], subject, body, due))
@@ -345,7 +355,11 @@ def prepare(campaign_id):
         if not incremental:
             c.execute('DELETE FROM messages WHERE campaign_id=?', (campaign_id,))
         for row in messages:
-            if incremental and (row[1],row[2]) in existing:
+            if incremental and (row[1],row[2]) in restorable:
+                c.execute("""UPDATE messages SET subject=?,body=?,due=?,status='queued',deleted=0,error=NULL
+                    WHERE campaign_id=? AND contact_id=? AND position=? AND status='cancelled' AND deleted=1 AND error=?""",
+                          (row[3],row[4],row[5],row[0],row[1],row[2],campaign_edit.REMOVED_RECIPIENT_REASON))
+            elif incremental and (row[1],row[2]) in existing:
                 c.execute("UPDATE messages SET subject=?,body=?,due=? WHERE campaign_id=? AND contact_id=? AND position=? AND status='queued' AND deleted=0",(row[3],row[4],row[5],row[0],row[1],row[2]))
             else:c.execute('INSERT INTO messages(campaign_id,contact_id,position,subject,body,due) VALUES(?,?,?,?,?,?)',row)
     event(f'Przygotowano {len(messages)} wiadomości dla kampanii {campaign["name"]}')
@@ -375,6 +389,8 @@ def send_one():
             ORDER BY m.due,m.id LIMIT 200""", (time.time(), time.time())).fetchall()
         msg=None
         for candidate in eligible:
+            if not discovery_pilot.message_allowed(c,candidate['campaign_id'],candidate['id']):
+                continue
             if not sequence_conditions.matches(candidate['conditions'],candidate,candidate['position'],candidate['position']-1):
                 c.execute("UPDATE messages SET status='cancelled',error='Pominięto odbiorcę: niespełniony warunek sekwencji.' WHERE campaign_id=? AND contact_id=? AND position>=? AND status='queued'",(candidate['campaign_id'],candidate['contact_id'],candidate['position']))
                 continue
@@ -508,6 +524,24 @@ class Handler(BaseHTTPRequestHandler):
         if not self.valid_host():
             return self.respond({'error': 'Nieprawidłowy host'}, 403)
         path = urlparse(self.path)
+        if path.path == '/api/openai-usage':
+            return self.respond({'operations':openai_usage.recent()})
+        if path.path == '/api/openai-usage/context':
+            with db() as c:
+                return self.respond({'csrf':CSRF,'projectId':project_scope.active(c)})
+        if path.path == '/api/lead-search':
+            try:
+                parameters = parse_qs(path.query)
+                value = parameters.get('id', [None])[0]
+                return self.respond(lead_finder.state(int(value) if value is not None else None, 'notifications' in parameters))
+            except ValueError as error:
+                return self.respond({'error': str(error)}, 400)
+        if path.path == '/api/discovery-pilot':
+            try:
+                pilot_id = parse_qs(path.query).get('pilot_id', [None])[0]
+                return self.respond(discovery_pipeline.state(int(pilot_id) if pilot_id is not None else None))
+            except ValueError as error:
+                return self.respond({'error': str(error)}, 400)
         if path.path == '/api/companies':
             key = parse_qs(path.query).get('key', [None])[0]
             try:
@@ -549,6 +583,11 @@ class Handler(BaseHTTPRequestHandler):
                         row.pop('conditions',None);row.pop('email',None);row.pop('role',None)
                 return self.respond({'messages':rows})
             except (ValueError,TypeError):return self.respond({'error':'Nie można odczytać kolejki LinkedIn.'},400)
+        if path.path == '/api/campaign/recipient-options':
+            try:
+                query=parse_qs(path.query)
+                return self.respond({'contacts':campaign_edit.recipient_options(db,int(query['campaign_id'][0]),query.get('q',[''])[0])})
+            except (ValueError,KeyError):return self.respond({'error':'Nie można odczytać kontaktów tej kampanii.'},400)
         if path.path == '/api/manual-interaction/queue':
             try:
                 campaign_id = parse_qs(path.query).get('campaign_id', [None])[0]
@@ -556,6 +595,11 @@ class Handler(BaseHTTPRequestHandler):
                 message_id = parse_qs(path.query).get('message_id', [None])[0]
                 message_id = int(message_id) if message_id is not None else None
                 with db() as c:
+                    if campaign_id is not None and 'removed' in parse_qs(path.query):
+                        project_scope.require_campaign(c,campaign_id)
+                        return self.respond({'removed_ids':[row[0] for row in c.execute("""SELECT m.id FROM messages m
+                            JOIN campaign_recipient_overrides o ON o.campaign_id=m.campaign_id AND o.contact_id=m.contact_id
+                            WHERE o.campaign_id=? AND o.included=0""",(campaign_id,))]})
                     project_id=project_scope.active(c)
                     rows=[dict(r) for r in c.execute("""SELECT m.id,m.campaign_id,m.contact_id,m.position,m.subject,m.body,m.due,
                       p.name AS campaign_name,p.status AS campaign_status,p.conditions,p.manual_scenarios,
@@ -573,6 +617,7 @@ class Handler(BaseHTTPRequestHandler):
                                                        -1 if campaign_id is not None else 500))]
                     now=time.time(); result=[]
                     for row in rows:
+                        if not discovery_pilot.message_allowed(c,row['campaign_id'],row['id']):continue
                         if not sequence_conditions.matches(row['conditions'],row,row['position'],row['position']-1):continue
                         scenarios=manual_interaction.validate_scenarios(row['manual_scenarios'])
                         row['ready']=row['due']<=now
@@ -587,7 +632,8 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError,TypeError):return self.respond({'error':'Nie można odczytać kolejki Manual interaction.'},400)
         if path.path == '/api/reports':
             try:
-                with db() as c:result=reports.read(c,parse_qs(path.query).get('days',['7'])[0])
+                query=parse_qs(path.query)
+                with db() as c:result=reports.read(c,query.get('days',['7'])[0],cost_page=query.get('cost_page',['1'])[0])
                 return self.respond(result)
             except (ValueError,TypeError):return self.respond({'error':'Invalid report period'},400)
         if path.path == '/api/background':
@@ -633,7 +679,9 @@ class Handler(BaseHTTPRequestHandler):
             result['contact_tags'] = contact_tags.names(db)
             result['tag_catalog'] = contact_tags.state(db)
             with db() as c:result['contact_company_counts']=[dict(row) for row in c.execute("SELECT company,COUNT(*) AS total FROM contacts WHERE contact_pool=? AND trim(company)!='' GROUP BY company",(project_scope.contact_pool(c),))]
-            for contact in result['contacts']:contact['tags']=json.loads(contact['tags'])
+            for contact in result['contacts']:
+                contact['tags']=json.loads(contact['tags'])
+                contact['research_data']=json.loads(contact['research_data'])
             return self.respond(result)
         if path.path == '/unsubscribe':
             query = parse_qs(path.query)
@@ -668,6 +716,7 @@ class Handler(BaseHTTPRequestHandler):
             '/simulation.js': ('simulation.js', 'text/javascript'),
             '/seller-project.js': ('seller-project.js', 'text/javascript'),
             '/discover.js': ('discover.js', 'text/javascript'),
+            '/lead-search.js': ('lead-search.js', 'text/javascript'),
             '/sequence.js': ('sequence.js', 'text/javascript'),
             '/i18n.js': ('i18n.js', 'text/javascript'),
             '/ai-settings.js': ('ai-settings.js', 'text/javascript'),
@@ -694,10 +743,54 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond('Zrezygnowano z dalszych wiadomości.', content_type='text/plain; charset=utf-8')
         if not hmac.compare_digest(self.headers.get('X-CSRF-Token', ''), CSRF):
             return self.respond({'error': 'Odśwież stronę aplikacji'}, 403)
+        with db() as c:
+            project_id=project_scope.active(c)
+        action = urlparse(self.path).path.removeprefix('/api/')
+        if action == 'ai/manual-agent' and self.headers.get('X-Katie-Client') == 'outreach-extension':
+            action = 'extension/manual-agent'
+        with openai_usage.operation(action,project_id=project_id):
+            return self.post_api(size)
+
+    def post_api(self, size):
         try:
             item = json.loads(self.rfile.read(size))
+            if self.path == '/api/openai-usage/outreach':
+                if not isinstance(item,dict):
+                    raise ValueError('Nieprawidłowe dane kosztów rozszerzenia.')
+                project_id = item.get('projectId')
+                if project_id is not None and (type(project_id) is not int or not 0 < project_id < 2**63):
+                    raise ValueError('Nieprawidłowy projekt kosztów rozszerzenia.')
+                with db() as c:
+                    if project_id is None:
+                        project_id = project_scope.active(c)
+                    elif not c.execute('SELECT 1 FROM seller_projects WHERE id=?',(project_id,)).fetchone():
+                        raise ValueError('Nie znaleziono projektu kosztów rozszerzenia.')
+                openai_usage.record_outreach(item,project_id)
+                return self.respond({'ok':True})
             if self.path == '/api/manual-interaction/headless':
                 return self.respond(headless_browser.request(item))
+            if self.path.startswith('/api/discovery-pilot/'):
+                return self.respond(discovery_pipeline.command(self.path.removeprefix('/api/discovery-pilot/'),item))
+            if self.path == '/api/lead-search/start':
+                return self.respond(lead_finder.create(item))
+            if self.path == '/api/lead-search/stop-all':
+                return self.respond(lead_finder.stop_all())
+            if self.path == '/api/lead-search/signals':
+                return self.respond(lead_finder.check_signals(item))
+            if self.path == '/api/lead-search/signal-updates':
+                return self.respond(lead_finder.set_signal_updates(item))
+            if self.path == '/api/lead-search/project-signal':
+                return self.respond(lead_finder.record_private(item))
+            if self.path == '/api/lead-search/more':
+                return self.respond(lead_finder.find_more(item))
+            if self.path == '/api/lead-search/browser':
+                return self.respond(lead_finder.browser_tick())
+            if self.path == '/api/lead-search/contact-search':
+                return self.respond(discover_contact_finder.search_lead(item))
+            if self.path == '/api/lead-search/contact-add':
+                return self.respond(discover_contact_finder.add(item,from_dashboard=True))
+            if self.path in ('/api/lead-search/read', '/api/lead-search/save'):
+                return self.respond(lead_finder.mark(self.path.rsplit('/', 1)[1], item))
             with db() as c:project_scope.guard_request(c,self.path,item)
             if self.path == '/api/admin/tags':
                 with MAIL_LOCK:return self.respond(contact_tags.manage(db,item))
@@ -761,9 +854,10 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path.startswith('/api/library/'):
                 return self.respond(library.post(self.path[len('/api/library/'):], item))
             elif self.path == '/api/campaign/preview':
-                item.setdefault('language', languages.preferences(db)['message_language'])
                 conditions = sequence_conditions.validate(item.get('conditions', []))
                 with db() as c:
+                    if 'language' not in item:
+                        item['language'] = shared_project.message_language(db,project_scope.active(c))
                     library.validate_campaign(c,item)
                     contact_id=int(item['preview_contact_id'])
                     if item.get('channel')=='manual':project_scope.require_contact(c,contact_id)
@@ -814,13 +908,15 @@ class Handler(BaseHTTPRequestHandler):
                     if item['status'] != 'active':
                         c.execute("UPDATE messages SET status='cancelled' WHERE contact_id=? AND status='queued'", (item['id'],))
             elif self.path == '/api/campaigns':
-                item.setdefault('language', languages.preferences(db)['message_language'])
                 conditions = sequence_conditions.validate(item.get('conditions', []))
                 if not item.get('name', '').strip() or not item.get('offer', '').strip():
                     raise ValueError('Podaj nazwę i ofertę')
                 if not 1 <= len(item['steps']) <= 6:
                     raise ValueError('Dodaj od 1 do 6 kroków')
                 with db() as c:
+                    project_id = project_scope.active(c)
+                    if 'language' not in item:
+                        item['language'] = shared_project.message_language(db,project_id)
                     extra=library.validate_campaign(c,item)
                     target_group=contact_groups.campaign_group(c,item)
                     audience_tags,tag_match=contact_tags.validate_campaign(c,item)
@@ -828,7 +924,7 @@ class Handler(BaseHTTPRequestHandler):
                     if channel not in ('email','linkedin','manual'):raise ValueError('Nieprawidłowy kanał kampanii')
                     scenarios=manual_interaction.validate_scenarios(item.get('manual_scenarios',[]))
                     if channel=='manual' and not scenarios:raise ValueError('Dodaj co najmniej jeden scenariusz Manual interaction.')
-                    campaign_id = c.execute('INSERT INTO campaigns(name,offer,audience,created,project_id,channel,manual_scenarios) VALUES(?,?,?,?,?,?,?)', (item['name'], item['offer'], item.get('audience', ''), time.time(),project_scope.active(c),channel,json.dumps(scenarios,ensure_ascii=False))).lastrowid
+                    campaign_id = c.execute('INSERT INTO campaigns(name,offer,audience,created,project_id,channel,manual_scenarios) VALUES(?,?,?,?,?,?,?)', (item['name'], item['offer'], item.get('audience', ''), time.time(),project_id,channel,json.dumps(scenarios,ensure_ascii=False))).lastrowid
                     c.execute('UPDATE campaigns SET website=?,audience_mode=?,contact_ids=?,material_mode=?,material_ids=?,language=?,cta=?,cta_url=?,pain_points=?,value_props=?,proof_points=? WHERE id=?',extra+(campaign_id,))
                     c.execute('UPDATE campaigns SET conditions=? WHERE id=?', (json.dumps(conditions), campaign_id))
                     c.execute('UPDATE campaigns SET target_group=? WHERE id=?',(target_group,campaign_id))
@@ -840,6 +936,8 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError('Kroki muszą mieć temat, treść i rosnącą liczbę dni')
                         previous = delay
                         c.execute('INSERT INTO steps(campaign_id,position,delay_days,subject,body) VALUES(?,?,?,?,?)', (campaign_id, i, delay, step['subject'], step['body']))
+                    revision = c.execute('SELECT revision FROM campaigns WHERE id=?', (campaign_id,)).fetchone()[0]
+                return self.respond({'ok': True, 'id': campaign_id, 'project_id': project_id, 'revision': revision})
             elif self.path == '/api/campaign/edit-data':
                 return self.respond(campaign_edit.read(db,int(item['id'])))
             elif self.path == '/api/campaign/update':
@@ -850,6 +948,8 @@ class Handler(BaseHTTPRequestHandler):
                 delete_campaign(int(item['id']))
             elif self.path == '/api/campaign/messages/delete':
                 return self.respond(campaign_messages.remove(db,item))
+            elif self.path in ('/api/campaign/recipients/add','/api/campaign/recipients/remove'):
+                return self.respond(campaign_edit.change_recipient(db,item,self.path.endswith('/add')))
             elif self.path == '/api/campaign/status':
                 if item['status'] not in ('active', 'paused'):
                     raise ValueError('Nieprawidłowy status')
@@ -865,6 +965,7 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError('Skonfiguruj SMTP w pliku .env i uruchom ponownie aplikację')
                         if not c.execute('SELECT 1 FROM messages WHERE campaign_id=? AND deleted=0', (item['id'],)).fetchone():
                             raise ValueError('Najpierw przygotuj i sprawdź wiadomości')
+                        discovery_pilot.require_approved_messages(c,campaign['id'])
                         campaign = c.execute('SELECT * FROM campaigns WHERE id=?', (item['id'],)).fetchone()
                         if campaign['status'] == 'draft':
                             for step in c.execute('SELECT * FROM steps WHERE campaign_id=?', (item['id'],)).fetchall():
@@ -886,6 +987,8 @@ class Handler(BaseHTTPRequestHandler):
                     row=c.execute(f"SELECT m.campaign_id FROM messages m JOIN campaigns p ON p.id=m.campaign_id WHERE m.id=? AND p.channel=? AND {allowed_status}",(message_id,expected_channel)).fetchone()
                     if not row:raise ValueError('Nie znaleziono aktywnego zadania kampanii')
                     project_scope.require_campaign(c,row['campaign_id'])
+                    if not discovery_pilot.message_allowed(c,row['campaign_id'],message_id):
+                        raise ValueError('Zatwierdź aktualną treść wiadomości w Discovery.')
                     candidate=c.execute("SELECT m.position,p.conditions,t.email,t.company,t.role FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id WHERE m.id=?",(message_id,)).fetchone()
                     if not sequence_conditions.matches(candidate['conditions'],candidate,candidate['position'],candidate['position']-1):raise ValueError('Wiadomość nie spełnia warunków kampanii')
                     sent_at=time.time()
@@ -922,6 +1025,9 @@ def research_website(url, language=None):
 prospector = prospecting.Prospecting(db, library, ai_copy, MAIL_LOCK)
 discover_contact_finder = discover_contacts.DiscoverContacts(db,add_contact)
 opportunity_finder = opportunity_discovery.Discovery(db)
+discovery_pipeline = discovery_pilot.DiscoveryPilot(db, languages.data_simulation, discover_contact_finder.search,
+                                                  headless_browser.request)
+lead_finder = lead_search.LeadSearch(db, headless_browser.request)
 
 
 if __name__ == '__main__':
@@ -929,6 +1035,8 @@ if __name__ == '__main__':
     server = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
     mail_worker = threading.Thread(target=worker, name='mail-queue')
     mail_worker.start()
+    for slot in range(3):
+        threading.Thread(target=lead_finder.run, args=(STOP_WORKERS,), name=f'lead-research-{slot+1}', daemon=True).start()
     print(f'Katie: http://localhost:{PORT}', flush=True)
     try:
         server.serve_forever()

@@ -2,14 +2,28 @@
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
+import openai_usage
 
 DEFAULT_MODEL = 'gpt-6-luna'
 
 
 class InvalidAIOutput(ValueError):
     """A recoverable content error, distinct from credentials or provider failure."""
+
+
+def decode_result(value, expected_type):
+    try:
+        if isinstance(value, str):
+            fenced = re.fullmatch(r'```(?:json)?\s*(.*?)\s*```', value.strip(), re.IGNORECASE | re.DOTALL)
+            value = json.loads(fenced.group(1) if fenced else value)
+        if not isinstance(value, expected_type):
+            raise TypeError
+        return value
+    except (ValueError, TypeError):
+        raise InvalidAIOutput('AI zwróciło wynik w nieprawidłowym formacie.') from None
 
 
 def ready():
@@ -41,6 +55,7 @@ def generate_json(instructions, data, fields, *, api_key=None, model=None, web_s
     request = urllib.request.Request('https://api.openai.com/v1/responses',
         json.dumps(payload).encode('utf-8'),
         {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'})
+    started = time.monotonic()
     try:
         # Never follow redirects with the authorization header.
         class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -51,6 +66,8 @@ def generate_json(instructions, data, fields, *, api_key=None, model=None, web_s
         if len(raw) > 1_000_000:
             raise ValueError('Odpowiedź OpenAI jest zbyt duża.')
         result = json.loads(raw)
+        if isinstance(result,dict):
+            openai_usage.record(result,model,round((time.monotonic()-started)*1000))
         if result.get('status') != 'completed':
             raise ValueError('OpenAI nie ukończyło generowania. Spróbuj ponownie lub zmień model.')
         parts = [part for item in result.get('output', []) if item.get('type') == 'message'

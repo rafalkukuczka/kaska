@@ -24,10 +24,19 @@ function campaignWorkspaceData(w){
  data.summary.replies+=run.replies.length;data.summary.replied=new Set([...data.summary.replied_contact_ids,...run.replies.map(reply=>reply.contact_id)]).size;
  return data;
 }
-function campaignWorkspaceStatus(c,summary,delivery){
+function manualQueueActive(w){
+ return Boolean(!w.manualQueueError&&w.manualRuns?.some(task=>['queued','running'].includes(task.status)));
+}
+function campaignWorkspaceStatus(c,w,summary,delivery){
+ if(c.channel==='manual'&&manualQueueActive(w))return 'Kolejka rozszerzenia aktywna';
  if(c.status==='active'){
+  if(c.channel==='manual'){
+   if(w.manualQueueError)return 'Kolejka rozszerzenia niedostępna';
+   if(!w.manualRuns)return 'Sprawdzam stan kolejki…';
+   if(w.manualRuns.some(task=>['paused','needs_review'].includes(task.status)))return 'Zadania wstrzymane lub do sprawdzenia';
+   return summary?.counts.queued?'Kolejka oczekuje na uruchomienie':'Brak oczekujących zadań';
+  }
   if(monitoringSimulation)return 'Symulacja w toku';
-  if(c.channel==='manual')return summary?.counts.queued?'Kolejka rozszerzenia aktywna':'Brak oczekujących zadań';
   if(summary?.counts.sending)return 'Wysyłka w toku';
   if(summary?.counts.uncertain)return 'Wymaga uwagi';
   if(summary?.messages&&!summary.counts.queued)return 'Brak wiadomości do wysłania';
@@ -45,13 +54,15 @@ function campaignMainAction(c,w,summary){
   return '<span class="badge gray">Kolejka LinkedIn dostępna w rozszerzeniu PKEY</span>';
  }
  if(c.channel==='manual'){
+  const start=`<button type="button" class="primary" data-manual-campaign-start="${c.id}">Uruchom kolejkę</button>`;
+  const resumePaused=`<button type="button" class="secondary" data-manual-campaign-start="${c.id}" data-manual-start-mode="resume-paused">Uruchom tylko wstrzymane</button>`;
   if(c.status==='active'&&summary&&!(summary.counts.queued||0))return '<span class="badge gray">Brak oczekujących zadań</span>';
-  if(c.status==='active')return `<button type="button" class="primary" data-manual-queue-command="start">Uruchom kolejkę</button><button type="button" class="secondary" data-manual-queue-command="pause">Wstrzymaj scenariusze</button>`;
+  if(c.status==='active')return start+resumePaused+'<button type="button" class="secondary" data-manual-queue-command="pause">Wstrzymaj scenariusze</button>';
   if(!summary)return '<span class="badge gray">Wczytuję kampanię…</span>';
   if(!summary.messages)return `<button type="button" class="primary" data-action="prepare" data-id="${c.id}">Przygotuj zadania</button>`;
   if(!campaignHasReview(w))return '<button type="button" class="primary" data-campaign-review>Sprawdź zadania</button>';
   if(!(summary.counts.queued||0))return '<span class="badge gray">Brak zadań w kolejce</span>';
-  return `<button type="button" class="primary" data-manual-campaign-start="${c.id}">Uruchom kolejkę</button>`;
+  return start+(c.status==='paused'?resumePaused:'');
  }
  const pending=[...backgroundRequests.values()].some(request=>['campaign/prepare','campaign/status','campaign/update'].includes(request.path));
  const disabled=pending||(c.status!=='active'&&(!summary||w.loading||!!w.error||w.data.revision!==c.revision));
@@ -63,10 +74,45 @@ function campaignMainAction(c,w,summary){
  if(!(summary.counts.queued||summary.counts.sending))return '<span class="badge gray">Brak wiadomości do wysłania</span>';
  return button(monitoringSimulation?'Symuluj wysyłkę':c.status==='paused'?'Wznów wysyłkę':'Uruchom wysyłkę',`data-action="campaign-status" data-id="${c.id}" data-status="active"`);
 }
+function campaignReprepareButton(id,style){
+ return `<button type="button" class="${style}" data-campaign-reprepare="${id}">Przygotuj wiadomości ponownie</button>`;
+}
+function confirmCampaignReprepare(id){
+ const campaign=state.campaigns.find(c=>c.id===id);if(!campaign)return;
+ const projectId=state.seller_project.id,active=campaign.status==='active',manual=campaign.channel==='manual';
+ modal(`<h2>Przygotować wiadomości ponownie?</h2>
+  <p data-no-translate>${esc(campaign.name)}</p>
+  <p>Nowe szkice zastąpią treść oczekujących wiadomości. Historia wysyłek zostanie zachowana.</p>
+  ${active?'<p>Kampania zostanie wstrzymana przed przygotowaniem szkiców.</p>':''}
+  <p class="error" role="alert" data-campaign-reprepare-error></p>
+  <div class="actions"><button type="button" class="primary" data-confirm-campaign-reprepare>${active?'Wstrzymaj i przygotuj ponownie':'Przygotuj wiadomości ponownie'}</button><button type="button" class="secondary close">Anuluj</button></div>`);
+ const confirm=$('[data-confirm-campaign-reprepare]'),error=$('[data-campaign-reprepare-error]');
+ confirm.onclick=()=>void run(confirm,async()=>{
+  error.textContent='';
+  try{
+   if(projectId!==state.seller_project.id)throw Error('Zmieniono projekt. Otwórz kampanię ponownie.');
+   if(active){
+    if(manual)await manualQueueAction('pause',id);
+    else await api('campaign/status',{id,status:'paused'});
+   }
+   if(projectId!==state.seller_project.id)throw Error('Zmieniono projekt. Otwórz kampanię ponownie.');
+   toast(translateUiText('Przygotowuję wiadomości. Przy użyciu AI może to potrwać kilka minut.'));
+   await api('campaign/prepare',{id});
+   if(confirm.isConnected)$('#modal').close();
+   await refresh();
+   toast(translateUiText('Wiadomości gotowe do sprawdzenia'));
+  }catch(failure){
+   error.textContent=translateUiText(failure.message);
+   if(active)await refresh();
+  }
+ });
+ syncLanguages();
+}
 function renderCampaignWorkspaceHeader(c,w,data){
  const root=$('#campaign-workspace-header');if(!root)return;
  const summary=data?.summary;
- root.innerHTML=`<div class="topline campaign-workspace-top"><div><p class="section-label">KAMPANIA</p><h1 data-no-translate>${esc(c.name)}</h1><p class="muted" data-no-translate>${esc(c.audience||campaignAudience(c))}</p></div><div class="actions campaign-workspace-actions">${campaignMainAction(c,w,summary)}<button type="button" class="secondary" data-action="edit-campaign" data-id="${c.id}">Edytuj kampanię</button><details class="campaign-more"><summary aria-label="${esc(translateUiText('Więcej działań'))}">⋯</summary><div>${['draft','paused'].includes(c.status)&&summary?.messages?`<button type="button" class="link" data-action="prepare" data-id="${c.id}">Przygotuj wiadomości ponownie</button>`:''}<button type="button" class="link danger" data-action="delete-campaign" data-id="${c.id}">Usuń kampanię</button></div></details></div></div><div class="campaign-summary" aria-label="${esc(translateUiText('Podsumowanie kampanii'))}">${[['Odbiorcy',summary?.recipients],['Kroki',summary?.steps],['Wiadomości',summary?.messages]].map(([label,count])=>`<div><strong data-campaign-summary="${label}">${count??'—'}</strong><span>${label}</span></div>`).join('')}<div class="campaign-state"><span class="campaign-state-dot ${c.status==='active'?'active':''}"></span><strong>${campaignWorkspaceStatus(c,summary,data?.delivery)}</strong>${monitoringSimulation?'<small>Symulacja</small>':''}</div></div>${renderCampaignDelivery(data)}${summary&&!summary.messages&&summary.recipients?'<p class="campaign-next-step">Kontakty są wybrane. Przygotuj wiadomości, aby sprawdzić treść i uruchomić kampanię.</p>':''}`;
+ const active=c.channel==='manual'?manualQueueActive(w):c.status==='active';
+ root.innerHTML=`<div class="topline campaign-workspace-top"><div><p class="section-label">KAMPANIA</p><h1 data-no-translate>${esc(c.name)}</h1><p class="muted" data-no-translate>${esc(c.audience||campaignAudience(c))}</p></div><div class="actions campaign-workspace-actions">${campaignMainAction(c,w,summary)}<button type="button" class="secondary" data-action="edit-campaign" data-id="${c.id}">Edytuj kampanię</button><details class="campaign-more"><summary aria-label="${esc(translateUiText('Więcej działań'))}">⋯</summary><div>${summary?.messages?campaignReprepareButton(c.id,'link'):''}<button type="button" class="link danger" data-action="delete-campaign" data-id="${c.id}">Usuń kampanię</button></div></details></div></div><div class="campaign-summary" aria-label="${esc(translateUiText('Podsumowanie kampanii'))}">${[['Odbiorcy',summary?.recipients],['Kroki',summary?.steps],['Wiadomości',summary?.messages]].map(([label,count])=>`<div><strong data-campaign-summary="${label}">${count??'—'}</strong><span>${label}</span></div>`).join('')}<div class="campaign-state"><span class="campaign-state-dot ${active?'active':''}"></span><strong ${c.channel==='manual'?'data-manual-workspace-status':''}>${campaignWorkspaceStatus(c,w,summary,data?.delivery)}</strong>${monitoringSimulation?'<small>Symulacja</small>':''}</div></div>${renderCampaignDelivery(data)}${summary&&!summary.messages&&summary.recipients?'<p class="campaign-next-step">Kontakty są wybrane. Przygotuj wiadomości, aby sprawdzić treść i uruchomić kampanię.</p>':''}`;
 }
 function renderCampaignDelivery(data){
  if(!data?.delivery||monitoringSimulation)return '';
@@ -80,7 +126,7 @@ function campaignRecipientPagination(w,total){
 function renderCampaignRecipients(w,data){
  const root=$('#campaign-recipients');if(!root)return;
  if(!data){root.innerHTML='<p class="hint" role="status">Wczytuję odbiorców…</p>';return}
- root.innerHTML=`<div class="panel-head"><h2>Odbiorcy <span class="badge gray">${data.total}</span></h2><span class="hint">Jedna osoba, wszystkie jej wiadomości.</span></div>${campaignRecipientPagination(w,data.total)}<div class="campaign-people">${data.recipients.map(person=>`<details class="campaign-person" data-campaign-person="${person.id}" ${w.open.has(person.id)?'open':''}><summary><span class="campaign-person-chevron" aria-hidden="true">›</span><div class="campaign-person-identity"><strong data-no-translate>${esc(person.name)}</strong><small data-no-translate>${esc(person.email)}</small></div><div class="campaign-person-company" data-no-translate>${esc(person.company)}<small>${esc(person.role)}</small></div><span class="badge gray">${person.messages.length} <span>wiadomości</span></span>${badge(person.status)}</summary><div class="campaign-person-body"><div class="campaign-person-tags" data-no-translate>${person.tags.map(tag=>`<span class="badge gray">${esc(tag)}</span>`).join(' ')}</div>${person.messages.length?person.messages.map(message=>`<article class="campaign-person-message"><div><small><span>Krok</span> ${message.position+1}</small><strong data-no-translate>${esc(message.subject)}</strong><button type="button" class="link" data-action="message" data-id="${message.id}">Podgląd / edycja</button></div>${messageDeliveryProgress(message)}</article>`).join(''):'<p class="hint">Wiadomości dla tego odbiorcy nie zostały jeszcze przygotowane.</p>'}</div></details>`).join('')||empty('Brak pasujących odbiorców','Sprawdź tagi, statusy kontaktów i warunki kampanii.')}</div>`;
+ root.innerHTML=`<div class="panel-head"><h2>Odbiorcy <span class="badge gray">${data.total}</span></h2><button type="button" class="secondary" data-campaign-recipient-add>Dodaj do kampanii</button></div>${campaignRecipientPagination(w,data.total)}<div class="campaign-people">${data.recipients.map(person=>`<details class="campaign-person" data-campaign-person="${person.id}" ${w.open.has(person.id)?'open':''}><summary><span class="campaign-person-chevron" aria-hidden="true">›</span><div class="campaign-person-identity"><strong data-no-translate>${esc(person.name)}</strong><small data-no-translate>${esc(person.email)}</small></div><div class="campaign-person-company" data-no-translate>${esc(person.company)}<small>${esc(person.role)}</small></div><span class="badge gray">${person.messages.length} <span>wiadomości</span></span>${badge(person.status)}</summary><div class="campaign-person-body"><div class="campaign-person-tags" data-no-translate>${person.tags.map(tag=>`<span class="badge gray">${esc(tag)}</span>`).join(' ')}</div>${person.messages.length?person.messages.map(message=>`<article class="campaign-person-message"><div><small><span>Krok</span> ${message.position+1}</small><strong data-no-translate>${esc(message.subject)}</strong><button type="button" class="link" data-action="message" data-id="${message.id}">Podgląd / edycja</button></div>${messageDeliveryProgress(message)}</article>`).join(''):'<p class="hint">Wiadomości dla tego odbiorcy nie zostały jeszcze przygotowane.</p>'}<div class="actions"><button type="button" class="link danger" data-campaign-recipient-remove="${person.id}">Usuń z kampanii</button></div></div></details>`).join('')||empty('Brak pasujących odbiorców','Sprawdź tagi, statusy kontaktów i warunki kampanii.')}</div>`;
 }
 function renderCampaignSequence(c,data){
  const root=$('#campaign-sequence');if(!root)return;
@@ -97,15 +143,58 @@ function renderCampaignResults(data){
  root.innerHTML=`<h2>Wyniki kampanii</h2>${monitoringSimulation?'<span class="badge warn">Symulacja</span>':''}<div class="campaign-result-metrics">${[['Wysłane wiadomości',s.sent],['Osoby, do których wysłano',s.contacted],['Odpowiedzi',s.replies],['Wskaźnik odpowiedzi',rate===null?'—':rate+'%']].map(([label,value])=>`<div><span>${label}</span><strong>${value}</strong></div>`).join('')}</div><div class="campaign-status-breakdown">${[['queued','Oczekuje na wysyłkę'],['sending','Wysyłanie'],['sent','Wysłano'],['cancelled','Zatrzymano'],['uncertain','Wymaga uwagi']].map(([status,label])=>`<div><span>${label}</span><progress max="${Math.max(1,s.messages)}" value="${s.counts[status]||0}"></progress><strong>${s.counts[status]||0}</strong></div>`).join('')}</div><p class="hint">Statystyki wysłanych wiadomości obejmują historię kampanii. Odpowiedzi są liczone po przypisaniu do tej kampanii; starsze odpowiedzi mogą nie mieć przypisania.</p>`;
 }
 function campaignWorkspaceError(w){return w.error?`<div class="notice" role="alert"><span data-no-translate>${esc(w.error)}</span> <button type="button" class="link" data-campaign-workspace-retry>Spróbuj ponownie</button></div>`:''}
-async function showCampaignPreflight(id){
+function confirmManualQueueStart(campaign,data,command){
+ const scenario=JSON.parse(campaign.manual_scenarios||'[]')[0];
+ if(!scenario)throw Error('Dodaj scenariusz kampanii przed zalogowaniem.');
+ const headless=scenario.headless!==false;
+ modal(`<h2>Zaloguj się przed uruchomieniem kolejki</h2>
+  <p><span>Serwis</span> <strong data-no-translate>${esc(scenario.domain)}</strong><span> · ${headless?'Tryb headless':'Zwykły profil Chrome'}</span></p>
+  <p>${headless?'Zaloguj się w osobnym oknie profilu headless. Po zalogowaniu zamknij to okno i wróć tutaj.':'Zaloguj się w karcie otwartej przez rozszerzenie, a potem wróć tutaj.'}</p>
+  <button type="button" class="secondary" data-manual-queue-login>Otwórz logowanie w Chrome</button>
+  <label class="check"><input type="checkbox" data-manual-login-confirmed> Jestem zalogowany w tym profilu</label>
+  <p class="error" role="alert" data-manual-start-error></p>
+  <div class="actions"><button type="button" class="primary" data-manual-queue-confirm-start disabled>${command==='resume-paused'?'Uruchom tylko wstrzymane':'Uruchom kolejkę'}</button>
+  <button type="button" class="secondary close">Anuluj</button></div>`);
+ const login=$('[data-manual-queue-login]'),confirmed=$('[data-manual-login-confirmed]');
+ const start=$('[data-manual-queue-confirm-start]'),error=$('[data-manual-start-error]');
+ confirmed.onchange=()=>{start.disabled=!confirmed.checked};
+ login.onclick=async()=>{
+  error.textContent='';confirmed.disabled=true;start.disabled=true;
+  try{await run(login,async()=>{
+   try{await requestManualQueue('campaign-login',campaign.id)}
+   catch(failure){error.textContent=translateUiText(failure.message)}
+  })}finally{confirmed.disabled=false;start.disabled=!confirmed.checked}
+ };
+ start.onclick=()=>void run(start,async()=>{
+  if(!confirmed.checked)return;
+  error.textContent='';login.disabled=true;confirmed.disabled=true;
+  try{
+   if(data.project_id!==state.seller_project.id)throw Error('Zmieniono projekt. Otwórz kampanię ponownie.');
+   if(headless&&(await api('manual-interaction/headless',{method:'login-status'})).open){
+    throw Error('Zamknij okno logowania headless i spróbuj ponownie.');
+   }
+   await api('campaign/status',{id:campaign.id,status:'active',fingerprint:data.fingerprint});
+   await manualQueueAction(command,campaign.id);
+   $('#modal').close();
+   await refresh();
+  }catch(failure){error.textContent=translateUiText(failure.message)}
+  finally{login.disabled=false;confirmed.disabled=false}
+ });
+ syncLanguages();
+}
+async function showCampaignPreflight(id,command='start'){
  const projectId=state.seller_project.id,response=await fetch('/api/campaign/workspace?'+new URLSearchParams({campaign_id:id,page:1,page_size:10})),data=await response.json();
  if(!response.ok)throw Error(data.error);
  if(projectId!==state.seller_project.id)return;
  const campaign=state.campaigns.find(c=>c.id===id);if(!campaign)return;
  if(campaign.channel==='manual'){
   if(!data.summary.counts.queued||data.summary.counts.uncertain)throw Error('Sprawdź oczekujące zadania kampanii.');
-  await api('campaign/status',{id,status:'active',fingerprint:data.fingerprint});
-  try{await manualQueueAction('start',id)}finally{await refresh()}
+  if(command==='resume-paused'){
+   const {runs}=await requestManualQueue('status',id);
+   if(projectId!==state.seller_project.id)return;
+   if(!runs.some(task=>task.status==='paused'))throw Error(translateUiText('Brak wstrzymanych scenariuszy.'));
+  }
+  confirmManualQueueStart(campaign,data,command);
   return;
  }
  const blocked=!state.integrations.smtp||!data.summary.counts.queued||data.summary.counts.uncertain;
@@ -132,7 +221,7 @@ function requestManualQueue(command,campaignId,messageId){
   const timer=setTimeout(()=>{
    window.removeEventListener('message',receive);
    reject(Error('Brak odpowiedzi Kaśka Outreach. Sprawdź rozszerzenie i odśwież kartę.'));
-  },command==='login'?45000:5000);
+  },['login','campaign-login'].includes(command)?45000:5000);
   window.addEventListener('message',receive);
   window.postMessage({type:'KATIE_MANUAL_QUEUE_REQUEST',id,command,campaignId,messageId,csrf:state.csrf},origin);
  });
@@ -234,11 +323,14 @@ function updateManualQueueProgress(root,runs){
 function renderManualQueueRuns(campaignId,runs){
  const root=$('#campaign-manual-queue');
  if(!root||Number(root.dataset.campaignId)!==campaignId)return;
+ const w=campaignWorkspace(campaignId);
+ w.manualRuns=runs;
+ w.manualQueueError=false;
+ updateManualWorkspaceStatus(w);
  const list=root.querySelector('[data-manual-queue-runs]');
  const notice=root.querySelector('[data-manual-queue-notice]');
  const rows=new Map([...list.children].map(row=>[Number(row.dataset.runId),row]));
  const labels={queued:'Oczekuje',running:'W trakcie',paused:'Wstrzymano',needs_review:'Wymaga sprawdzenia',done:'Zakończono'};
- root.dataset.loaded='true';
  updateManualQueueProgress(root,runs);
  notice.hidden=runs.length>0;
  const emptyLabel=translateUiText('Nie ma jeszcze uruchomionych zadań.');
@@ -290,7 +382,22 @@ async function manualQueueAction(command,campaignId,messageId){
  if(command==='pause')await api('campaign/status',{id:campaignId,status:'paused'});
  try{
   const result=await requestManualQueue(command,campaignId,messageId);
-  if(command==='start')toast(result.count?`Zadania przekazane do kolejki: ${result.count}.`:'Brak nowych gotowych zadań.');
+  if(command==='start'||command==='resume-paused'){
+   if(command==='resume-paused'){
+    if(result.count)toast(`${translateUiText('Wznowione scenariusze:')} ${result.count}.`);
+    else if(result.attention)toast(translateUiText('Wstrzymane scenariusze wymagają sprawdzenia w kolejce.'));
+    else toast(translateUiText('Brak wstrzymanych scenariuszy gotowych do wznowienia.'));
+   }
+   else if(result.count)toast(`${translateUiText('Zadania przekazane do kolejki:')} ${result.count}.`);
+   else if(result.alreadyRunning||result.runs?.some(task=>['queued','running'].includes(task.status)))toast(translateUiText('Kolejka już pracuje.'));
+   else if(result.attention||result.runs?.some(task=>['paused','needs_review'].includes(task.status)))toast(translateUiText('Zadania wymagają wznowienia lub sprawdzenia w kolejce scenariuszy.'));
+   else toast(translateUiText('Brak nowych gotowych zadań.'));
+   if(view==='campaigns'&&selectedCampaign===campaignId&&$('#campaign-manual-queue')){
+    const workspace=campaignWorkspace(campaignId);
+    workspace.tab='manual-queue';
+    updateCampaignTab(workspace);
+   }
+  }
   if(command==='resume'&&!result.count)toast('Zadanie nie jest gotowe do wznowienia.');
   if(command==='login')toast('Po zalogowaniu zamknij okno Chrome i wznów zadanie.');
   renderManualQueueRuns(campaignId,result.runs);
@@ -300,17 +407,31 @@ async function manualQueueAction(command,campaignId,messageId){
 }
 
 const manualQueuePolling=new WeakSet();
+function updateManualWorkspaceStatus(w){
+ if(view!=='campaigns'||selectedCampaign!==w.id)return;
+ const campaign=state.campaigns.find(c=>c.id===w.id);
+ const label=$('[data-manual-workspace-status]');
+ if(!campaign||!label)return;
+ const data=w.data;
+ label.textContent=translateUiText(campaignWorkspaceStatus(campaign,w,data?.summary,data?.delivery));
+ label.previousElementSibling.classList.toggle('active',manualQueueActive(w));
+}
 async function refreshManualQueue(){
  const root=$('#campaign-manual-queue');
- if(!root||root.hidden||document.hidden||manualQueuePolling.has(root))return;
+ if(!root||document.hidden||manualQueuePolling.has(root))return;
  manualQueuePolling.add(root);
  const campaignId=Number(root.dataset.campaignId);
  try{
   const result=await requestManualQueue('status',campaignId);
   if(root.isConnected)renderManualQueueRuns(campaignId,result.runs);
  }catch(error){
+  if(!root.isConnected)return;
+  const w=campaignWorkspace(campaignId);
+  w.manualQueueError=true;
+  updateManualWorkspaceStatus(w);
   const notice=root.querySelector('[data-manual-queue-notice]');
-  if(!root.dataset.loaded&&notice.textContent!==error.message)notice.textContent=error.message;
+  notice.hidden=false;
+  if(notice.textContent!==error.message)notice.textContent=error.message;
  }finally{manualQueuePolling.delete(root)}
 }
 setInterval(refreshManualQueue,2500);
@@ -321,11 +442,13 @@ setInterval(()=>{
 },500);
 
 document.addEventListener('click',event=>{
+ const reprepare=event.target.closest('[data-campaign-reprepare]');
+ if(reprepare){confirmCampaignReprepare(Number(reprepare.dataset.campaignReprepare));return}
  const button=event.target.closest('[data-manual-queue-command], [data-manual-campaign-start]');
  if(!button)return;
  const campaignId=Number(button.dataset.manualCampaignStart||$('#campaign-manual-queue')?.dataset.campaignId);
  if(!campaignId)return;
- void run(button,()=>button.dataset.manualCampaignStart?showCampaignPreflight(campaignId):
+ void run(button,()=>button.dataset.manualCampaignStart?showCampaignPreflight(campaignId,button.dataset.manualStartMode):
   manualQueueAction(button.dataset.manualQueueCommand,campaignId,Number(button.dataset.messageId)||undefined));
 });
 document.addEventListener('click',event=>{
@@ -374,7 +497,7 @@ function renderCampaignWorkspace(c){
 }
 function updateCampaignTab(w){
  for(const button of document.querySelectorAll('[data-campaign-tab]')){const selected=button.dataset.campaignTab===w.tab;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;$('#'+button.getAttribute('aria-controls')).hidden=!selected}
- if(w.tab==='manual-queue')void refreshManualQueue();
+ void refreshManualQueue();
 }
 async function loadCampaignWorkspace(id){
  const w=campaignWorkspace(id),token=++w.request;w.controller?.abort();w.controller=new AbortController();w.loading=true;w.error='';
@@ -396,9 +519,91 @@ function renderCampaignWorkspaceLive(id){
  renderCampaignSequence(c,data);renderCampaignResults(data);syncLanguages();
 }
 function campaignWorkspaceMessage(id){if(!selectedCampaign)return null;const w=campaignWorkspace(selectedCampaign);for(const person of campaignWorkspaceData(w)?.recipients||[]){const message=person.messages.find(message=>message.id===id);if(message)return message}return null}
+async function changeCampaignRecipient(w,contactId,action){
+ if(w.projectId!==state.seller_project.id||w.epoch!==simulationEpoch)throw Error('Zmieniono projekt lub tryb aplikacji.');
+ await api('campaign/recipients/'+action,{id:w.id,contact_id:contactId,project_id:w.projectId});
+ if(action==='remove'){
+  w.open.delete(contactId);
+  const simulation=monitoringSimulation?deliverySimulationRuns(w.projectId)[w.id]:null;
+  if(simulation){
+   simulation.messages=simulation.messages.filter(message=>message.contact_id!==contactId);
+   simulation.replies=simulation.replies.filter(reply=>reply.contact_id!==contactId);
+   saveSimulationResults();
+  }
+  if(state.campaigns.find(c=>c.id===w.id)?.channel==='manual'){
+   void requestManualQueue('sync-removed',w.id).then(result=>renderManualQueueRuns(w.id,result.runs)).catch(()=>{});
+  }
+ }
+ $('#modal').close();
+ await refresh();
+ toast(translateUiText(action==='add'?'Dodano odbiorcę. Przygotuj dla niego wiadomości.':'Usunięto odbiorcę z kampanii.'));
+}
+function showCampaignRecipientPicker(w){
+ modal(`<h2>Dodaj do kampanii</h2><form id="campaign-recipient-picker">
+  <label for="campaign-recipient-query">Szukaj kontaktu</label>
+  <input id="campaign-recipient-query" type="search" maxlength="200">
+  <label for="campaign-recipient-option">Kontakt</label>
+  <select id="campaign-recipient-option" required></select>
+  <p class="hint" role="status"></p><p class="error" role="alert"></p>
+  <div class="actions"><button type="submit" class="primary" disabled>Dodaj do kampanii</button><button type="button" class="secondary close">Anuluj</button></div>
+ </form>`);
+ const form=$('#campaign-recipient-picker'),query=form.querySelector('input'),options=form.querySelector('select');
+ const submit=form.querySelector('[type=submit]'),status=form.querySelector('[role=status]'),error=form.querySelector('[role=alert]');
+ let request=0,timer;
+ async function search(){
+  const token=++request;
+  try{
+   const response=await fetch('/api/campaign/recipient-options?'+new URLSearchParams({campaign_id:w.id,q:query.value}));
+   const data=await response.json();
+   if(!response.ok)throw Error(data.error);
+   if(token!==request||!form.isConnected)return;
+   options.replaceChildren(new Option(translateUiText('Wybierz kontakt'),''),
+    ...data.contacts.map(contact=>new Option([contact.name,contact.email,contact.company].filter(Boolean).join(' · '),contact.id)));
+   status.textContent=data.contacts.length===40?translateUiText('Wpisz nazwę, firmę lub e-mail, aby zawęzić listę.'):
+    data.contacts.length?'':translateUiText('Brak pasujących kontaktów.');
+  }catch(failure){if(token===request&&form.isConnected)error.textContent=failure.message}
+ }
+ query.oninput=()=>{
+  request++;
+  clearTimeout(timer);
+  options.replaceChildren();
+  submit.disabled=true;
+  error.textContent='';
+  timer=setTimeout(search,200);
+ };
+ options.onchange=()=>{submit.disabled=!options.value;error.textContent=''};
+ form.onsubmit=event=>{
+  event.preventDefault();
+  const contactId=Number(options.value);
+  if(!contactId)return;
+  void run(submit,async()=>{
+   try{await changeCampaignRecipient(w,contactId,'add')}
+   catch(failure){error.textContent=translateUiText(failure.message)}
+  });
+ };
+ void search();
+ syncLanguages();
+}
+function confirmCampaignRecipientRemoval(w,person){
+ modal(`<h2>Usunąć odbiorcę z kampanii?</h2><p><strong data-no-translate>${esc(person.name||person.email)}</strong></p>
+  <p>Oczekujące kroki tej osoby zostaną anulowane. Kontakt i historia wysłanych wiadomości pozostaną zapisane.</p>
+  <p class="error" role="alert"></p><div class="actions"><button type="button" class="primary" data-confirm-campaign-recipient-remove>Usuń z kampanii</button>
+  <button type="button" class="secondary close">Anuluj</button></div>`);
+ const confirm=$('[data-confirm-campaign-recipient-remove]'),error=$('#modal [role=alert]');
+ confirm.onclick=()=>void run(confirm,async()=>{
+  try{await changeCampaignRecipient(w,person.id,'remove')}
+  catch(failure){error.textContent=translateUiText(failure.message)}
+ });
+ syncLanguages();
+}
 document.addEventListener('click',event=>{
  if(view!=='campaigns'||!selectedCampaign)return;
  const w=campaignWorkspace(selectedCampaign),button=event.target.closest('button');if(!button||button.disabled)return;
+ if(button.matches('[data-campaign-recipient-add]'))showCampaignRecipientPicker(w);
+ if(button.matches('[data-campaign-recipient-remove]')){
+  const person=w.data?.recipients.find(person=>person.id===Number(button.dataset.campaignRecipientRemove));
+  if(person)confirmCampaignRecipientRemoval(w,person);
+ }
  if(button.matches('[data-campaign-tab],[data-campaign-review]')){w.tab=button.dataset.campaignTab||'messages';w.awaitReview=false;if(w.tab==='messages'){if(w.data&&campaignMessagePage(w.id).loaded&&!campaignMessagePage(w.id).loading)rememberCampaignReview(w);else w.awaitReview=true}updateCampaignTab(w);renderCampaignWorkspaceHeader(state.campaigns.find(c=>c.id===selectedCampaign),w,campaignWorkspaceData(w));syncLanguages()}
  if(button.matches('[data-campaign-recipient-page]')){w.page=Number(button.dataset.campaignRecipientPage);document.activeElement?.blur();loadCampaignWorkspace(w.id)}
  if(button.matches('[data-campaign-workspace-retry]'))loadCampaignWorkspace(w.id);

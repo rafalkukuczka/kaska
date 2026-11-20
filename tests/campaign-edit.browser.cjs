@@ -23,7 +23,11 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.deepEqual(await page.evaluate(()=>selectedCampaignTags()),['Clients']);
   await page.locator('#build-name').fill('Edited campaign');
   await page.locator('[data-builder=save-draft]').click();
-  await page.waitForFunction(()=>view==='campaigns'&&selectedCampaign!==null);
+  await page.waitForFunction(()=>view==='builder'&&builderStep===0&&state.campaigns[0].name==='Edited campaign');
+  await page.locator('[data-builder-step="3"]').click();
+  await page.locator('[data-builder=header-next]').click();
+  await page.waitForFunction(()=>view==='campaigns'&&selectedCampaign===null);
+  await page.locator('[data-action=campaign]').click();
   await page.getByRole('heading',{name:'Edited campaign',exact:true}).waitFor();assert.equal(await page.evaluate(()=>state.campaigns.length),1);
   await page.waitForFunction(()=>campaignMessagePage(selectedCampaign).loaded);
   assert.equal(await page.evaluate(()=>campaignMessagePage(selectedCampaign).total),0);
@@ -37,8 +41,10 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('#steps [name=subject]').first().isDisabled(),true);
   assert.equal(await page.locator('#steps [name=subject]').last().isEnabled(),true);
   await page.locator('#steps [name=subject]').last().fill('Changed follow-up');
-  await page.locator('[data-builder=save-draft]').click();
+  await page.locator('[data-builder-step="3"]').click();
+  await page.locator('[data-builder=header-next]').click();
   await page.waitForFunction(()=>view==='campaigns'&&state.campaigns[0].status==='paused');
+  await page.locator('[data-action=campaign]').click();
   await page.waitForFunction(()=>campaignMessagePage(selectedCampaign).loaded&&!campaignMessagePage(selectedCampaign).loading);
   assert.equal(await page.evaluate(()=>campaignMessagePage(selectedCampaign).messages.find(m=>m.position===0).status),'sent');
   assert.equal(await page.evaluate(()=>campaignMessagePage(selectedCampaign).messages.find(m=>m.position===1).subject),'Changed follow-up');
@@ -48,7 +54,39 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('[data-action=edit-campaign]').click();assert.equal(await page.locator('#build-name').inputValue(),'Unsaved edit');
   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.screenshot({path:'test-results/campaign-edit-mobile.png',fullPage:true});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.evaluate(()=>newCampaign());
+  await page.locator('#build-name').fill('New manual campaign');
+  await page.locator('#build-mode').selectOption('all');
+  await page.locator('[data-builder-step="1"]').click();
+  await page.locator('#build-offer').fill('Services');
+  await page.locator('[data-builder-step="3"]').click();
+  await page.locator('#build-channel').selectOption('manual');
+  await page.locator('[data-manual-action=add]').click();
+  await page.locator('#manual-domain').fill('www.linkedin.com');
+  await page.locator('#manual-start-url').fill('www.linkedin.com/feed/');
+  await page.locator('#manual-mode').selectOption('agent');
+  await page.locator('#manual-instructions').fill('Znajdź kontakt.');
+  await page.locator('[data-manual-action=save]').click();
+  await page.locator('.manual-scenario-list').getByText('https://www.linkedin.com/feed/',{exact:true}).waitFor();
+  const [created]=await Promise.all([
+   page.waitForResponse(response=>response.url().endsWith('/api/campaigns')&&response.request().method()==='POST'),
+   page.locator('[data-builder=save-draft]').click()
+  ]);
+  assert.equal(created.ok(),true,await created.text());
+  await page.waitForFunction(()=>builderEditing?.campaign.id&&state.campaigns.length===2);
+  assert.equal(await page.evaluate(()=>view==='builder'&&builderStep===3),true);
+  const savedId=await page.evaluate(()=>builderEditing.campaign.id);
+  await page.locator('[data-builder=save-draft]').click();
+  await page.waitForFunction(()=>!document.querySelector('[data-builder=save-draft]').disabled);
+  assert.equal(await page.evaluate(()=>builderEditing.campaign.revision),2);
+  await page.locator('[data-builder=header-next]').click();
+  await page.waitForFunction(()=>view==='campaigns'&&selectedCampaign===null);
+  assert.equal(await page.evaluate(()=>state.campaigns.length),2);
+  const saved=await page.evaluate(id=>api('campaign/edit-data',{id}),savedId);
+  assert.equal(saved.campaign.revision,3);
+  assert.equal(JSON.parse(saved.campaign.manual_scenarios)[0].start_url,'https://www.linkedin.com/feed/');
   assert.deepEqual(errors,[]);
-  console.log('Campaign edit QA passed: populated builder, tags/conditions, same campaign ID, draft preparation, active pause, protected sent step, future message update, isolated edit draft and mobile.');
+  console.log('Campaign edit QA passed: save in place, save and return, manual scenario, same campaign ID, protected sent step, isolated draft and mobile.');
  }finally{if(browser)await browser.close();server.kill()}
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -11,6 +11,7 @@ import urllib.request
 from urllib.parse import urlencode, urlparse
 
 import ai_service
+import openai_usage
 import contact_tags
 import contact_enrichment
 import languages
@@ -210,7 +211,7 @@ class Prospecting:
         public_url(website)
         audience = str(item.get('audience', '')).strip()
         prefs = languages.preferences(self.db)
-        message_language = languages.validate_language(item.get('language', prefs['message_language']))
+        message_language = languages.validate_language(item.get('language', project['message_language'] or prefs['message_language']))
         points = {}
         for field in ('pain_points', 'value_props', 'proof_points'):
             value = item.get(field, '')
@@ -243,7 +244,8 @@ class Prospecting:
                 c.execute('UPDATE prospect_runs SET search_areas=? WHERE id=?',(json.dumps(areas,ensure_ascii=False),run_id))
                 c.execute('UPDATE prospect_runs SET pain_points=?,value_props=? WHERE id=?', (points['pain_points'], points['value_props'], run_id))
                 c.execute('UPDATE prospect_runs SET proof_points=? WHERE id=?', (points['proof_points'], run_id))
-            threading.Thread(target=self.execute, args=(run_id, 'search'), daemon=True).start()
+            threading.Thread(target=openai_usage.run, args=('prospecting/search',None,project_id,
+                self.execute,run_id,'search'), daemon=True).start()
             return {'id': run_id}
         except Exception:
             self.lock.release()
@@ -488,7 +490,8 @@ class Prospecting:
                         draft_completed=0, draft_total=len(rows)*len(languages.steps(run['language'])))
             started = True
             if background:
-                threading.Thread(target=self._draft_worker, args=(run, rows), daemon=True).start()
+                threading.Thread(target=openai_usage.run, args=('prospecting/draft',None,run['project_id'],
+                    self._draft_worker,run,rows), daemon=True).start()
                 handed_off = True
                 return {'id': run_id, 'status': 'drafting'}
             return self._generate_drafts(run, rows)

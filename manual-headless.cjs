@@ -3,6 +3,7 @@ const readline = require('node:readline');
 const profile = process.argv[2];
 let context;
 let launching;
+let researchBrowser;
 let visible = false;
 let nextTab = Date.now() * 1000;
 let nextEvent = Date.now() * 1000;
@@ -165,9 +166,52 @@ async function script({ tabId, source, args }) {
   return [{ frameId: 0, result: result.value }];
 }
 
+async function researchPage({ html, url }) {
+  if (!researchBrowser) {
+    const { chromium } = require('playwright');
+    const executablePath = process.env.KATIE_HEADLESS_CHROME_PATH;
+    researchBrowser = chromium.launch({
+      headless: true, chromiumSandbox: true,
+      ...(executablePath ? { executablePath } : { channel: 'chrome' }),
+    }).catch(error => {
+      researchBrowser = undefined;
+      throw error;
+    });
+  }
+  const browser = await researchBrowser;
+  const page = await browser.newPage({ offline: true, serviceWorkers: 'block' });
+  try {
+    return await page.evaluate(({ html, url }) => {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const hardBlock = doc.querySelector('input[type="password"], iframe[src*="captcha" i], #challenge-form');
+      doc.querySelectorAll('script, style, template, noscript, [hidden]').forEach(element => element.remove());
+      doc.querySelectorAll('p, div, h1, h2, h3, li, tr, br').forEach(element => element.before(doc.createTextNode(' ')));
+      const text = (doc.body?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 24000);
+      const blocked = !!hardBlock || /verify (that )?you are human|prüfen sie, ob sie ein mensch sind|captcha|access denied|zu viele anfragen/i
+        .test(doc.title + ' ' + text.slice(0, 500));
+      const base = new URL(url);
+      const links = new Set();
+      for (const anchor of doc.querySelectorAll('a[href]')) {
+        let address;
+        try { address = new URL(anchor.getAttribute('href'), url); }
+        catch { continue; }
+        if (address.origin === base.origin && address.pathname !== base.pathname &&
+            /about|company|unternehmen|über-uns|impressum|kontakt|career|karriere|jobs|technology|technologie|produkte/i.test(address.pathname)) {
+          links.add(address.origin + address.pathname);
+        }
+      }
+      return { url, text, blocked, links: [...links].slice(0, 3) };
+    }, { html, url });
+  } finally {
+    await page.close();
+  }
+}
+
 async function handle(method, args) {
   switch (method) {
+    case 'research': return researchPage(args);
     case 'events': return { events: events.filter(event => event.id > (args.after || 0)) };
+    case 'login-status': return { open: visible };
     case 'get': return describe(getTab(args.id));
     case 'query': return [...tabs.values()].filter(tab => !args.active || tab.id === activeTab).map(describe);
     case 'script': return script(args);
@@ -210,6 +254,9 @@ input.on('line', async line => {
   }
 });
 input.on('close', async () => {
-  await (context || await launching?.catch(() => undefined))?.close().catch(() => undefined);
+  await Promise.all([
+    (context || await launching?.catch(() => undefined))?.close().catch(() => undefined),
+    researchBrowser?.then(browser => browser.close()).catch(() => undefined),
+  ]);
   process.exit();
 });

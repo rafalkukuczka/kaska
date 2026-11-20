@@ -92,6 +92,23 @@ class CampaignEditTests(unittest.TestCase):
             after=[dict(row) for row in c.execute('SELECT * FROM messages WHERE campaign_id=1 ORDER BY position')]
             self.assertEqual(after,before)
 
+    def test_email_can_switch_to_manual_with_confirmed_history(self):
+        app.prepare(1)
+        with app.db() as c:
+            c.execute("UPDATE campaigns SET status='active' WHERE id=1")
+            c.execute("UPDATE messages SET status='sent',sent_at=?,message_id='<email>' WHERE campaign_id=1 AND position=0",
+                      (time.time(),))
+            sent = dict(c.execute('SELECT * FROM messages WHERE campaign_id=1 AND position=0').fetchone())
+        item = self.item()
+        item.update(channel='manual', manual_scenarios=[{
+            'domain':'example.com', 'start_url':'https://example.com/', 'instructions':'Sprawdź stronę', 'mode':'agent',
+        }])
+        self.assertEqual(self.save(item)['status'], 'paused')
+        with app.db() as c:
+            self.assertEqual(c.execute('SELECT channel FROM campaigns WHERE id=1').fetchone()[0], 'manual')
+            self.assertEqual(dict(c.execute('SELECT * FROM messages WHERE id=?',(sent['id'],)).fetchone()), sent)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM messages WHERE campaign_id=1 AND status='queued'").fetchone()[0], 1)
+
     def test_manual_scenario_saves_explicit_sending_mode_and_send_step(self):
         item = self.item()
         actions = [{'type': 'ifVisible', 'selector': 'form', 'then': [

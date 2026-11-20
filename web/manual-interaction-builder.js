@@ -36,12 +36,23 @@ function hasUnappliedManualScenario(){
   editor.dataset.initialValues!==JSON.stringify(manualScenarioFieldValues());
 }
 
+function manualScenarioStartUrl(value,domain){
+ const input=value.trim();
+ const bareHost=/^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?(?:[/?#][^\s\\]*)?$/i;
+ const candidate=bareHost.test(input)?'https://'+input:input;
+ let url;
+ try{
+  if(!/^https:\/\/[^/\\\s]+[^\s\\]*$/i.test(candidate))throw Error();
+  url=new URL(candidate);
+ }catch{throw Error('Podaj poprawny adres początkowy HTTPS.');}
+ if(url.username||url.password)throw Error('Podaj poprawny adres początkowy HTTPS.');
+ if(url.hostname.replace(/^www\./,'')!==domain)throw Error('Adres początkowy musi należeć do podanej domeny.');
+ return url.href;
+}
+
 function readManualScenarioForm(){
  const domain=manualScenarioDomain($('#manual-domain').value);
- let startUrl;
- try{startUrl=new URL($('#manual-start-url').value.trim())}catch{throw Error('Podaj poprawny adres początkowy HTTPS.');}
- if(startUrl.protocol!=='https:'||startUrl.username||startUrl.password)throw Error('Podaj poprawny adres początkowy HTTPS.');
- if(startUrl.hostname.replace(/^www\./,'')!==domain)throw Error('Adres początkowy musi należeć do podanej domeny.');
+ const start_url=manualScenarioStartUrl($('#manual-start-url').value,domain);
  const instructions=$('#manual-instructions').value.trim();
  if(instructions.length<5)throw Error('Opisz, co ma zrobić scenariusz (minimum 5 znaków).');
  const dry_run=$('#manual-dry-run').checked;
@@ -51,12 +62,12 @@ function readManualScenarioForm(){
   if(!Number.isSafeInteger(agent_max_requests)||agent_max_requests<1)throw Error('Limit wywołań agenta musi być dodatnią liczbą całkowitą.');
   const agent_page_wait_seconds=$('#manual-page-wait').valueAsNumber;
   if(!Number.isSafeInteger(agent_page_wait_seconds)||agent_page_wait_seconds<1||agent_page_wait_seconds>maxManualAgentPageWait)throw Error('Podaj prawidłowy czas oczekiwania na stronę w pełnych sekundach.');
-  return {domain,start_url:startUrl.href,instructions,mode:'agent',actions:[],dry_run,headless,agent_max_requests,agent_page_wait_seconds};
+  return {domain,start_url,instructions,mode:'agent',actions:[],dry_run,headless,agent_max_requests,agent_page_wait_seconds};
  }
  let actions;
  try{actions=JSON.parse($('#manual-actions').value)}catch{throw Error('Podaj kroki scenariusza w poprawnym JSON.');}
  if(!Array.isArray(actions)||!actions.length)throw Error('Dodaj kroki scenariusza.');
- return {domain,start_url:startUrl.href,instructions,actions,dry_run,headless};
+ return {domain,start_url,instructions,actions,dry_run,headless};
 }
 
 function manualScenarioEditorActions(domain,actions){

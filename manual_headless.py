@@ -50,7 +50,7 @@ class HeadlessBrowser:
         if not isinstance(item, dict):
             raise ValueError('Nieprawidłowe polecenie Chrome headless.')
         method = item.get('method')
-        if method not in ('create', 'get', 'query', 'script', 'events', 'login', 'close'):
+        if method not in ('create', 'get', 'query', 'script', 'events', 'login', 'login-status', 'close', 'research'):
             raise ValueError('Nieznane polecenie Chrome headless.')
         args = item.get('args', {})
         if not isinstance(args, dict):
@@ -58,6 +58,8 @@ class HeadlessBrowser:
         response = Queue()
         with self.lock:
             if self.process is None:
+                if method == 'login-status':
+                    return {'open': False}
                 if method == 'events':
                     return {'events': []}
                 if method == 'close':

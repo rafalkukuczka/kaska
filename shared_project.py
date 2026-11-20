@@ -8,7 +8,7 @@ import opportunity_catalog
 FIELDS={'website':2000,'offer':10000,'audience':3000,'pain_points':10000,'value_props':10000,'proof_points':10000}
 
 
-def blank_project():return {**{key:'' for key in FIELDS},'search_languages':[],'search_areas':[],'signal_interests':[]}
+def blank_project():return {**{key:'' for key in FIELDS},'message_language':'','search_languages':[],'search_areas':[],'signal_interests':[]}
 
 
 def init_schema(c):
@@ -35,7 +35,12 @@ def get(db,project_id=None):
         if project_id is None:project_id=c.execute('SELECT project_id FROM seller_project_selection WHERE id=1').fetchone()[0]
         row=c.execute('SELECT * FROM seller_projects WHERE id=? AND deleted=0',(int(project_id),)).fetchone()
     if not row:raise ValueError('Nie znaleziono projektu.')
-    return {'search_languages':[],'search_areas':[],'signal_interests':[],**json.loads(row['data']),'id':row['id'],'name':row['name'],'revision':row['revision'],'updated':row['updated'],'share_contacts':bool(row['share_contacts'])}
+    return {'message_language':'','search_languages':[],'search_areas':[],'signal_interests':[],**json.loads(row['data']),'id':row['id'],'name':row['name'],'revision':row['revision'],'updated':row['updated'],'share_contacts':bool(row['share_contacts'])}
+
+
+def message_language(db,project_id):
+    project=get(db,project_id)
+    return project['message_language'] or languages.preferences(db)['message_language']
 
 
 def projects(db):
@@ -99,6 +104,10 @@ def save(db,item):
     if 'search_languages' in item:patch['search_languages']=languages.validate_search_languages(item['search_languages'])
     if 'search_areas' in item:patch['search_areas']=search_areas.validate(item['search_areas'])
     if 'signal_interests' in item:patch['signal_interests']=opportunity_catalog.validate(item['signal_interests'])
+    if 'message_language' in item:
+        value=item['message_language']
+        if not isinstance(value,str):raise ValueError('Wybierz język wiadomości w projekcie.')
+        patch['message_language']=languages.validate_language(value) if value else ''
     with db() as c:
         c.execute('PRAGMA busy_timeout=3000');c.execute('BEGIN IMMEDIATE')
         project_id=item.get('project_id')
@@ -109,7 +118,7 @@ def save(db,item):
         project=json.loads(row['data']);project.update(patch);updated=time.time()
         name=name or row['name']
         c.execute('UPDATE seller_projects SET name=?,data=?,revision=revision+1,updated=? WHERE id=?',(name,json.dumps(project,ensure_ascii=False),updated,row['id']))
-    return {'search_languages':[],'search_areas':[],'signal_interests':[],**project,'id':row['id'],'name':name,'revision':row['revision']+1,'updated':updated,'share_contacts':bool(row['share_contacts'])}
+    return {'message_language':'','search_languages':[],'search_areas':[],'signal_interests':[],**project,'id':row['id'],'name':name,'revision':row['revision']+1,'updated':updated,'share_contacts':bool(row['share_contacts'])}
 
 
 def resolve(db,item):

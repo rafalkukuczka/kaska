@@ -85,6 +85,7 @@ class Apollo:
                 continue
             output.append({'value': email, 'first_name': str(person.get('first_name') or ''),
                 'last_name': str(person.get('last_name') or ''), 'position': str(person.get('title') or ''),
+                **{key: person[key] for key in ('linkedin_url','city','state','country','seniority') if isinstance(person.get(key), str)},
                 'type': 'personal', 'provenance': 'found', 'provider': 'Apollo',
                 'sources': [{'uri': 'https://app.apollo.io/#/people/' + person_id,
                              'last_seen_on': '', 'kind': 'provider'}]})

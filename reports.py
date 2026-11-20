@@ -1,10 +1,11 @@
-"""Read-only reports from complete, real project delivery history."""
+"""Read-only reports from real project delivery history and OpenAI usage."""
 import time
 import dashboard_activity
+import openai_usage
 import project_scope
 
 
-def read(c,days=7,now=None):
+def read(c,days=7,now=None,cost_page=1):
     days=int(days)
     if days not in (7,30,90):raise ValueError('Wybierz zakres 7, 30 lub 90 dni.')
     project_id=project_scope.active(c)
@@ -19,4 +20,5 @@ def read(c,days=7,now=None):
         WHERE p.project_id=? GROUP BY p.id ORDER BY p.id DESC""",(start,now,start,now,project_id))]
     return {'project_id':project_id,'days':days,'start':start,'end':now,'real_data':True,
             'flow':dashboard_activity.flow(c,project_id,now,days),
-            'activity':dashboard_activity.read(c,project_id,now,start),'campaigns':rows}
+            'activity':dashboard_activity.read(c,project_id,now,start),'campaigns':rows,
+            'openai_usage':openai_usage.report(project_id,start,now,cost_page)}

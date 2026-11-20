@@ -24,7 +24,7 @@ async function renderCompanies() {
     <td><button type="button" class="link" data-company-key="${esc(row.key)}" data-no-translate>${esc(row.name)}</button><small data-no-translate>${esc(row.domain)}</small></td>
     <td>${companyFit(row.fit)}</td><td>${row.recent_signals}</td><td>${row.contact_count}</td></tr>`).join('')}</tbody></table></div>
     ${matches.length>25?`<div class="actions"><button type="button" class="secondary" data-company-page="-1" ${page===0?'disabled':''}>Wstecz</button><span>${page+1} / ${Math.ceil(matches.length/25)}</span><button type="button" class="secondary" data-company-page="1" ${(page+1)*25>=matches.length?'disabled':''}>Dalej</button></div>`:''}`
-    :empty('Brak firm','Firmy pojawią się po zapisaniu kontaktów albo po wyszukiwaniu w Leadach lub Odkrywaj.');
+    :empty('Brak firm','Firmy pojawią się po zapisaniu kontaktów, wyszukaniu osób lub znalezieniu okazji w projekcie.');
    syncLanguages();
   };
   search.oninput=()=>{page=0;show()};

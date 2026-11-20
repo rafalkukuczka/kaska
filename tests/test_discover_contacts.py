@@ -1,4 +1,5 @@
 import copy
+import json
 import unittest
 from unittest.mock import patch
 
@@ -39,6 +40,42 @@ class DiscoverContactTests(unittest.TestCase):
             self.assertIn('https://acme.example/team',contact['notes'])
             self.assertIn('acme.example',contact['notes'])
             self.assertEqual(c.execute('SELECT COUNT(*) FROM messages').fetchone()[0],0)
+
+    def test_dashboard_adds_tag_and_persists_professional_attributes_and_sources(self):
+        search = app.lead_finder.create({'query':'Acme'})['search']['id']
+        data = {'domain':'example.com','emails':[{
+            'value':'new@example.com','first_name':'Erika','last_name':'Muster','type':'personal',
+            'position':'IT Director','department':'IT','city':'Berlin','country':'DE',
+            'linkedin':'https://www.linkedin.com/in/erika-muster','phone_type':'work','phone_number':'+49 30 123456',
+            'sources':[{'uri':'https://example.com/team','last_seen_on':'2026-11-17'}],
+        }]}
+        with patch('discover_contacts.Hunter') as hunter:
+            hunter.return_value.request.return_value={'data':data}
+            response=app.discover_contact_finder.search_lead({'search_id':search,'domain':'example.com'})
+            self.assertEqual(hunter.return_value.request.call_args.args[1]['domain'],'example.com')
+        item={'id':response['id'],'selected':[0],'confirm_company':True,'project_id':1}
+        with self.assertRaisesRegex(ValueError,'co najmniej jeden tag'):
+            app.discover_contact_finder.add(item,from_dashboard=True)
+        self.assertEqual(app.discover_contact_finder.add({**item,'tags':['DACH']},from_dashboard=True)['added'],1)
+        with app.db() as c:
+            contact=c.execute("SELECT * FROM contacts WHERE email='new@example.com'").fetchone()
+            self.assertEqual((contact['name'],contact['company'],contact['role']),('Erika Muster','Acme','IT Director'))
+            self.assertEqual(json.loads(contact['tags']),['DACH'])
+            attributes=json.loads(contact['research_data'])
+            self.assertEqual((attributes['first_name'],attributes['last_name'],attributes['city'],attributes['country']),
+                             ('Erika','Muster','Berlin','DE'))
+            self.assertEqual(attributes['work_phone'],'+49 30 123456')
+            self.assertEqual(attributes['sources'][0]['url'],'https://example.com/team')
+            self.assertEqual(attributes['linkedin'],'https://www.linkedin.com/in/erika-muster')
+            c.execute("UPDATE contacts SET status='unsubscribed',role='CTO' WHERE id=?", (contact['id'],))
+        self.assertEqual(app.discover_contact_finder.add({**item,'tags':['ERP']},from_dashboard=True)['existing'],1)
+        with app.db() as c:
+            contact=c.execute("SELECT * FROM contacts WHERE email='new@example.com'").fetchone()
+            self.assertEqual((contact['status'],contact['role']),('unsubscribed','CTO'))
+            self.assertEqual(set(json.loads(contact['tags'])),{'DACH','ERP'})
+        shared_project.create(app.db,{'name':'Inny projekt'})
+        with self.assertRaisesRegex(ValueError,'wyszukiwaniu i projekcie'):
+            app.discover_contact_finder.search_lead({'search_id':search,'domain':'example.com'})
 
     def test_individual_contact_tags_and_atomic_validation(self):
         data=self.seed();data['emails'][1]['value']='second@acme.example'

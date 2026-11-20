@@ -24,6 +24,9 @@ def migrate_json(value):
 
 def migrate(c):
     tables=[row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+    # These profiles describe companies and already belong to seller projects.
+    if 'lead_company_profiles' in tables:
+        tables.remove('lead_company_profiles')
     legacy=any('profile' in table or any('profile' in row[1] for row in c.execute('PRAGMA table_info('+identifier(table)+')')) for table in tables)
     if not legacy:return
     c.execute('BEGIN IMMEDIATE')

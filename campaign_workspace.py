@@ -28,7 +28,10 @@ def read(db,campaign_id,page=1,size=25):
         fingerprint_metadata=[{key:row[key] for key in ('id','contact_id','position','subject','body','email')} for row in metadata]
         delivery=delivery_status.annotate(c,campaign,metadata)
         enrolled={row['contact_id'] for row in metadata}
-        for row in c.execute('SELECT DISTINCT t.* FROM contacts t JOIN messages m ON m.contact_id=t.id WHERE m.campaign_id=? AND m.deleted=0',(campaign_id,)):
+        for row in c.execute("""SELECT DISTINCT t.* FROM contacts t JOIN messages m ON m.contact_id=t.id
+            WHERE m.campaign_id=? AND m.deleted=0 AND NOT EXISTS (
+              SELECT 1 FROM campaign_recipient_overrides o WHERE o.campaign_id=m.campaign_id
+              AND o.contact_id=t.id AND o.included=0)""",(campaign_id,)):
             targets.setdefault(row['id'],dict(row))
         total=len(targets);page=min(page,max(1,math.ceil(total/size)))
         people=sorted(targets.values(),key=lambda row:(row['name'].casefold(),row['email'].casefold(),row['id']))[(page-1)*size:page*size]

@@ -1,6 +1,7 @@
-function sourceLink(url){return /^https:\/\//i.test(url)?`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="link">${esc(url)}</a>`:''}
+function sourceLink(url,label=url){return /^https:\/\//i.test(url)?`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="link">${esc(label)}</a>`:''}
 const opportunityPages=new Map(),opportunityPanels=new Set();
 const opportunityFilters=new Map();
+const opportunityStarting=new Set();
 function opportunityFilter(){const key=opportunityRequestKey();if(!opportunityFilters.has(key))opportunityFilters.set(key,{category:'',days:'30',location:'',score:'0',decision:'open',sort:'score'});return opportunityFilters.get(key)}
 function opportunityDecision(item){return monitoringSimulation?(fetchedSimulation().opportunityReviews||{})[item.id]||'new':item.decision||'new'}
 function filterOpportunities(items){
@@ -47,14 +48,23 @@ function renderOpportunityRequestPreview(data,run){
 }
 document.addEventListener('toggle',event=>{if(event.target.matches?.('[data-opportunity-request-preview]')&&event.target.isConnected){const key=event.target.dataset.opportunityRequestPreview;event.target.open?opportunityRequestPanels.add(key):opportunityRequestPanels.delete(key)}},true);
 function opportunityPage(category){const key=JSON.stringify([sellerProject().id,monitoringSimulation,category]);if(!opportunityPages.has(key))opportunityPages.set(key,1);return {key,page:opportunityPages.get(key)}}
+function syncOpportunitySearch(){
+ const button=$('[data-find-opportunities]');
+ if(!button)return;
+ const project=sellerProject(),interests=project.signal_interests||[];
+ const active=state.discovery_opportunities?.runs.some(run=>['running','cancelling'].includes(run.status));
+ const selected=state.project_catalog?.some(item=>interests.includes(item.key));
+ button.disabled=Boolean(opportunityStarting.has(opportunityRequestKey())||active||!selected||!project.offer?.trim()||(!monitoringSimulation&&!state.integrations.ai));
+}
 function renderDiscoverOpportunities(){
  const root=$('#discover-opportunities');if(!root)return;
+ syncOpportunitySearch();
  if(root.contains(document.activeElement?.closest('[data-opportunity-filter]')))return;
  const project=sellerProject(),data=state.discovery_opportunities||{runs:[],items:[]},run=data.runs[0],active=data.runs.find(r=>['running','cancelling'].includes(r.status));
  const selected=(state.project_catalog||[]).filter(item=>(project.signal_interests||[]).includes(item.key)),groups=new Map();
  for(const type of selected.length?selected:(state.project_catalog||[])){if(!groups.has(type.category))groups.set(type.category,[]);groups.get(type.category).push(type)}
  const statuses={running:'Wyszukiwanie trwa',cancelling:'Zatrzymywanie wyszukiwania',completed:'Wyszukiwanie zakończone',partial:'Część kategorii wymaga ponowienia',error:'Wyszukiwanie wymaga uwagi',cancelled:'Wyszukiwanie zatrzymane',interrupted:'Wyszukiwanie przerwane',stale:'Kryteria projektu zmieniły się'};
- root.innerHTML=`<div class="panel-head"><div><h2>Okazje według kategorii</h2><p class="hint">Na podstawie oferty i katalogu bieżącego projektu. Ostatnie 30 dni.</p></div><button type="button" class="primary" data-find-opportunities ${active||!selected.length||!project.offer?.trim()||(!monitoringSimulation&&!state.integrations.ai)?'disabled':''}>Znajdź okazje</button></div><p class="hint">Wyszukiwanie uruchamiasz na żądanie. AI korzysta z internetu i może zużywać środki OpenAI.</p>${!selected.length?'<p class="notice">Wybierz typy sygnałów w katalogu projektu. <button type="button" class="link" data-open-project-catalog>Otwórz katalog projektu</button></p>':''}${!project.offer?.trim()?'<p class="hint"><button type="button" class="link" data-view="project">Uzupełnij ofertę projektu</button></p>':''}${!monitoringSimulation&&!state.integrations.ai?'<p class="hint"><button type="button" class="link" data-view="settings">Podłącz OpenAI</button></p>':''}${run?`<div class="opportunity-search-status" role="status"><strong><span>${esc(statuses[run.status]||run.status)}</span> · ${run.completed} / ${run.total}</strong><p data-no-translate>${esc(run.stage)}</p>${active?`<progress max="${run.total||1}" value="${run.completed||0}" aria-label="${esc(translateUiText('Postęp wyszukiwania okazji'))}"></progress><button type="button" class="link danger" data-cancel-opportunities="${active.id}" ${active.status==='cancelling'?'disabled':''}>Przerwij wyszukiwanie</button>`:''}${run.signature&&run.signature!==data.signature?'<p class="hint">Wyniki pochodzą z wcześniejszych kryteriów projektu. Uruchom nowe wyszukiwanie.</p>':''}${run.warnings?.length?`<details><summary><span>Niepotwierdzone wyniki i błędy:</span> ${run.warnings.length}</summary>${run.warnings.map(w=>`<p class="hint" data-no-translate>${esc(w)}</p>`).join('')}</details>`:''}</div>`:''}${renderOpportunityRequestPreview(data,run)}${opportunityFilterBar(data.items)}<div class="opportunity-categories ${!selected.length?'is-unconfigured':''}">${[...groups].filter(([category])=>!data.items.length||!opportunityFilter().category||category===opportunityFilter().category).map(([category,types])=>{
+ root.innerHTML=`<div class="panel-head"><div><h2>Okazje według kategorii</h2><p class="hint">Na podstawie oferty i katalogu bieżącego projektu. Ostatnie 30 dni.</p></div></div><p class="hint">Wyszukiwanie uruchamiasz na żądanie. AI korzysta z internetu i może zużywać środki OpenAI.</p>${!selected.length?'<p class="notice">Wybierz typy sygnałów w katalogu projektu. <button type="button" class="link" data-open-project-catalog>Otwórz katalog projektu</button></p>':''}${!project.offer?.trim()?'<p class="hint"><button type="button" class="link" data-view="project">Uzupełnij ofertę projektu</button></p>':''}${!monitoringSimulation&&!state.integrations.ai?'<p class="hint"><button type="button" class="link" data-view="settings">Podłącz OpenAI</button></p>':''}${run?`<div class="opportunity-search-status" role="status"><strong><span>${esc(statuses[run.status]||run.status)}</span> · ${run.completed} / ${run.total}</strong><p data-no-translate>${esc(run.stage)}</p>${active?`<progress max="${run.total||1}" value="${run.completed||0}" aria-label="${esc(translateUiText('Postęp wyszukiwania okazji'))}"></progress><button type="button" class="link danger" data-cancel-opportunities="${active.id}" ${active.status==='cancelling'?'disabled':''}>Przerwij wyszukiwanie</button>`:''}${run.signature&&run.signature!==data.signature?'<p class="hint">Wyniki pochodzą z wcześniejszych kryteriów projektu. Uruchom nowe wyszukiwanie.</p>':''}${run.warnings?.length?`<details><summary><span>Niepotwierdzone wyniki i błędy:</span> ${run.warnings.length}</summary>${run.warnings.map(w=>`<p class="hint" data-no-translate>${esc(w)}</p>`).join('')}</details>`:''}</div>`:''}${renderOpportunityRequestPreview(data,run)}${opportunityFilterBar(data.items)}<div class="opportunity-categories ${!selected.length?'is-unconfigured':''}">${[...groups].filter(([category])=>!data.items.length||!opportunityFilter().category||category===opportunityFilter().category).map(([category,types])=>{
   const rows=filterOpportunities(data.items).filter(item=>types.some(type=>type.key===item.kind)),p=opportunityPage(category),pages=Math.max(1,Math.ceil(rows.length/5));p.page=Math.min(p.page,pages);opportunityPages.set(p.key,p.page);
   return `<details class="opportunity-category" data-opportunity-category="${esc(category)}" open><summary><strong>${esc(category)}</strong><span class="badge gray">${rows.length}</span>${!selected.length?'<span class="hint">Nie skonfigurowano</span>':''}</summary><p class="hint">${types.map(t=>esc(translateUiText(t.label))).join(' · ')}</p>${rows.slice((p.page-1)*5,p.page*5).map(item=>renderOpportunityCard(item,data.signature)).join('')||(data.items.some(item=>types.some(type=>type.key===item.kind))?'<p class="hint">Brak okazji spełniających filtry. Zmień lub wyczyść filtry.</p>':!selected.length?'<p class="hint">Wybierz interesujące zdarzenia w projekcie. <button type="button" class="link" data-open-project-catalog>Wybierz sygnały</button></p>':active?'<p class="hint" role="status">Sprawdzam źródła. Potwierdzone okazje pojawią się tutaj.</p>':run&&run.signature===data.signature&&['completed','partial'].includes(run.status)?'<p class="hint">W tym wyszukiwaniu nie znaleziono nowych potwierdzonych okazji w tej kategorii.</p>':'<p class="hint">Brak potwierdzonych okazji w tej kategorii. Kliknij „Znajdź okazje”, aby przeszukać internet.</p>')}${pages>1?`<nav class="discover-company-pagination"><button type="button" class="secondary" data-opportunity-page="${p.page-1}" data-category="${esc(category)}" ${p.page===1?'disabled':''}>Poprzednia</button><span class="hint"><span>Strona</span> ${p.page} / ${pages}</span><button type="button" class="secondary" data-opportunity-page="${p.page+1}" data-category="${esc(category)}" ${p.page===pages?'disabled':''}>Następna</button></nav>`:''}</details>`;
  }).join('')}</div>`;
@@ -79,7 +89,18 @@ document.addEventListener('click',event=>{
   return;
  }
  const find=event.target.closest('[data-find-opportunities]'),cancel=event.target.closest('[data-cancel-opportunities]'),page=event.target.closest('[data-opportunity-page]'),company=event.target.closest('[data-opportunity-company]');
- if(find)run(find,async()=>{await flushSellerProject();await api('discover/opportunities/start',{project_id:sellerProject().id});await refresh();toast('Wyszukiwanie okazji uruchomione w tle.');});
+ if(find){
+  const key=opportunityRequestKey(),projectId=sellerProject().id;
+  if(opportunityStarting.has(key))return;
+  opportunityStarting.add(key);
+  run(find,async()=>{
+   await flushSellerProject();
+   if(opportunityRequestKey()!==key)return;
+   await api('discover/opportunities/start',{project_id:projectId});
+   await refresh();
+   toast('Wyszukiwanie okazji uruchomione w tle.');
+  }).finally(()=>{opportunityStarting.delete(key);syncOpportunitySearch()});
+ }
  if(cancel)run(cancel,async()=>{await api('discover/opportunities/cancel',{project_id:sellerProject().id,id:Number(cancel.dataset.cancelOpportunities)});await refresh()});
  if(page){const p=opportunityPage(page.dataset.category);opportunityPages.set(p.key,Number(page.dataset.opportunityPage));renderDiscoverOpportunities()}
  if(company){const index=discoverFirms().findIndex(firm=>firm.company===company.dataset.opportunityCompany);if(index>=0)discoverCompanyPage().page=Math.floor(index/discoverCompanyPage().size)+1;const p=discoverContactPanel(company.dataset.opportunityCompany);p.companyOpen=true;p.open=true;renderDiscoverCompanies();const panel=[...document.querySelectorAll('[data-discover-company]')].find(el=>el.dataset.discoverCompany===p.key);panel?.scrollIntoView({block:'start',behavior:'smooth'})}
@@ -103,8 +124,7 @@ document.addEventListener('click',event=>{
 });
 
 function renderDiscover(){
- if(!$('#discover-root'))$('#content').innerHTML=renderTop('Discover','Firmy znalezione dla bieżącego projektu.')+'<div id="discover-root"><section class="panel" id="discover-opportunities"></section><details class="panel" id="discover-companies" open></details></div>';
- if(!$('#discover-opportunities'))$('#discover-root').insertAdjacentHTML('afterbegin','<section class="panel" id="discover-opportunities"></section>');
+ if(!$('#discover-root'))$('#lead-workspace-body').innerHTML='<div id="discover-root"><section class="panel" id="discover-opportunities"></section><details class="panel" id="discover-companies" open></details></div>';
  renderDiscoverOpportunities();
  renderDiscoverCompanies();
 }
@@ -124,7 +144,7 @@ function renderDiscoverCompanies(){
   const panel=discoverContactPanel(company.company);if(!panel.domain&&!panel.result)panel.domain=company.domain;
   const opportunities=(state.discovery_opportunities?.items||[]).filter(item=>item.company.toLocaleLowerCase()===company.company.toLocaleLowerCase()),current=opportunities.filter(item=>item.simulated||item.signature===state.discovery_opportunities.signature),categories=[...new Set(opportunities.map(item=>item.category))];
   return `<details class="signal-card discover-company" data-discover-company="${esc(panel.key)}" ${panel.companyOpen?'open':''}><summary><span class="discover-company-toggle ${discoverCompanyHasContacts(company.company)?'has-contacts':''}" aria-hidden="true"></span><h3 data-no-translate>${esc(company.company)}</h3><span class="discover-company-fit">${current.length?opportunityFit(Math.max(...current.map(item=>item.relevance))):'<span class="badge gray">Nie oceniono</span>'}</span></summary><div class="discover-company-body">${categories.map(category=>`<span class="badge">${esc(category)}</span>`).join(' ')}${opportunities.length?`<p class="hint">Oceny i uzasadnienia znajdziesz w okazjach według kategorii powyżej.</p>`:''}${company.domain?`<p class="hint" data-no-translate>${esc(company.domain)}</p>`:''}${renderDiscoverContactPanel(company.company)}${discoverCampaignHandoff(company.company)}</div></details>`;
- }).join('')||empty('Brak firm w tym projekcie','Wyszukaj firmy w Leadach lub dodaj kontakty.')}<div class="actions"><button type="button" class="secondary" data-view="prospecting">Szukaj firm</button></div>${discoverCompanyPagination(pagination,total,'bottom')}`;
+ }).join('')||empty('Brak firm w tym projekcie','Wyszukaj firmy w Dashboardzie lub dodaj kontakty.')}<div class="actions"><button type="button" class="secondary" data-view="dashboard">Szukaj firm</button></div>${discoverCompanyPagination(pagination,total,'bottom')}`;
 }
 document.addEventListener('change',event=>{
  if(!event.target.matches('[data-discover-page-size]'))return;
