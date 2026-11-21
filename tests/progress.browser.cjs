@@ -253,6 +253,27 @@ with sqlite3.connect(sys.argv[1]) as db:
   await group.getByRole('button',{name:'Zapisz w Kontaktach'}).click();
   await page.locator('#modal').waitFor({state:'hidden'});
   assert.deepEqual(saved.map(item=>[item.id,item.selected,item.tags]),[[101,[0],['Wyniki zbiorcze']],[102,[0],['Wyniki zbiorcze']]]);
+  await page.unroute('**/api/lead-search/contact-search');
+  const stoppedCompanies=[];
+  let finishCurrentCompany;
+  const currentCompany=new Promise(resolve=>finishCurrentCompany=resolve);
+  await page.route('**/api/lead-search/contact-search',async route=>{
+   const company=route.request().postDataJSON();
+   stoppedCompanies.push(company.domain);
+   await currentCompany;
+   await route.fulfill({json:{id:200,contacts:[{id:0,name:'Partial result',email:'partial@example.net'}],enrichment:[]}});
+  });
+  await menu.locator('summary').click();
+  await menu.getByRole('button',{name:'Zbadaj dane kontaktowe',exact:true}).click();
+  const bulkProgress=page.locator('#lead-contact-bulk-body');
+  await bulkProgress.getByRole('button',{name:'Przerwij',exact:true}).click();
+  assert.equal(await bulkProgress.getByRole('button',{name:'Przerywanie…',exact:true}).isDisabled(),true);
+  finishCurrentCompany();
+  await bulkProgress.getByText('Badanie przerwane.',{exact:true}).waitFor();
+  assert.deepEqual(stoppedCompanies,['first.example']);
+  await group.locator('summary').click();
+  await group.getByText('Partial result',{exact:false}).waitFor();
+  await page.locator('#modal > button.close').click();
   const contacts=await page.evaluate(()=>state.contacts.filter(contact=>contact.name==='First Contact'));
   await page.route('**/api/lead-search/contact-tag-candidates',route=>route.fulfill({json:{contacts}}));
   await menu.locator('summary').click();

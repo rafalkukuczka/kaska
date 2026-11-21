@@ -426,25 +426,32 @@ function bindAudienceSuggestion(){
 }
 function bindRefineControls(){
   bindAudienceSuggestion();
-  for(const field of ['offer','audience']){
-    const input=$('#prospect-'+field),button=$('[data-refine="'+field+'"]'),undo=$('[data-refine-undo="'+field+'"]'),status=$('[data-refine-status="'+field+'"]'),proposal=$('[data-refine-proposal="'+field+'"]');
-    let previous=null;
-    const apply=text=>{previous=input.value;input.value=text;proposal.hidden=true;undo.hidden=false;status.textContent='Tekst poprawiony przez AI. Sprawdź go przed wyszukiwaniem.';input.dispatchEvent(new Event('input',{bubbles:true}))};
-    undo.onclick=()=>{if(previous!==null){input.value=previous;previous=null;undo.hidden=true;status.textContent='Przywrócono poprzednią treść.';input.dispatchEvent(new Event('input',{bubbles:true}))}};
-    proposal.querySelector('button').onclick=()=>apply(proposal.querySelector('textarea').value);
-    button.onclick=()=>run(button,async()=>{
-      const original=input.value;
-      if(!original.trim())throw Error('Najpierw wpisz tekst, który AI ma poprawić.');
-      if(!state.integrations.ai)throw Error('Podłącz OpenAI w Integracjach, aby poprawić tekst przez AI.');
-      status.textContent='AI poprawia tekst…';
-      try{
-        const result=await api('ai/refine',{field,text:original,language:field==='offer'?projectMessageLanguage():state.preferences.ui_language});
-        if(!input.isConnected)return;
-        if(input.value===original)apply(result.text);
-        else{proposal.querySelector('textarea').value=result.text;proposal.hidden=false;status.textContent='W międzyczasie zmieniono tekst. Możesz zastosować propozycję AI poniżej.'}
-      }catch(error){status.textContent='Nie udało się poprawić tekstu. Twoja treść pozostaje bez zmian.';throw error}
-    });
-  }
+  bindTextRefinement($('#prospect-offer'),projectMessageLanguage);
+  bindTextRefinement($('#prospect-audience'),()=>state.preferences.ui_language);
+}
+function bindTextRefinement(input,language,successMessage='Tekst poprawiony przez AI. Sprawdź go przed wyszukiwaniem.'){
+  const field=input.name,root=input.form.querySelector('[data-refine-controls="'+field+'"]');
+  const button=root.querySelector('[data-refine]'),undo=root.querySelector('[data-refine-undo]'),
+    status=root.querySelector('[data-refine-status]'),proposal=root.querySelector('[data-refine-proposal]');
+  let previous=null;
+  const apply=text=>{previous=input.value;input.value=text;proposal.hidden=true;undo.hidden=false;status.textContent=translateUiText(successMessage);input.dispatchEvent(new Event('input',{bubbles:true}))};
+  undo.onclick=()=>{if(previous!==null){input.value=previous;previous=null;undo.hidden=true;status.textContent='Przywrócono poprzednią treść.';input.dispatchEvent(new Event('input',{bubbles:true}))}};
+  proposal.querySelector('button').onclick=()=>apply(proposal.querySelector('textarea').value);
+  button.onclick=()=>run(button,async()=>{
+    const original=input.value;
+    if(!original.trim())throw Error('Najpierw wpisz tekst, który AI ma poprawić.');
+    if(!state.integrations.ai)throw Error('Podłącz OpenAI w Integracjach, aby poprawić tekst przez AI.');
+    const epoch=simulationEpoch,projectId=state.seller_project.id;
+    const current=()=>input.isConnected&&epoch===simulationEpoch&&state.seller_project.id===projectId;
+    proposal.hidden=true;
+    status.textContent='AI poprawia tekst…';
+    try{
+      const result=await api('ai/refine',{field,text:original,language:language()});
+      if(!current())return;
+      if(input.value===original)apply(result.text);
+      else{proposal.querySelector('textarea').value=result.text;proposal.hidden=false;status.textContent='W międzyczasie zmieniono tekst. Możesz zastosować propozycję AI poniżej.'}
+    }catch(error){if(!current())return;status.textContent='Nie udało się poprawić tekstu. Twoja treść pozostaje bez zmian.';throw error}
+  });
 }
 function runProspectAction(button,record){run(button,async()=>{
   const action=button.dataset.prospectAction;

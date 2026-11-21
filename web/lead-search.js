@@ -447,14 +447,41 @@ async function researchLeadContacts(searchId, company, projectId) {
 async function researchAllLeadContacts(searchId, companies, projectId) {
   const epoch = simulationEpoch;
   modal(`<h2>Zbadaj dane kontaktowe</h2><p class="hint">Badanie obejmuje wszystkie firmy z bieżącego wyszukiwania. Zamknięcie okna zatrzyma uruchamianie kolejnych badań.</p>
-    <div id="lead-contact-bulk-body"></div>`);
+    <div id="lead-contact-bulk-body">
+      <div class="dashboard-search-progress">
+        <div class="background-progress-heading">
+          <strong role="status"><span>Badanie firmy</span> <span data-bulk-current-company data-no-translate></span></strong>
+          <div class="background-progress-actions">
+            <span role="status" data-bulk-progress-count></span>
+            <button type="button" class="link danger" data-stop-contact-research>Przerwij</button>
+          </div>
+        </div>
+        <progress aria-label="Zbadane firmy" value="0" max="${companies.length}"></progress>
+        <p class="hint" role="status" data-bulk-stopping hidden>Po bieżącym badaniu pokażę zebrane wyniki.</p>
+      </div>
+    </div>`);
   const panel = $('#lead-contact-bulk-body');
   const current = () => panel.isConnected && $('#modal').open && state.seller_project.id===projectId && simulationEpoch===epoch;
   const results = [];
+  const companyName = panel.querySelector('[data-bulk-current-company]');
+  const count = panel.querySelector('[data-bulk-progress-count]');
+  const progress = panel.querySelector('progress');
+  const stop = panel.querySelector('[data-stop-contact-research]');
+  let stopped = false;
+  stop.onclick = () => {
+    stopped = true;
+    stop.disabled = true;
+    stop.textContent = translateUiText('Przerywanie…');
+    panel.querySelector('[data-bulk-stopping]').hidden = false;
+  };
+  const completion = () => `${results.length} / ${companies.length} · ${progressPercent(results.length,companies.length)}`;
+  syncLanguages();
   for (const company of companies) {
     if (!current()) return;
-    panel.innerHTML = `<p role="status"><span>Badanie firmy</span> <strong data-no-translate>${esc(company.name)}</strong> · ${results.length} / ${companies.length} · ${progressPercent(results.length,companies.length)}</p>
-      <progress aria-label="Zbadane firmy" value="${results.length}" max="${companies.length}"></progress>`;
+    if (stopped) break;
+    companyName.textContent = company.name;
+    count.textContent = completion();
+    progress.value = results.length;
     try { results.push({company,data:await searchLeadContactData(searchId,company,projectId)}); }
     catch (error) { results.push({company,error:error.message}); }
   }
@@ -465,11 +492,12 @@ async function researchAllLeadContacts(searchId, companies, projectId) {
     ${data?leadContactChoices(data,'company-'+index):''}<p data-bulk-contact-save-error="${index}" role="alert"></p>
   </details>`).join('');
   const anyContacts = results.some(row=>row.data?.contacts.length);
-  panel.innerHTML = `<p role="status"><span>Zbadane firmy</span> ${results.length} / ${companies.length}</p>
+  panel.innerHTML = `<p role="status">${stopped&&results.length<companies.length?'<strong>Badanie przerwane.</strong> ':''}<span>Zbadane firmy</span> ${completion()}</p>
     <form id="lead-contact-bulk-form">${groups}
     ${anyContacts?`<label class="check"><input type="checkbox" data-select-bulk-contact-all><span>Zaznacz wszystkie kontakty</span></label>
       ${contactTagsControl('', 'lead-bulk-research-tags')}
       <div class="actions"><button class="primary">Zapisz w Kontaktach</button></div>`:'<p>Brak kontaktów do zapisania.</p>'}</form>`;
+  syncLanguages();
   if (!anyContacts) return;
   const form = panel.querySelector('form');
   const all = form.querySelector('[data-select-bulk-contact-all]');
@@ -500,7 +528,6 @@ async function researchAllLeadContacts(searchId, companies, projectId) {
       toast(`${translateUiText('Dodano kontaktów')} ${added} · ${translateUiText('Uzupełniono istniejących')} ${existing}`);
     });
   };
-  syncLanguages();
 }
 
 async function tagLeadContacts(searchId, projectId) {

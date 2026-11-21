@@ -23,7 +23,10 @@ function offerSourceControls(campaign=false){
   <input type="file" id="offer-document-files" accept=".pdf,.docx,.txt,.md" multiple aria-describedby="offer-document-hint">
   <p class="hint" id="offer-document-hint">PDF, DOCX, TXT lub MD. Do 10 plików, maksymalnie 6 MB na plik.</p>
   <ul class="project-offer-documents" data-offer-documents></ul>
-  <div class="actions"><button type="button" class="secondary" id="${campaign?'generate-campaign-offer':'generate-project-offer'}" data-generate-offer disabled>Przygotuj ofertę</button></div>
+  <div class="actions${campaign?' campaign-offer-actions':''}">
+    ${campaign?`<div class="campaign-offer-language"><label for="build-language">Język wiadomości</label><select id="build-language" name="language">${messageLanguageOptions(projectMessageLanguage())}</select><button type="button" class="link" id="build-language-reset">Użyj języka projektu</button></div>`:''}
+    <button type="button" class="secondary" id="${campaign?'generate-campaign-offer':'generate-project-offer'}" data-generate-offer disabled>Przygotuj ofertę</button>
+  </div>
   <p class="hint">Przy podłączonej integracji OpenAI analizuje fragmenty wybranych źródeł.</p>
   <p class="hint" data-offer-status role="status"></p>
   <section data-offer-draft hidden>
@@ -40,6 +43,7 @@ function bindProjectOffer(form){
 function bindOfferSources(form,campaign=false){
  const panel=form.querySelector('[data-offer-controls]');
  const files=panel.querySelector('#offer-document-files'), list=panel.querySelector('[data-offer-documents]');
+ const attachmentFile=form.querySelector('#builder-attachment-file'), attachmentStatus=form.querySelector('#builder-attachment-status');
  const status=panel.querySelector('[data-offer-status]'), generate=panel.querySelector('[data-generate-offer]');
  const draft=panel.querySelector('[data-offer-draft]'), text=panel.querySelector('#offer-draft-text');
  const used=panel.querySelector('[data-offer-used-sources]'), sources=[...panel.querySelectorAll('[data-offer-source]')];
@@ -57,6 +61,7 @@ function bindOfferSources(form,campaign=false){
    (wanted.includes('documents')&&!(campaign?state.offer_document_count:documents.length))||
    (wanted.includes('campaign_documents')&&!documents.length);
   files.disabled=!!busy;
+  if(attachmentFile)attachmentFile.disabled=!!busy;
   for(const button of list.querySelectorAll('button'))button.disabled=!!busy;
   syncWebsiteActions(form);
  };
@@ -103,19 +108,20 @@ function bindOfferSources(form,campaign=false){
    if(current()){form.attachmentDocuments.project=data.documents;renderBuilderMaterials()}
   }catch(error){if(current())message(error.message)}
  })();
- async function transform(action,kind){
+ async function transform(action,kind,report=message){
   if(!current()||busy)return;
   busy=kind;controls();
   try{await action()}
-  catch(error){if(current())message(error.message)}
+  catch(error){if(current())report(error.message)}
   finally{busy=false;if(current())controls()}
  }
- files.onchange=()=>{
-  const incoming=[...files.files];files.value='';
+ const upload=(input,asAttachment=false)=>{
+  const incoming=[...input.files];input.value='';
   if(!incoming.length)return;
+  const report=asAttachment?value=>{attachmentStatus.textContent=translateUiText(value)}:message;
   void transform(async()=>{
    if(incoming.some(file=>file.size>6*1024*1024))throw Error('Dokument może mieć maksymalnie 6 MB.');
-   message('Odczytuję dokumenty…');
+   report(asAttachment?'Dodaję załącznik…':'Odczytuję dokumenty…');
    for(const file of incoming){
     const content=await new Promise((resolve,reject)=>{
      const reader=new FileReader();
@@ -126,14 +132,20 @@ function bindOfferSources(form,campaign=false){
     if(!current())return;
     const result=await api('offer/documents',{...scope(),name:file.name,content});
     if(!current())return;
+    if(asAttachment)form.elements.attachment_ref.value='campaign:'+result.digest;
     show(result.documents);
-    sources.find(input=>input.value===(campaign?'campaign_documents':'documents')).checked=true;
-    if(!websiteValue())sources.find(input=>input.value==='website').checked=false;
-    updateSources();
+    if(asAttachment)persistBuilder();
+    else{
+     sources.find(input=>input.value===(campaign?'campaign_documents':'documents')).checked=true;
+     if(!websiteValue())sources.find(input=>input.value==='website').checked=false;
+     updateSources();
+    }
    }
-   message('Dokumenty gotowe do analizy.');
-  },'documents');
+   report(asAttachment?'Załącznik dodany.':'Dokumenty gotowe do analizy.');
+  },'documents',report);
  };
+ files.onchange=()=>upload(files);
+ if(attachmentFile)attachmentFile.onchange=()=>upload(attachmentFile,true);
  list.onclick=event=>{
   const button=event.target.closest('[data-remove-offer-document]');
   if(!button)return;

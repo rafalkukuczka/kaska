@@ -240,7 +240,7 @@ def upload(db, item):
         else:
             c.execute(f'UPDATE {table} SET original=? WHERE {where} AND digest=? AND original IS NULL',
                       (content, *values, digest))
-        return {'documents': _document_rows(c, *scope)}
+        return {'documents': _document_rows(c, *scope), 'digest': digest}
 
 
 def remove(db, item):
