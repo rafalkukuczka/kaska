@@ -18,6 +18,34 @@ class CampaignEditTests(unittest.TestCase):
 
     def save(self,item):return campaign_edit.save(app.db,app.library,app.MAIL_LOCK,app.ai_copy,item)
 
+    def test_clone_keeps_configuration_and_starts_without_delivery_history(self):
+        app.prepare(1)
+        with app.db() as c:
+            c.execute("""UPDATE campaigns SET status='active',revision=7,offer_website='https://offer.example',
+                offer_sources='["campaign_documents"]',language='de',cta='Demo' WHERE id=1""")
+            c.execute("UPDATE messages SET status='sent',sent_at=? WHERE campaign_id=1 AND position=0",(time.time(),))
+            c.execute('INSERT INTO campaign_recipient_overrides(campaign_id,contact_id,included) VALUES(1,1,0)')
+            c.execute("""INSERT INTO campaign_offer_documents(project_id,scope,name,digest,text)
+                VALUES(1,'campaign:1','Oferta.txt','sample','Tekst oferty')""")
+        copied = campaign_edit.clone(app.db,{'id':1,'project_id':1})
+        campaign = copied['campaign']
+        self.assertEqual((campaign['name'],campaign['status'],campaign['revision']),('Kopia Test','draft',1))
+        self.assertEqual((campaign['offer_website'],campaign['language'],campaign['cta']),('https://offer.example','de','Demo'))
+        self.assertEqual(campaign['offer_sources'],'["campaign_documents"]')
+        self.assertIsNone(copied['protected_position'])
+        self.assertEqual([step['subject'] for step in copied['steps']],['Dla {{company}}','Powrót'])
+        with app.db() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM messages WHERE campaign_id=?',(campaign['id'],)).fetchone()[0],0)
+            self.assertEqual(c.execute('SELECT included FROM campaign_recipient_overrides WHERE campaign_id=?',
+                                      (campaign['id'],)).fetchone()[0],0)
+            self.assertEqual(c.execute('SELECT text FROM campaign_offer_documents WHERE scope=?',
+                                      (f"campaign:{campaign['id']}",)).fetchone()[0],'Tekst oferty')
+            self.assertEqual(c.execute('SELECT status FROM campaigns WHERE id=1').fetchone()[0],'active')
+        self.assertEqual(campaign_edit.clone(app.db,{'id':1})['campaign']['name'],'Kopia Test (2)')
+        shared_project.create(app.db,{'name':'Inny projekt'})
+        with self.assertRaisesRegex(ValueError,'w tym projekcie'):
+            campaign_edit.clone(app.db,{'id':1})
+
     def test_draft_updates_same_campaign_and_invalidates_prepared_messages(self):
         app.prepare(1);item=self.item();item.update(name='Updated',offer='New services',conditions=[{'field':'email','operator':'is_set','before_step':1}])
         item['steps'][1]['subject']='New follow-up'
@@ -29,6 +57,18 @@ class CampaignEditTests(unittest.TestCase):
             self.assertEqual(c.execute('SELECT COUNT(*) FROM messages').fetchone()[0],0)
         self.assertEqual(result['id'],1);app.prepare(1)
         with app.db() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM messages').fetchone()[0],2)
+
+    def test_renaming_a_draft_keeps_its_prepared_messages(self):
+        self.assertFalse(campaign_edit.read(app.db, 1)['has_queued_messages'])
+        app.prepare(1)
+        self.assertTrue(campaign_edit.read(app.db, 1)['has_queued_messages'])
+        with app.db() as c:
+            before = [tuple(row) for row in c.execute('SELECT id,subject,body FROM messages ORDER BY id')]
+        item = self.item()
+        item['name'] = 'Renamed campaign'
+        self.assertTrue(self.save(item)['has_queued_messages'])
+        with app.db() as c:
+            self.assertEqual([tuple(row) for row in c.execute('SELECT id,subject,body FROM messages ORDER BY id')], before)
 
     def test_active_edit_pauses_and_preserves_sent_message_and_future_queue_id(self):
         app.prepare(1)

@@ -77,6 +77,74 @@ class DiscoverContactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'wyszukiwaniu i projekcie'):
             app.discover_contact_finder.search_lead({'search_id':search,'domain':'example.com'})
 
+    def test_hunter_only_uses_one_query_and_never_falls_back_to_apollo(self):
+        search = app.lead_finder.create({'query':'Acme'})['search']['id']
+        with (patch.dict(app.os.environ, {'APOLLO_API_KEY':'fixture-apollo'}),
+              patch('contact_enrichment.Apollo') as apollo,
+              patch('discover_contacts.Hunter') as hunter,
+              patch('discover_contacts.lead_sources.contact_roles', return_value='COO')):
+            hunter.return_value.request.return_value = {'data':{'domain':'example.com','emails':[]}}
+            result = app.discover_contact_finder.search_lead({
+                'search_id':search,'project_id':1,'domain':'example.com','provider':'hunter'})
+            apollo.assert_not_called()
+            hunter.return_value.request.assert_called_once()
+            self.assertEqual(hunter.return_value.request.call_args.args[1]['job_titles'],'COO')
+            self.assertEqual(result['contacts'],[])
+            self.assertEqual([step['provider'] for step in result['enrichment']],['Hunter'])
+
+    def test_batch_tag_candidates_match_saved_contacts_of_search_companies(self):
+        search = app.lead_finder.create({'query':'Acme'})['search']['id']
+        with app.db() as c:
+            app.add_contact(c, {'name':'Same company','email':'person@other.example','company':'ACME'})
+            app.add_contact(c, {'name':'Same domain','email':'other@example.com'})
+            app.add_contact(c, {'name':'Unrelated','email':'unrelated@other.example','company':'Unrelated'})
+        item = {'search_id':search,'project_id':1}
+        contacts = app.discover_contact_finder.lead_tag_candidates(item)['contacts']
+        self.assertEqual({row['email'] for row in contacts},{'anna@example.com','person@other.example','other@example.com'})
+        shared_project.create(app.db,{'name':'Other project'})
+        with self.assertRaises(ValueError):
+            app.discover_contact_finder.lead_tag_candidates(item)
+
+    def test_automatic_checks_all_evidence_before_hunter(self):
+        search = app.lead_finder.create({'query':'Acme'})['search']['id']
+        evidence = 'https://example.com/contact'
+        article = 'https://third-party.example/article'
+        other = 'https://example.com/team'
+        with app.db() as c:
+            c.execute('UPDATE lead_search_companies SET evidence=? WHERE search_id=? AND domain=?',
+                      (json.dumps([{'url':article},{'url':evidence},{'url':other},{'url':evidence+'#fragment'}]),search,'example.com'))
+        def read_pages(url, *, follow_links):
+            self.assertEqual(follow_links, url=='https://example.com/')
+            if url==other:
+                raise ValueError('Nie można odczytać podstrony.')
+            contacts = [{'email':'office@example.com','phone':'+48 123 456 789'}] if url==evidence else []
+            if url==article:
+                contacts = [{'email':'finance@example.com'},{'email':'editor@third-party.example'}]
+            return {'pages':[{'source':url,'contacts':contacts}]}
+        item = {'search_id':search,'project_id':1,'domain':'example.com','provider':'auto'}
+        with (patch.object(app.discover_contact_finder,'browser_reader',side_effect=read_pages) as browser,
+              patch('discover_contacts.Hunter') as hunter):
+            result = app.discover_contact_finder.search_lead(item)
+            self.assertEqual({call.args[0] for call in browser.call_args_list},{article,evidence,other,'https://example.com/'})
+            self.assertEqual(browser.call_count,4)
+            hunter.assert_not_called()
+            self.assertEqual({person['email'] for person in result['contacts']},{'office@example.com','finance@example.com'})
+            office = next(person for person in result['contacts'] if person['email']=='office@example.com')
+            self.assertEqual(office['sources'][0]['url'],evidence)
+            self.assertIn(other,[step['urls'][0] for step in result['enrichment'] if step['status']=='error'])
+            status = app.discover_contact_finder.research_status(1)[0]
+            self.assertEqual((status['completed'],status['total'],status['found'],status['status']),(4,4,2,'done'))
+            self.assertEqual(app.discover_contact_finder.research_status(2),[])
+            self.assertEqual(app.discover_contact_finder.add({'id':result['id'],'selected':[0],'project_id':1,
+                             'confirm_company':True,'tags':['Strona']},from_dashboard=True)['added'],1)
+        with (patch.object(app.discover_contact_finder,'browser_reader',return_value={'pages':[]}),
+              patch.dict(app.os.environ,{'HUNTER_API_KEY':'fixture-hunter'}),
+              patch('discover_contacts.Hunter') as hunter):
+            hunter.return_value.request.return_value={'data':{'domain':'example.com','emails':[]}}
+            result = app.discover_contact_finder.search_lead(item)
+            hunter.return_value.request.assert_called_once()
+            self.assertEqual([step['provider'] for step in result['enrichment']],['Chrome headless']*4+['Hunter'])
+
     def test_individual_contact_tags_and_atomic_validation(self):
         data=self.seed();data['emails'][1]['value']='second@acme.example'
         result,_=self.search(data)

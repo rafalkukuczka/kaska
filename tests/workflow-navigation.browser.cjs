@@ -37,7 +37,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.ok((await page.locator('aside [data-view=prospecting]').innerText()).includes('Acquisition'));
   await page.locator('#ui-language').selectOption('pl');
   await page.waitForFunction(()=>uiLanguage==='pl'&&state.preferences.ui_language==='pl'&&!document.querySelector('#ui-language').disabled);
-  await page.locator('aside [data-view=campaigns]').click();await page.locator('[data-action=new-campaign]').click();
+  await page.locator('aside [data-view=campaigns]').click();await page.locator('[data-action=new-campaign]').click();await page.locator('#new-campaign-form button.primary').click();
   const helper=page.locator('details.builder-assistant');
   assert.equal(await helper.evaluate(el=>el.open),false);
   await page.locator('#build-name').fill('My draft');

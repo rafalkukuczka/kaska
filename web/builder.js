@@ -1,5 +1,6 @@
 let builderEditing=null;
-const builderDraftKey=()=>'campaign-builder-draft:'+state.seller_project.id+(builderEditing?':edit:'+builderEditing.campaign.id:'');
+const builderDraftKey=()=>'campaign-builder-draft:'+state.seller_project.id+(builderEditing?':edit:'+builderEditing.campaign.id:'')+
+ (state.simulation_generation?':simulation:'+state.simulation_generation:'');
 let builderStep=0;
 function builderContacts(){return [...new Map([...(builderEditing?.selected_contacts||[]),...state.contacts].map(contact=>[contact.id,contact])).values()]}
 const builderStages=['Odbiorcy','Oferta','Sekwencja','Ustawienia'];
@@ -13,6 +14,57 @@ function showBuilderEditing(){
 }
 
 async function editCampaign(id){const data=await api('campaign/edit-data',{id});if(data.campaign.project_id!==state.seller_project.id)return;openCampaignBuilder(data)}
+async function cloneCampaign(id,name){
+ const projectId=state.seller_project.id,epoch=simulationEpoch;
+ const data=await api('campaign/clone',{id,project_id:projectId,name});
+ if(data.campaign.project_id!==state.seller_project.id||epoch!==simulationEpoch)return;
+ openCampaignBuilder(data);
+ await refresh();
+ toast(translateUiText('Utworzono kopię kampanii.'));
+}
+function showNewCampaignDialog(){
+ const projectId=state.seller_project.id,epoch=simulationEpoch;
+ const campaigns=state.campaigns.filter(campaign=>campaign.project_id===projectId);
+ modal(`<h2>Nowa kampania</h2><form id="new-campaign-form">
+ <label for="new-campaign-mode">Jak utworzyć kampanię?</label>
+ <select id="new-campaign-mode"><option value="blank">Nowa kampania</option><option value="clone" ${campaigns.length?'':'disabled'}>Sklonuj kampanię</option></select>
+ <div data-campaign-clone-source hidden>
+  <label for="new-campaign-source">Kampania do sklonowania</label>
+  <select id="new-campaign-source">${campaigns.map(campaign=>`<option value="${campaign.id}" data-no-translate>${esc(campaign.name)}</option>`).join('')}</select>
+  <p class="hint">Kopia będzie szkicem z tymi samymi ustawieniami, odbiorcami, ofertą, dokumentami i sekwencją.</p>
+ </div>
+ <label for="new-campaign-name">Nazwa kampanii</label><input id="new-campaign-name" name="name" maxlength="200">
+ <div class="actions"><button class="primary">Utwórz kampanię</button><button type="button" class="secondary close">Anuluj</button></div></form>`);
+ const form=$('#new-campaign-form'),mode=$('#new-campaign-mode'),source=$('#new-campaign-source'),name=form.elements.name;
+ const sourceSection=form.querySelector('[data-campaign-clone-source]'),submit=form.querySelector('.primary');
+ let suggestion='';
+ const update=()=>{
+  const cloning=mode.value==='clone'&&campaigns.length>0;
+  const next=cloning?(translateUiText('Kopia')+' '+source.selectedOptions[0].textContent).slice(0,name.maxLength):'';
+  if(!name.value.trim()||name.value===suggestion)name.value=next;
+  suggestion=next;name.required=cloning;sourceSection.hidden=!cloning;
+  submit.textContent=translateUiText(cloning?'Sklonuj kampanię':'Utwórz kampanię');
+ };
+ mode.onchange=source.onchange=update;
+ form.onsubmit=event=>{
+  event.preventDefault();
+  if(state.seller_project.id!==projectId||simulationEpoch!==epoch){toast('Projekt się zmienił. Otwórz dialog ponownie.');return}
+  const enteredName=name.value.trim();
+  if(mode.value==='clone'){
+   void run(event.submitter,()=>cloneCampaign(Number(source.value),enteredName));
+   return;
+  }
+  newCampaign();
+  if(enteredName){
+   const field=$('#build-name');
+   field.value=enteredName;
+   field.dispatchEvent(new Event('input',{bubbles:true}));
+  }
+ };
+ update();
+ mode.focus();
+ syncLanguages();
+}
 function openCampaignBuilder(editing=null){
   builderEditing=editing;
   $('#modal').close();$('#modal-content').innerHTML='';
@@ -20,12 +72,12 @@ function openCampaignBuilder(editing=null){
   document.querySelectorAll('nav [data-view]').forEach(b=>b.classList.toggle('selected',b.dataset.view==='campaigns'));
   $('#breadcrumb').textContent='Przestrzeń robocza / Kreator kampanii';
   const contacts=builderContacts().filter(c=>!c.simulated&&(c.status==='active'||builderEditing?.selected_contacts?.some(selected=>selected.id===c.id)));
-  $('#content').innerHTML=`<div class="builder-top"><button class="secondary" data-builder="exit">← Kampanie</button><div><span class="section-label">NOWA KAMPANIA</span><strong id="builder-campaign-title">Nowa kampania</strong></div><div class="builder-progress">${builderStages.map((s,i)=>`<button data-builder-step="${i}" ${i===0?'aria-current="step"':''}><span>${i+1}</span>${s}</button>`).join('')}</div><div class="builder-header-actions"><button class="secondary" data-builder="save-draft">Zapisz szkic</button><button class="primary" data-builder="header-next">Zapisz i przejdź dalej</button></div></div>
+  $('#content').innerHTML=`<div class="builder-top"><button class="secondary" data-builder="exit">← Kampanie</button><div><span class="section-label">NOWA KAMPANIA</span><strong id="builder-campaign-title">Nowa kampania</strong></div><div class="builder-progress">${builderStages.map((s,i)=>`<button data-builder-step="${i}" ${i===0?'aria-current="step"':''}><span class="tab-step-number" aria-hidden="true">${i+1}</span>${s}</button>`).join('')}</div><div class="builder-header-actions"><button class="secondary" data-builder="save-draft">Zapisz szkic</button><button class="primary" data-builder="header-next">Zapisz i przejdź dalej</button><button type="button" class="primary" data-builder="launch" hidden>Uruchom kampanię</button></div></div>
   <div class="builder-layout"><section class="builder-assistant"><div class="assistant-mini-toolbar"><span>↶</span><strong>Kaśka</strong><span>✧</span></div><div class="assistant-art"><img src="/assets/kaska.png" alt="Kaśka — ruda asystentka w okrągłych okularach" width="600" height="400"></div><div class="assistant-intro"><img src="/assets/kaska.png" alt="" width="32" height="32"><p>Cześć, jestem Kaśka.<br>Jak mogę Ci dziś pomóc w tworzeniu kampanii?</p></div><p id="builder-help">Zacznij od osób, z którymi chcesz porozmawiać. Możesz wybrać kontakty albo użyć sygnałów sprzedażowych.</p><div class="assistant-shortcuts"><button type="button" data-builder="website-shortcut">Stw\u00f3rz ofert\u0119 z naszej strony</button><button type="button" data-builder="materials-shortcut">Zbuduj ofert\u0119 z historii sukcesu</button></div><div class="assistant-note">Twoja kampania, krok po kroku.<br>Wiadomości sprawdzisz przed wysyłką.</div></section>
   <form id="campaign-form" class="builder-form">
     <div class="actions builder-small-actions"><button type="button" class="secondary" data-builder="import-project">Importuj z projektu</button><span class="hint" data-no-translate>${esc(sellerProject().name||'')}</span></div>
     <section data-stage="0"><span class="section-label">01 / ODBIORCY</span><h1>Z kim chcesz porozmawiać?</h1><p class="muted">Oferta i grupa docelowa są ustalane osobno dla każdej kampanii.</p><label for="build-name">Nazwa kampanii</label><input id="build-name" name="name" required placeholder="np. Wprowadzenie nowej usługi"><label for="build-audience">Opis grupy docelowej</label><input id="build-audience" name="audience" placeholder="Stanowiska, firmy, potrzeby…"><label for="build-mode">Sposób doboru odbiorców</label><select id="build-mode" name="audience_mode"><option value="tags" ${(state.contact_tags||[]).length?'selected':''}>Według tagów</option><option value="all" ${!(state.contact_tags||[]).length?'selected':''}>Wszystkie aktywne kontakty w bazie</option><option value="selected">Wybrane kontakty</option></select><div id="builder-target-tags" hidden><fieldset class="campaign-tag-picker"><legend>Tagi odbiorców</legend>${(state.contact_tags||[]).map(tag=>`<label class="check"><input type="checkbox" name="audience_tags" value="${esc(tag)}"><span data-no-translate>${esc(tag)}</span></label>`).join('')||'<p class="hint">Najpierw dodaj tagi do kontaktów.</p>'}</fieldset><label for="build-tag-match">Sposób dopasowania tagów</label><select id="build-tag-match" name="tag_match"><option value="any">Dowolny z wybranych tagów (LUB)</option><option value="all">Wszystkie wybrane tagi (I)</option></select><p class="hint">Kontakt bierze udział w kampanii tylko raz, nawet gdy pasuje do kilku tagów.</p></div><div id="builder-recipients" class="recipient-picker" hidden>${contacts.map(c=>`<label class="check"><input type="checkbox" name="contact_ids" value="${c.id}"><span><strong>${esc(c.name)}</strong><small>${esc(c.company)} · ${esc(c.email)}</small></span></label>`).join('')||'<p class="hint">Najpierw dodaj kontakty w zakładce Kontakty.</p>'}</div><p id="builder-recipient-hint" class="hint"></p></section>
-    <section data-stage="1" hidden><span class="section-label">02 / OFERTA</span><h1>Co wyróżnia Twoją ofertę?</h1><p class="muted">Podaj stronę dowolnej firmy albo opisz ofertę własnymi słowami.</p><label for="company-url">Strona firmy, w imieniu której piszesz</label><input id="company-url" name="website" type="text" inputmode="url" autocapitalize="none" spellcheck="false" placeholder="firma.pl"><div class="actions builder-small-actions"><button type="button" class="secondary" data-builder="discover">↗ Pobierz ofertę i materiały</button><select id="project-picker" aria-label="Zapisany projekt firmy"><option value="">Wybierz zapisany projekt…</option>${state.library.projects.map(p=>`<option value="${esc(p.website)}">${esc(p.name)}</option>`).join('')}</select></div><p id="research-status" class="hint">Brak domyślnej firmy. Każda domena ma oddzielną bibliotekę materiałów.</p><label for="build-offer">Co oferujesz i jaką korzyść daje to klientowi?</label><textarea id="build-offer" name="offer" rows="5" required placeholder="Opisz konkretny produkt lub usługę."></textarea>${sellingPointsSection('builder')}<div class="row"><div><label for="build-language">Język wiadomości</label><select id="build-language" name="language">${messageLanguageOptions(projectMessageLanguage())}</select><button type="button" class="link" id="build-language-reset">Użyj języka projektu</button></div><div><label for="build-cta">Wezwanie do działania</label><input id="build-cta" name="cta" placeholder="np. Umów rozmowę"></div></div><label for="build-cta-url">Link do następnego kroku (opcjonalnie)</label><input id="build-cta-url" name="cta_url" type="url" placeholder="https://twoja-firma.pl/kontakt"><label for="build-material-mode">Materiał dla odbiorcy</label><select id="build-material-mode" name="material_mode"><option value="none">Bez dodatkowego materiału</option><option value="auto">Dobierz ze strony według kontekstu odbiorcy</option><option value="manual">Wybiorę artykuł lub case study</option></select><div id="builder-material-list"></div><p class="hint">Automatyczny dobór korzysta z podobieństwa słów w stanowisku, notatkach, grupie docelowej. Bez dopasowania nie dodaje linku. Wybór ręczny dołącza jeden z wybranych materiałów.</p></section>
+    <section data-stage="1" hidden><span class="section-label">02 / OFERTA</span><h1>Co wyróżnia Twoją ofertę?</h1><p class="muted">Zaimportuj ofertę projektu lub przygotuj własną ofertę dla tej kampanii.</p><label for="company-url">Strona firmy, w imieniu której piszesz</label><input id="company-url" name="website" type="text" inputmode="url" autocapitalize="none" spellcheck="false" placeholder="firma.pl"><div class="actions builder-small-actions"><button type="button" class="secondary" data-builder="discover">↗ Pobierz ofertę i materiały</button></div><p id="research-status" class="hint">Brak domyślnej firmy. Każda domena ma oddzielną bibliotekę materiałów.</p>${offerSourceControls(true)}<label for="build-offer">Co oferujesz i jaką korzyść daje to klientowi?</label><textarea id="build-offer" name="offer" rows="5" required placeholder="Opisz konkretny produkt lub usługę."></textarea>${sellingPointsSection('builder')}<div class="row"><div><label for="build-language">Język wiadomości</label><select id="build-language" name="language">${messageLanguageOptions(projectMessageLanguage())}</select><button type="button" class="link" id="build-language-reset">Użyj języka projektu</button></div><div><label for="build-cta">Wezwanie do działania</label><input id="build-cta" name="cta" placeholder="np. Umów rozmowę"></div></div><label for="build-cta-url">Link do następnego kroku (opcjonalnie)</label><input id="build-cta-url" name="cta_url" type="url" placeholder="https://twoja-firma.pl/kontakt"><label for="build-material-mode">Materiał dla odbiorcy</label><select id="build-material-mode" name="material_mode"><option value="none">Bez dodatkowego materiału</option><option value="auto">Dobierz ze strony według kontekstu odbiorcy</option><option value="manual">Wybiorę artykuł lub case study</option><option value="document" disabled>Wyślę dokument jako załącznik</option></select><input type="hidden" name="attachment_ref"><div id="builder-material-list"></div><p class="hint">Automatyczny dobór korzysta z podobieństwa słów w stanowisku, notatkach, grupie docelowej. Bez dopasowania nie dodaje linku. Wybór ręczny dołącza jeden z wybranych materiałów.</p></section>
     <section data-stage="2" hidden><span class="section-label">03 / SEKWENCJA</span><h1>Każda wiadomość ma swój moment.</h1><p class="muted">Ustaw kroki, odstępy i treść. Odpowiedź lub rezygnacja zatrzyma dalszą wysyłkę.</p><div id="sequence-map" class="sequence-map"></div><div class="flow-start">○ Aktywny odbiorca z adresem email</div><div id="steps"></div><button type="button" class="secondary" data-builder="add-step">+ Dodaj follow-up</button><p class="hint">Dni liczone od uruchomienia kampanii. Zmienne: {{name}}, {{company}}, {{offer}}, {{signal_title}}, {{material_title}}, {{material_url}}, {{cta}}. Edycja szablonu nie wysyła wiadomości.</p></section>
     <section data-stage="3" hidden><span class="section-label">04 / USTAWIENIA</span><h1>Sprawdź, zanim ruszysz.</h1><p class="muted">Zapisz kampanię jako szkic, przygotuj wiadomości i sprawdź je przed wysyłką.</p><label for="build-channel">Kanał wysyłki</label><select id="build-channel" name="channel"><option value="email">E-mail · kolejka SMTP</option><option value="linkedin">LinkedIn · kolejka do ręcznej wysyłki</option></select><p class="hint">Wiadomości LinkedIn pojawią się w panelu rozszerzenia PKEY. Wyślij je ręcznie w LinkedIn, a potem oznacz jako wysłane.</p><div id="builder-summary"></div><div class="builder-checks"><p>✓ Zatrzymanie sekwencji po odpowiedzi i rezygnacji</p><p>✓ Sprawdzenie wiadomości przed wysyłką</p><p>${state.integrations.smtp?'✓ Poczta wychodząca jest skonfigurowana':'○ Poczta wymaga podłączenia w Integracjach'}</p></div><button class="primary" type="submit">Zapisz szkic kampanii</button></section>
     <div class="builder-footer"><button type="button" class="secondary" data-builder="prev">Wstecz</button><span id="builder-stage-count">Krok 1 z 4</span><button type="button" class="primary" data-builder="next">Zapisz i przejdź dalej →</button></div>
@@ -41,6 +93,7 @@ function openCampaignBuilder(editing=null){
   $('#build-mode').onchange=()=>{updateRecipientHint();persistBuilder()};
   $('#builder-target-tags').onchange=()=>{updateRecipientHint();persistBuilder()};
   $('#build-material-mode').onchange=()=>{renderBuilderMaterials();persistBuilder()};
+  $('#build-channel').addEventListener('change',()=>{renderBuilderMaterials();persistBuilder()});
   $('#company-url').onchange=()=>{renderBuilderMaterials();persistBuilder()};
   $('#build-language').dataset.previousLanguage=$('#build-language').value;
   $('#build-language').onchange=changeBuilderLanguage;
@@ -50,19 +103,23 @@ function openCampaignBuilder(editing=null){
    select.value=language;
    changeBuilderLanguage();
   };
-  $('#project-picker').onchange=e=>{const p=state.library.projects.find(p=>p.website===e.target.value);if(p){$('#company-url').value=p.website;$('#build-offer').value=p.offer;renderBuilderMaterials();persistBuilder()}};
   const form=$('#campaign-form');
+  form.dataset.projectId=String(editing?.campaign.project_id??state.seller_project.id);
+  if(!editing&&!form.elements.offer_draft_key.value)form.elements.offer_draft_key.value=crypto.randomUUID();
+  bindOfferSources(form,true);
   const saveButton=$('[data-builder=save-draft]');
-  const returnButton=form.querySelector('button[type=submit]');
+  const launchButton=$('[data-builder=launch]');
+  const prepareButton=form.querySelector('button[type=submit]');
   saveButton.setAttribute('form',form.id);
   saveButton.type='submit';
   saveButton.textContent=translateUiText('Zapisz kampanię');
-  returnButton.textContent=translateUiText('Zapisz i wróć');
+  prepareButton.textContent=translateUiText('Przygotuj wiadomości');
   let saving=false;
   form.onsubmit=e=>{
    e.preventDefault();
    if(saving)return;
-   const returnToList=e.submitter===returnButton;
+   if(form.offerSourcesBusy()){toast('Poczekaj na zakończenie pracy ze źródłami oferty.');return}
+   const prepare=builderStep===3&&e.submitter===prepareButton;
    if(hasUnappliedManualScenario()){
     if(builderStep!==3)showBuilderStage(3);
     $('#manual-scenario-title').focus();
@@ -71,32 +128,60 @@ function openCampaignBuilder(editing=null){
    }
    saving=true;
    const headerButton=$('[data-builder=header-next]');
-   const buttons=[saveButton,returnButton,headerButton];
+   const buttons=[saveButton,prepareButton,headerButton,launchButton];
    buttons.forEach(button=>button.disabled=true);
    form.inert=true;
    run(null,async()=>{
     try{
      const data=builderData(),edited=builderEditing?.campaign,draftKey=builderDraftKey();
+     data.offer_sources=JSON.parse(data.offer_sources||'[]');
+     data.project_id=Number(form.dataset.projectId);
      const result=await api(edited?'campaign/update':'campaigns',edited?{...data,id:edited.id,project_id:edited.project_id,revision:edited.revision}:data);
      if(edited&&monitoringSimulation){const runs=fetchedSimulation().deliveryRuns;if(runs?.[edited.id]){delete runs[edited.id];saveSimulationResults()}}
      if(!form.isConnected||view!=='builder')return;
      try{localStorage.removeItem(draftKey)}catch{}
-     if(returnToList){
-      builderEditing=null;view='campaigns';selectedCampaign=null;render();
-     }else if(edited){
+     if(edited){
       edited.revision=result.revision;
       edited.status=result.status;
+      edited.channel=data.channel;
+      builderEditing.has_queued_messages=result.has_queued_messages;
+      updateBuilderLaunchButton();
      }else{
       builderEditing={campaign:{id:result.id,project_id:result.project_id,revision:result.revision},selected_contacts:[]};
       showBuilderEditing();
      }
      await refresh();
-     toast('Zapisano kampanię.');
+     if(!prepare){
+      toast('Zapisano kampanię.');
+      return;
+     }
+     if(!form.isConnected||view!=='builder'||state.seller_project.id!==data.project_id)return;
+     toast(translateUiText('Przygotowuję wiadomości. Przy użyciu AI może to potrwać kilka minut.'));
+     try{await api('campaign/prepare',{id:result.id})}
+     catch(error){throw Error(translateUiText('Kampania została zapisana. Przygotowanie wiadomości:')+' '+error.message)}
+     if(!form.isConnected||view!=='builder'||state.seller_project.id!==data.project_id)return;
+     const workspace=campaignWorkspace(result.id);
+     workspace.tab='messages';
+     workspace.awaitReview=false;
+     try{sessionStorage.removeItem(campaignReviewKey(workspace))}catch{}
+     builderEditing=null;view='campaigns';selectedCampaign=result.id;
+     await refresh();
+     toast(translateUiText('Wiadomości gotowe do sprawdzenia'));
     }finally{
      saving=false;form.inert=false;buttons.forEach(button=>button.disabled=false);
     }
    });
   };
+  launchButton.onclick=()=>void run(launchButton,async()=>{
+   if(!builderEditing?.has_queued_messages)return;
+   const {id,channel}=builderEditing.campaign;
+   await showCampaignPreflight(id,'start',{onStart:()=>{
+    if(!form.isConnected||view!=='builder')return;
+    persistBuilder();
+    campaignWorkspace(id).tab=!monitoringSimulation&&channel==='manual'?'manual-queue':'messages';
+    builderEditing=null;view='campaigns';selectedCampaign=id;
+   }});
+  });
   $('#builder-campaign-title').textContent=$('#build-name').value||'Nowa kampania';
   updateRecipientHint();renderBuilderMaterials();showBuilderStage(0);
 }
@@ -127,6 +212,7 @@ async function assistantPitch(mode){
     $('#assistant-pitch-form').onsubmit=event=>{event.preventDefault();
       if(!form.isConnected||$('#campaign-form')!==form){$('#modal').close();return}
       $('#build-offer').value=$('#assistant-pitch-text').value;
+      form.refreshOfferSources();
       if(proof){form.elements.proof_points.value=proof;form.querySelector('[data-point-editor="proof_points"]').refreshPoints()}
       const status=$('#research-status');status.replaceChildren();
       const label=document.createElement('span');label.textContent='Źródła oferty: ';status.append(label);
@@ -139,9 +225,14 @@ async function assistantPitch(mode){
 
 function importCampaignProject(){
  const form=$('#campaign-form'),project=sellerProject();
+ if(!form.isConnected||Number(form.dataset.projectId)!==project.id)throw Error('Otwórz kreator w projekcie tej kampanii.');
  for(const field of ['website','offer','audience','pain_points','value_props','proof_points'])form.elements[field].value=project[field]||'';
+ const sources=(project.offer_sources||[]).filter(source=>source==='website'?(form.elements.offer_website.value.trim()||project.website):state.offer_document_count);
+ if(project.offer?.trim())sources.push('offer');
+ if(JSON.parse(form.elements.offer_sources.value||'[]').includes('campaign_documents'))sources.push('campaign_documents');
+ form.elements.offer_sources.value=JSON.stringify(sources);
+ form.refreshOfferSources();
  restoreSellingPoints(form);
- $('#project-picker').value='';
  renderBuilderMaterials();updateRecipientHint();persistBuilder();
  $('#research-status').textContent=translateUiText('Dane zaimportowane z projektu. Możesz je zmienić dla tej kampanii.');
  toast(translateUiText('Dane zaimportowane z projektu. Możesz je zmienić dla tej kampanii.'));
@@ -170,10 +261,41 @@ function restoreBuilder(draft){
  renderBuilderMaterials(draft.material_ids||[]);
 }
 function renderBuilderMaterials(selected){
- if(!$('#builder-material-list'))return;
+ const root=$('#builder-material-list'),form=$('#campaign-form');
+ if(!root)return;
+ const modeField=form.elements.material_mode,attachment=form.elements.attachment_ref;
+ const documents=Object.entries(form.attachmentDocuments||{}).flatMap(([scope,rows])=>
+  rows.filter(row=>row.attachable).map(row=>({...row,scope,reference:scope+':'+row.digest})));
+ const available=form.elements.channel.value==='email',option=modeField.querySelector('[value=document]');
+ option.disabled=!available||!documents.length;
+ if(!available&&modeField.value==='document')modeField.value='none';
+ if(modeField.value==='document'){
+  root.innerHTML=`<div class="builder-materials">
+   <label for="builder-attachment">Dokument do wysłania</label>
+   <select id="builder-attachment" required>
+    <option value="">Wybierz dokument…</option>
+    ${documents.map(row=>`<option value="${esc(row.reference)}" data-no-translate ${attachment.value===row.reference?'selected':''}>${esc(row.name)} · ${esc(translateUiText(row.scope==='project'?'Dokument projektu':'Dokument kampanii'))}</option>`).join('')}
+   </select>
+   <div data-builder-attachment-link></div>
+   <p class="hint">Załącznik trafi do pierwszego e-maila każdego odbiorcy.</p>
+  </div>`;
+  const showLink=()=>{
+   const document=documents.find(row=>row.reference===attachment.value);
+   const scope={project_id:Number(form.dataset.projectId)};
+   if(document?.scope==='campaign'){
+    if(builderEditing)scope.campaign_id=builderEditing.campaign.id;
+    else scope.draft_key=form.elements.offer_draft_key.value;
+   }
+   root.querySelector('[data-builder-attachment-link]').innerHTML=document?offerDocumentLink(document.name,{...scope,id:document.id}):'';
+  };
+  root.querySelector('select').onchange=event=>{attachment.value=event.target.value;showLink();persistBuilder()};
+  showLink();
+  syncLanguages();
+  return;
+ }
  selected=selected||[...document.querySelectorAll('[name=material_ids]:checked')].map(e=>Number(e.value));
  const mode=$('#build-material-mode').value,rows=companyMaterials($('#company-url').value).filter(m=>m.enabled);
- $('#builder-material-list').innerHTML=mode==='none'?'':`<div class="builder-materials">${rows.map(m=>`<label class="check"><input type="checkbox" name="material_ids" value="${m.id}" ${selected.includes(m.id)?'checked':''} ${mode==='auto'?'disabled':''}><span><strong>${esc(m.title)}</strong><small>${esc(m.url)}</small></span></label>`).join('')||'<p class="hint">Brak materiałów tej firmy. Kliknij „Pobierz ofertę i materiały” albo dodaj podstronę w Bibliotece.</p>'}</div>`;
+ root.innerHTML=mode==='none'?'':`<div class="builder-materials">${rows.map(m=>`<label class="check"><input type="checkbox" name="material_ids" value="${m.id}" ${selected.includes(m.id)?'checked':''} ${mode==='auto'?'disabled':''}><span><strong>${esc(m.title)}</strong><small>${esc(m.url)}</small></span></label>`).join('')||'<p class="hint">Brak materiałów tej firmy. Kliknij „Pobierz ofertę i materiały” albo dodaj podstronę w Bibliotece.</p>'}</div>`;
 }
 function selectedCampaignTags(){return [...document.querySelectorAll('[name=audience_tags]:checked')].map(input=>input.value)}
 function campaignContactMatchesTags(contact,tags,match){const own=contactTags(contact).map(tag=>tag.toLocaleLowerCase()),wanted=tags.map(tag=>tag.toLocaleLowerCase());return !!wanted.length&&(match==='all'?wanted.every(tag=>own.includes(tag)):wanted.some(tag=>own.includes(tag)))}
@@ -246,14 +368,22 @@ async function previewBuilderStep(step){
  };
  contact.onchange=load;refreshButton.onclick=event=>run(event.currentTarget,load);await load();
 }
+function updateBuilderLaunchButton(){
+ const campaign=builderEditing?.campaign;
+ const button=$('[data-builder=launch]');
+ button.hidden=builderStep!==3||!builderEditing?.has_queued_messages||
+  (campaign.status==='active'&&(monitoringSimulation||campaign.channel==='email'));
+}
+
 function showBuilderStage(stage){
  builderStep=Math.max(0,Math.min(3,stage));renderAssistantButtons();renderSequenceMap();$('.builder-preview').dataset.stageIndex=builderStep;document.querySelectorAll('[data-stage]').forEach(s=>s.hidden=Number(s.dataset.stage)!==builderStep);
  $('.builder-preview').hidden=builderStep<2;$('.builder-layout').dataset.stageIndex=builderStep;
  document.querySelectorAll('[data-builder-step]').forEach(b=>{b.classList.toggle('selected',Number(b.dataset.builderStep)===builderStep);b.setAttribute('aria-current',Number(b.dataset.builderStep)===builderStep?'step':'false')});
  $('#builder-stage-count').textContent=`Krok ${builderStep+1} z 4`;document.querySelector('[data-builder=prev]').disabled=builderStep===0;document.querySelector('[data-builder=next]').hidden=builderStep===3;
- document.querySelector('[data-builder=header-next]').textContent=translateUiText(builderStep===3?'Zapisz i wróć':'Zapisz i przejdź dalej');
- $('#builder-help').textContent=['Wybierz osoby, do których pasuje oferta. Każda kampania ma własną listę odbiorców.','Strona firmy może być źródłem oferty, argumentów i materiałów. Sprawdź pobraną treść przed wysyłką.','Zaplanuj pierwszy kontakt i kolejne wiadomości. Po prawej sprawdzisz wynik dla wybranego odbiorcy.','Zapisz szkic. Samo zapisanie nie uruchamia wysyłki; kolejkę uruchomisz w widoku kampanii.'][builderStep];
- if(builderStep===3){const d=builderData();$('#builder-summary').innerHTML=`<dl class="builder-summary"><dt>Kampania</dt><dd>${esc(d.name)||'Brak nazwy'}</dd><dt>Strona nadawcy</dt><dd>${esc(d.website)||'Oferta wpisana ręcznie'}</dd><dt>Odbiorcy</dt><dd>${d.audience_mode==='tags'?esc(translateUiText('Tagi')+': '+d.audience_tags.join('; ')+' · '+translateUiText(d.tag_match==='all'?'Wszystkie wybrane tagi (I)':'Dowolny z wybranych tagów (LUB)')):d.audience_mode==='selected'?d.contact_ids.length+' wybranych kontaktów':'Wszystkie aktywne kontakty'}</dd><dt>Sekwencja</dt><dd>${d.steps.length} wiadomości · dni ${d.steps.map(s=>s.delay_days).join(', ')}</dd><dt>Materiały</dt><dd>${{none:'Bez materiałów',auto:'Dobór według kontekstu',manual:'Ręczny wybór'}[d.material_mode]}</dd></dl>`}
+ document.querySelector('[data-builder=header-next]').textContent=translateUiText(builderStep===3?'Przygotuj wiadomości':'Zapisz i przejdź dalej');
+ updateBuilderLaunchButton();
+ $('#builder-help').textContent=['Wybierz osoby, do których pasuje oferta. Każda kampania ma własną listę odbiorców.','Strona firmy może być źródłem oferty, argumentów i materiałów. Sprawdź pobraną treść przed wysyłką.','Zaplanuj pierwszy kontakt i kolejne wiadomości. Po prawej sprawdzisz wynik dla wybranego odbiorcy.','Zapisz kampanię lub przygotuj wiadomości. Gdy wiadomości są gotowe, możesz uruchomić kampanię z tego ekranu.'][builderStep];
+ if(builderStep===3){const d=builderData();$('#builder-summary').innerHTML=`<dl class="builder-summary"><dt>Kampania</dt><dd>${esc(d.name)||'Brak nazwy'}</dd><dt>Strona nadawcy</dt><dd>${esc(d.website)||'Oferta wpisana ręcznie'}</dd><dt>Odbiorcy</dt><dd>${d.audience_mode==='tags'?esc(translateUiText('Tagi')+': '+d.audience_tags.join('; ')+' · '+translateUiText(d.tag_match==='all'?'Wszystkie wybrane tagi (I)':'Dowolny z wybranych tagów (LUB)')):d.audience_mode==='selected'?d.contact_ids.length+' wybranych kontaktów':'Wszystkie aktywne kontakty'}</dd><dt>Sekwencja</dt><dd>${d.steps.length} wiadomości · dni ${d.steps.map(s=>s.delay_days).join(', ')}</dd><dt>Materiały</dt><dd>${{none:'Bez materiałów',auto:'Dobór według kontekstu',manual:'Ręczny wybór',document:esc($('#builder-attachment')?.selectedOptions[0]?.textContent||translateUiText('Dokument do wysłania'))}[d.material_mode]}</dd></dl>`}
 }
 
 function renderLibrary(){
@@ -291,7 +421,7 @@ document.addEventListener('click',e=>{
   if(action==='preview-shortcut'){showBuilderStage(2);$('#preview-contact').focus()}
   if(action==='add-step'){addStep();decorateBuilderSteps();persistBuilder()}
   if(action==='remove-step'){const steps=[...document.querySelectorAll('#steps .step')];if(steps.length===1)throw Error('Sekwencja musi mieć co najmniej jeden krok');const index=steps.indexOf(b.closest('.step'));for(const condition of builderConditions)if(condition.before_step>index)condition.before_step--;sequenceInsertAt=null;b.closest('.step').remove();decorateBuilderSteps();persistBuilder()}
-  if(action==='discover'){const website=$('#company-url').value;if(!website)throw Error('Podaj stronę firmy');$('#research-status').textContent='Odczytuję stronę i podstrony…';const result=await api('library/discover',{website});$('#company-url').value=result.website;$('#build-offer').value=result.offer;await refresh();renderBuilderMaterials();$('#research-status').textContent=`Odczytano ${result.added} stron. Nieudane odczyty: ${result.errors.length}. Sprawdź ofertę i materiały przed wysyłką.`;persistBuilder()}
+  if(action==='discover'){const website=$('#company-url').value;if(!website)throw Error('Podaj stronę firmy');$('#research-status').textContent='Odczytuję stronę i podstrony…';const result=await api('library/discover',{website});$('#company-url').value=result.website;$('#build-offer').value=result.offer;$('#campaign-form').refreshOfferSources();await refresh();renderBuilderMaterials();$('#research-status').textContent=`Odczytano ${result.added} stron. Nieudane odczyty: ${result.errors.length}. Sprawdź ofertę i materiały przed wysyłką.`;persistBuilder()}
   if(action==='improve-step')await assistantStep('improve');
   if(action==='first-touch')await assistantStep('first_touch');
   if(action==='preview'){const d=builderData();d.preview_contact_id=$('#preview-contact').value;d.preview_step=Number($('#preview-step').value);if(!d.preview_contact_id)throw Error('Dodaj aktywny kontakt do podglądu');const r=await api('campaign/preview',d);$('#builder-preview-content').innerHTML=`<div class="mail-preview"><div><span>Temat</span><strong>${esc(r.subject)}</strong></div><p>${esc(r.body)}</p></div>${r.material?`<div class="preview-material"><span class="section-label">WYBRANY MATERIAŁ</span><strong>${esc(r.material.title)}</strong><small>${esc(r.material.url)}</small></div>`:'<p class="hint">Bez dodatkowego materiału dla tego kontaktu.</p>'}`}

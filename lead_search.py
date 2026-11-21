@@ -216,18 +216,39 @@ class LeadSearch:
                 _job(c, project_id, 'discover', key)
         return self.state(key)
 
-    def state(self, search_id=None, notifications_only=False):
-        with self.db() as c:
-            project = project_scope.active(c)
-            notifications = [dict(row) for row in c.execute("""SELECT s.id,s.query,s.project_id,p.name AS project_name,
+    @staticmethod
+    def notifications(c, after=0):
+        return [dict(row) for row in c.execute("""SELECT s.id,s.query,s.project_id,p.name AS project_name,
                 COUNT(*) AS count,
                 SUM(e.kind='company') AS companies,SUM(e.kind='signal') AS signals,
                 SUM(e.kind='qualification') AS qualifications,SUM(e.kind='contact') AS contacts
                 FROM lead_searches s JOIN lead_search_events e ON s.id=e.search_id AND e.id>s.seen_event
                 JOIN seller_projects p ON p.id=s.project_id
-                WHERE p.deleted=0 GROUP BY s.id ORDER BY MAX(e.id) DESC""")]
+                WHERE p.deleted=0 AND e.id>? GROUP BY s.id ORDER BY MAX(e.id) DESC""", (after,))]
+
+    @staticmethod
+    def bell_cursor(c):
+        row = c.execute("SELECT value FROM app_preferences WHERE key='lead_bell_seen_event'").fetchone()
+        return int(row['value']) if row else 0
+
+    def acknowledge_bell(self):
+        with self.db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            previous = self.bell_cursor(c)
+            notifications = self.notifications(c, previous)
+            through = max(previous, c.execute('SELECT COALESCE(MAX(id),0) FROM lead_search_events').fetchone()[0])
+            c.execute("""INSERT INTO app_preferences(key,value) VALUES('lead_bell_seen_event',?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value""", (str(through),))
+        return {'bell_seen_event': through, 'notifications': notifications}
+
+    def state(self, search_id=None, notifications_only=False):
+        with self.db() as c:
+            project = project_scope.active(c)
+            cursor = self.bell_cursor(c)
+            bell = {'bell_seen_event':cursor, 'bell_notifications':self.notifications(c, cursor)}
             if notifications_only:
-                return {'project_id': project, 'notifications': notifications}
+                return {'project_id': project, **bell}
+            notifications = self.notifications(c) if cursor else bell['bell_notifications']
             searches = [dict(row) for row in c.execute("""SELECT s.id,s.query,s.criteria,s.created,s.saved,s.live,s.company_limit,s.stopped,
                 (SELECT COUNT(*) FROM lead_search_events e WHERE e.search_id=s.id AND e.id>s.seen_event) AS unread
                 FROM lead_searches s WHERE s.project_id=? ORDER BY s.saved DESC,s.id DESC LIMIT 80""", (project,))]
@@ -244,7 +265,7 @@ class LeadSearch:
             active_agent_jobs = c.execute("""SELECT COUNT(*) FROM lead_search_jobs j
                 JOIN seller_projects p ON p.id=j.project_id
                 WHERE p.deleted=0 AND j.status IN ('pending','running')""").fetchone()[0]
-            result = {'project_id': project, 'searches': searches, 'notifications': notifications, 'search': search,
+            result = {'project_id': project, 'searches': searches, 'notifications': notifications, 'search': search, **bell,
                       'companies': [], 'jobs': [], 'events': [], 'active_agent_jobs': active_agent_jobs,
                       'signal_updates_enabled': lead_signals.updates_enabled(c,project)}
             config = c.execute('SELECT data FROM seller_projects WHERE id=?', (project,)).fetchone()

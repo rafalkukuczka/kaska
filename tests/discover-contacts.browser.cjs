@@ -62,7 +62,8 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.waitForFunction(()=>state.contacts.some(c=>c.email==='anna@buyer.example'&&c.target_group==='Discover clients'));
   await company.locator('.discover-company-toggle.has-contacts').waitFor();
   const markerColors=await company.locator('.discover-company-toggle').evaluate(node=>({color:getComputedStyle(node).color,background:getComputedStyle(node).backgroundColor}));
-  assert.equal(markerColors.color,'rgb(255, 255, 255)');assert.equal(markerColors.background,'rgb(96, 57, 237)');
+  assert.equal(markerColors.color,'rgb(255, 255, 255)');assert.equal(markerColors.background,'rgb(36, 140, 80)');
+  assert.equal(await company.evaluate(node=>getComputedStyle(node).backgroundColor),'rgb(237, 249, 242)');
   assert.equal(await page.evaluate(()=>state.messages.length),0);
   assert.equal(await page.evaluate(()=>state.contacts.length),1);
   assert.ok((await page.evaluate(()=>state.contacts[0].notes)).includes('https://buyer.example/team'));

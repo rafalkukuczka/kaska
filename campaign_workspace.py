@@ -6,6 +6,7 @@ import math
 import campaign_edit
 import project_scope
 import delivery_status
+import offer_documents
 
 
 def init_schema(c):
@@ -20,6 +21,12 @@ def read(db,campaign_id,page=1,size=25):
     with db() as c:
         project_scope.require_campaign(c,campaign_id)
         campaign=dict(c.execute('SELECT * FROM campaigns WHERE id=?',(campaign_id,)).fetchone())
+        attachment_name = None
+        if campaign['material_mode']=='document':
+            try:
+                attachment_name = offer_documents.campaign_attachment(c,campaign['project_id'],campaign_id,campaign['attachment_ref'])['name']
+            except ValueError:
+                pass
         steps=[dict(row) for row in c.execute('SELECT * FROM steps WHERE campaign_id=? ORDER BY position',(campaign_id,))]
         eligible=campaign_edit.recipients(c,campaign)
         targets={row['id']:dict(row) for row in eligible}
@@ -52,4 +59,4 @@ def read(db,campaign_id,page=1,size=25):
         replied_ids=[row[0] for row in c.execute('SELECT DISTINCT contact_id FROM replies WHERE campaign_id=?',(campaign_id,))]
         summary={'recipients':total,'eligible':len(eligible),'prepared_recipients':len(enrolled),'messages':len(metadata),'steps':len(steps),'counts':counts,'message_ids':[row['id'] for row in metadata],'sent':sent[0],'contacted':sent[1],'sent_contact_ids':sent_ids,'replied_contact_ids':replied_ids,'sent_visible_recipients':sent_visible,'replies':replies[0],'replied':replies[1]}
         fingerprint=hashlib.sha256(json.dumps([campaign['revision'],fingerprint_metadata],sort_keys=True).encode()).hexdigest()
-    return {'campaign_id':campaign_id,'project_id':campaign['project_id'],'revision':campaign['revision'],'summary':summary,'delivery':delivery,'steps':steps,'conditions':json.loads(campaign['conditions']),'recipients':people,'page':page,'page_size':size,'total':total,'fingerprint':fingerprint}
+    return {'campaign_id':campaign_id,'project_id':campaign['project_id'],'revision':campaign['revision'],'summary':summary,'delivery':delivery,'steps':steps,'conditions':json.loads(campaign['conditions']),'recipients':people,'page':page,'page_size':size,'total':total,'fingerprint':fingerprint,'attachment_name':attachment_name}

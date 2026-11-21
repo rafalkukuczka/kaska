@@ -51,7 +51,8 @@ function campaignMainAction(c,w,summary){
  if(!monitoringSimulation&&c.channel==='linkedin'){
   if(!summary)return '<span class="badge gray">Wczytuję kampanię…</span>';
   if(!summary.messages)return `<button type="button" class="primary" data-action="prepare" data-id="${c.id}">Przygotuj wiadomości LinkedIn</button>`;
-  return '<span class="badge gray">Kolejka LinkedIn dostępna w rozszerzeniu PKEY</span>';
+  if(!summary.counts.queued)return '<span class="badge gray">Brak wiadomości do wysłania</span>';
+  return `<button type="button" class="primary" data-linkedin-campaign-start="${c.id}">${c.status==='active'?'Otwórz kolejkę LinkedIn':'Uruchom kolejkę'}</button>`;
  }
  if(!monitoringSimulation&&c.channel==='manual'){
   const start=`<button type="button" class="primary" data-manual-campaign-start="${c.id}">Uruchom kolejkę</button>`;
@@ -60,8 +61,8 @@ function campaignMainAction(c,w,summary){
   if(c.status==='active')return start+resumePaused+'<button type="button" class="secondary" data-manual-queue-command="pause">Wstrzymaj scenariusze</button>';
   if(!summary)return '<span class="badge gray">Wczytuję kampanię…</span>';
   if(!summary.messages)return `<button type="button" class="primary" data-action="prepare" data-id="${c.id}">Przygotuj zadania</button>`;
-  if(!campaignHasReview(w))return '<button type="button" class="primary" data-campaign-review>Sprawdź zadania</button>';
   if(!(summary.counts.queued||0))return '<span class="badge gray">Brak zadań w kolejce</span>';
+  if(c.status!=='paused'&&!campaignHasReview(w))return '<button type="button" class="primary" data-campaign-review>Sprawdź zadania</button>';
   return start+(c.status==='paused'?resumePaused:'');
  }
  const pending=[...backgroundRequests.values()].some(request=>['campaign/prepare','campaign/status','campaign/update'].includes(request.path));
@@ -70,8 +71,8 @@ function campaignMainAction(c,w,summary){
  if(c.status==='active')return button(monitoringSimulation?'Wstrzymaj symulację':'Wstrzymaj wysyłkę',`data-action="campaign-status" data-id="${c.id}" data-status="paused"`);
  if(!summary)return button('Wczytuję kampanię…','');
  if(!summary.messages)return button('Przygotuj wiadomości',`data-action="prepare" data-id="${c.id}"`);
- if(!campaignHasReview(w))return button('Sprawdź wiadomości','data-campaign-review');
  if(!(summary.counts.queued||summary.counts.sending))return '<span class="badge gray">Brak wiadomości do wysłania</span>';
+ if(c.status!=='paused'&&!campaignHasReview(w))return button('Sprawdź wiadomości','data-campaign-review');
  return button(monitoringSimulation?'Symuluj wysyłkę':c.status==='paused'?'Wznów wysyłkę':'Uruchom wysyłkę',`data-action="campaign-status" data-id="${c.id}" data-status="active"`);
 }
 function campaignReprepareButton(id,style){
@@ -119,9 +120,9 @@ function renderCampaignDelivery(data){
  const delivery=data.delivery;
  return `<div class="campaign-delivery-summary"><strong>Stan kolejki wysyłki</strong><div class="campaign-delivery-reasons">${Object.entries(delivery.reasons).map(([reason,count])=>`<div><span>${esc(translateUiText(deliveryReasonLabels[reason]||reason))}</span><strong>${count}</strong></div>`).join('')||'<p class="hint">Brak wiadomości oczekujących na wysyłkę.</p>'}</div><p class="hint"><span>Wysłano dziś ze wszystkich projektów:</span> ${delivery.sent_today} / ${delivery.daily_limit} · <span>Odstęp w sekundach:</span> ${delivery.interval_seconds}</p>${delivery.next_attempt_at>Date.now()/1000?`<p class="hint"><span>Najwcześniejsza próba:</span> ${deliveryTime(delivery.next_attempt_at)} <span>(Warszawa)</span></p>`:''}<p class="hint">Terminy uwzględniają limity i odstępy sekwencji. Inne wiadomości w kolejce mogą opóźnić wysyłkę.</p></div>`;
 }
-function campaignRecipientPagination(w,total){
+function campaignRecipientPagination(w,total,scope='recipient'){
  const pages=Math.max(1,Math.ceil(total/w.size));
- return `<div class="discover-company-pagination"><span class="hint">${total?((w.page-1)*w.size+1):0}–${Math.min(total,w.page*w.size)} / ${total}</span><label><span>Odbiorców na stronie</span><select data-campaign-recipient-size>${[10,25,50,100].map(size=>`<option ${size===w.size?'selected':''}>${size}</option>`).join('')}</select></label><div class="actions"><button class="secondary" data-campaign-recipient-page="${w.page-1}" ${w.page===1||w.loading?'disabled':''}>‹ <span>Poprzednia</span></button><span class="hint"><span>Strona</span> ${w.page} / ${pages}</span><button class="secondary" data-campaign-recipient-page="${w.page+1}" ${w.page===pages||w.loading?'disabled':''}><span>Następna</span> ›</button></div></div>`;
+ return `<div class="discover-company-pagination"><span class="hint">${total?((w.page-1)*w.size+1):0}–${Math.min(total,w.page*w.size)} / ${total}</span><label><span>Odbiorców na stronie</span><select data-campaign-${scope}-size>${[10,25,50,100].map(size=>`<option ${size===w.size?'selected':''}>${size}</option>`).join('')}</select></label><div class="actions"><button class="secondary" data-campaign-${scope}-page="${w.page-1}" ${w.page===1||w.loading?'disabled':''}>‹ <span>Poprzednia</span></button><span class="hint"><span>Strona</span> ${w.page} / ${pages}</span><button class="secondary" data-campaign-${scope}-page="${w.page+1}" ${w.page===pages||w.loading?'disabled':''}><span>Następna</span> ›</button></div></div>`;
 }
 function renderCampaignRecipients(w,data){
  const root=$('#campaign-recipients');if(!root)return;
@@ -140,16 +141,29 @@ function renderCampaignResults(data){
  const root=$('#campaign-results');if(!root)return;
  if(!data){root.innerHTML='<p class="hint">Wczytuję wyniki…</p>';return}
  const s=data.summary,rate=s.contacted?Math.round(s.replied/s.contacted*1000)/10:null;
- root.innerHTML=`<h2>Wyniki kampanii</h2>${monitoringSimulation?'<span class="badge warn">Symulacja</span>':''}<div class="campaign-result-metrics">${[['Wysłane wiadomości',s.sent],['Osoby, do których wysłano',s.contacted],['Odpowiedzi',s.replies],['Wskaźnik odpowiedzi',rate===null?'—':rate+'%']].map(([label,value])=>`<div><span>${label}</span><strong>${value}</strong></div>`).join('')}</div><div class="campaign-status-breakdown">${[['queued','Oczekuje na wysyłkę'],['sending','Wysyłanie'],['sent','Wysłano'],['cancelled','Zatrzymano'],['uncertain','Wymaga uwagi']].map(([status,label])=>`<div><span>${label}</span><progress max="${Math.max(1,s.messages)}" value="${s.counts[status]||0}"></progress><strong>${s.counts[status]||0}</strong></div>`).join('')}</div><p class="hint">Statystyki wysłanych wiadomości obejmują historię kampanii. Odpowiedzi są liczone po przypisaniu do tej kampanii; starsze odpowiedzi mogą nie mieć przypisania.</p>`;
+ const metrics=[['Wysłane wiadomości',s.sent],['Osoby, do których wysłano',s.contacted],['Odpowiedzi',s.replies],
+  ['Wskaźnik odpowiedzi',rate===null?'—':rate+'%']];
+ const statuses=[['queued','Oczekuje na wysyłkę'],['sending','Wysyłanie'],['sent','Wysłano'],['cancelled','Zatrzymano'],['uncertain','Wymaga uwagi']];
+ root.innerHTML=`<h2>Wyniki kampanii</h2>
+ ${monitoringSimulation?'<span class="badge warn">Symulacja</span>':''}
+ <div class="campaign-result-metrics">${metrics.map(([label,value])=>`<div><span>${label}</span><strong>${value}</strong></div>`).join('')}</div>
+ <div class="campaign-status-breakdown">${statuses.map(([status,label])=>{
+  const count=s.counts[status]||0;
+  return `<div><span>${label}</span><progress aria-label="${esc(translateUiText(label))}" max="${Math.max(1,s.messages)}" value="${count}"></progress><strong>${s.messages?`${count} · ${progressPercent(count,s.messages)}`:count}</strong></div>`;
+ }).join('')}</div>
+ <p class="hint">Statystyki wysłanych wiadomości obejmują historię kampanii. Odpowiedzi są liczone po przypisaniu do tej kampanii; starsze odpowiedzi mogą nie mieć przypisania.</p>`;
 }
 function campaignWorkspaceError(w){return w.error?`<div class="notice" role="alert"><span data-no-translate>${esc(w.error)}</span> <button type="button" class="link" data-campaign-workspace-retry>Spróbuj ponownie</button></div>`:''}
-function confirmManualQueueStart(campaign,data,command){
+const launchSavedCampaignNote='<p class="hint">Uruchomienie użyje zapisanej kampanii. Niezapisane zmiany pozostaną w edytorze jako szkic.</p>';
+function confirmManualQueueStart(campaign,data,command,onStart){
+ const epoch=simulationEpoch;
  const scenario=JSON.parse(campaign.manual_scenarios||'[]')[0];
  if(!scenario)throw Error('Dodaj scenariusz kampanii przed zalogowaniem.');
  const headless=scenario.headless!==false;
  modal(`<h2>Zaloguj się przed uruchomieniem kolejki</h2>
   <p><span>Serwis</span> <strong data-no-translate>${esc(scenario.domain)}</strong><span> · ${headless?'Tryb headless':'Zwykły profil Chrome'}</span></p>
   <p>${headless?'Zaloguj się w osobnym oknie profilu headless. Po zalogowaniu zamknij to okno i wróć tutaj.':'Zaloguj się w karcie otwartej przez rozszerzenie, a potem wróć tutaj.'}</p>
+ ${onStart?launchSavedCampaignNote:''}
   <button type="button" class="secondary" data-manual-queue-login>Otwórz logowanie w Chrome</button>
   <label class="check"><input type="checkbox" data-manual-login-confirmed> Jestem zalogowany w tym profilu</label>
   <p class="error" role="alert" data-manual-start-error></p>
@@ -169,12 +183,14 @@ function confirmManualQueueStart(campaign,data,command){
   if(!confirmed.checked)return;
   error.textContent='';login.disabled=true;confirmed.disabled=true;
   try{
-   if(data.project_id!==state.seller_project.id)throw Error('Zmieniono projekt. Otwórz kampanię ponownie.');
+   if(data.project_id!==state.seller_project.id||epoch!==simulationEpoch)throw Error('Zmieniono projekt lub tryb aplikacji.');
    if(headless&&(await api('manual-interaction/headless',{method:'login-status'})).open){
     throw Error('Zamknij okno logowania headless i spróbuj ponownie.');
    }
    await api('campaign/status',{id:campaign.id,status:'active',fingerprint:data.fingerprint});
+   if(epoch!==simulationEpoch)throw Error('Zmieniono tryb aplikacji. Odśwież dane.');
    await manualQueueAction(command,campaign.id);
+   onStart?.();
    $('#modal').close();
    await refresh();
   }catch(failure){error.textContent=translateUiText(failure.message)}
@@ -182,11 +198,25 @@ function confirmManualQueueStart(campaign,data,command){
  });
  syncLanguages();
 }
-async function showCampaignPreflight(id,command='start'){
- const projectId=state.seller_project.id,response=await fetch('/api/campaign/workspace?'+new URLSearchParams({campaign_id:id,page:1,page_size:10})),data=await response.json();
+async function showCampaignPreflight(id,command='start',{onStart}={}){
+ const projectId=state.seller_project.id,epoch=simulationEpoch,response=await fetch('/api/campaign/workspace?'+new URLSearchParams({campaign_id:id,page:1,page_size:10})),data=await response.json();
  if(!response.ok)throw Error(data.error);
- if(projectId!==state.seller_project.id)return;
+ if(projectId!==state.seller_project.id||epoch!==simulationEpoch)return;
  const campaign=state.campaigns.find(c=>c.id===id);if(!campaign)return;
+ if(monitoringSimulation){
+  const {summary}=campaignWorkspaceData({id,data});
+  if(!summary.counts.queued)throw Error('Brak wiadomości do wysłania');
+  modal(`<h2>Uruchomić symulację wysyłki?</h2><p data-no-translate>${esc(campaign.name)}</p>
+    ${onStart?launchSavedCampaignNote:''}
+    <div class="actions"><button type="button" class="primary" data-confirm-send>Symuluj wysyłkę</button><button type="button" class="secondary close">Anuluj</button></div>`);
+  $('[data-confirm-send]').onclick=event=>run(event.currentTarget,async()=>{
+   if(projectId!==state.seller_project.id||epoch!==simulationEpoch)throw Error('Zmieniono projekt lub tryb aplikacji.');
+   await api('campaign/status',{id,status:'active'});
+   onStart?.();$('#modal').close();await refresh();
+  });
+  syncLanguages();
+  return;
+ }
  if(campaign.channel==='manual'){
   if(!data.summary.counts.queued||data.summary.counts.uncertain)throw Error('Sprawdź oczekujące zadania kampanii.');
   if(command==='resume-paused'){
@@ -194,14 +224,36 @@ async function showCampaignPreflight(id,command='start'){
    if(projectId!==state.seller_project.id)return;
    if(!runs.some(task=>task.status==='paused'))throw Error(translateUiText('Brak wstrzymanych scenariuszy.'));
   }
-  confirmManualQueueStart(campaign,data,command);
+  confirmManualQueueStart(campaign,data,command,onStart);
   return;
  }
- const blocked=!state.integrations.smtp||!data.summary.counts.queued||data.summary.counts.uncertain;
+ if(campaign.channel==='linkedin'){
+  if(!data.summary.counts.queued)throw Error('Brak wiadomości do wysłania');
+  modal(`<h2>Kolejka LinkedIn</h2><p data-no-translate>${esc(campaign.name)}</p>
+   <p>Otwórz przygotowane wiadomości w Outreach i wyślij je ręcznie w LinkedIn.</p>
+   ${onStart?launchSavedCampaignNote:''}
+   <div class="actions"><button type="button" class="primary" data-confirm-linkedin-start>${campaign.status==='active'?'Otwórz kolejkę LinkedIn':'Uruchom kolejkę'}</button><button type="button" class="secondary close">Anuluj</button></div>`);
+  $('[data-confirm-linkedin-start]').onclick=event=>run(event.currentTarget,async()=>{
+   if(projectId!==state.seller_project.id||epoch!==simulationEpoch)throw Error('Zmieniono projekt lub tryb aplikacji.');
+   if(campaign.status!=='active')await api('campaign/status',{id,status:'active',fingerprint:data.fingerprint});
+   if(epoch!==simulationEpoch)throw Error('Zmieniono tryb aplikacji. Odśwież dane.');
+   onStart?.();$('#modal').close();
+   try{await requestManualQueue('open-linkedin',id)}
+   finally{await refresh()}
+  });
+  syncLanguages();
+  return;
+ }
+ const missingAttachment=campaign.material_mode==='document'&&!data.attachment_name;
+ const blocked=!state.integrations.smtp||!data.summary.counts.queued||data.summary.counts.uncertain||missingAttachment;
  modal(`<h2>Sprawdź przed wysyłką</h2><p data-no-translate>${esc(campaign.name)}</p><dl class="preflight-summary"><dt>Nadawca</dt><dd data-no-translate>${esc(state.integrations.sender_name||'')} &lt;${esc(state.integrations.sender||'')}&gt;</dd><dt>Odbiorcy z wiadomościami</dt><dd>${data.summary.prepared_recipients}</dd><dt>Oczekujące wiadomości</dt><dd>${data.summary.counts.queued||0}</dd><dt>Pomijane lub zatrzymane wiadomości</dt><dd>${data.summary.counts.cancelled||0}</dd><dt>Limit dzienny / odstęp</dt><dd>${data.delivery.daily_limit} / ${data.delivery.interval_seconds} <span>sekund</span></dd></dl><h3>Harmonogram sekwencji</h3>${data.steps.map(step=>`<p><span>Dzień wysyłki</span> ${step.delay_days}: <span data-no-translate>${esc(step.subject)}</span></p>`).join('')}<p class="hint">Terminy kolejnych kroków liczone są od faktycznej wysyłki poprzedniej wiadomości. Limity obejmują wszystkie projekty.</p><details><summary>Przykładowe wiadomości</summary>${data.recipients.slice(0,3).flatMap(person=>person.messages.slice(0,1).map(message=>`<article class="preflight-message"><strong data-no-translate>${esc(person.email)} · ${esc(message.subject)}</strong><p class="message" data-no-translate>${esc(message.body)}</p></article>`)).join('')}</details>${!state.integrations.smtp?'<p class="error">Podłącz pocztę w Integracjach.</p>':''}${data.summary.counts.uncertain?'<p class="error">Sprawdź niepotwierdzone wysyłki w skrzynce przed wznowieniem.</p>':''}<p class="hint">Sprawdź poprawność adresów, treści i wybranych odbiorców. Odpowiedzi zatrzymują dalsze kroki.</p><p class="error" role="alert" data-preflight-error></p><div class="actions"><button type="button" class="primary" data-confirm-send ${blocked?'disabled':''}>Potwierdź i uruchom wysyłkę</button><button type="button" class="secondary close">Anuluj</button></div>`);
+ if(onStart)$('[data-preflight-error]').insertAdjacentHTML('beforebegin',launchSavedCampaignNote);
+ if(data.attachment_name)$('.preflight-summary').insertAdjacentHTML('beforeend',
+  `<dt>Załącznik w pierwszym e-mailu</dt><dd>${offerDocumentLink(data.attachment_name,{project_id:projectId,campaign_id:id})}</dd>`);
+ if(missingAttachment)$('[data-preflight-error]').textContent=translateUiText('Brakuje oryginału załącznika. Dodaj plik ponownie lub wybierz inny dokument.');
  $('[data-confirm-send]').onclick=event=>run(event.currentTarget,async()=>{
-  if(projectId!==state.seller_project.id)throw Error('Zmieniono projekt. Otwórz kampanię ponownie.');
-  try{await api('campaign/status',{id,status:'active',fingerprint:data.fingerprint});$('#modal').close();await refresh();toast('Kampania uruchomiona')}
+  if(projectId!==state.seller_project.id||epoch!==simulationEpoch)throw Error('Zmieniono projekt lub tryb aplikacji.');
+  try{await api('campaign/status',{id,status:'active',fingerprint:data.fingerprint});onStart?.();$('#modal').close();await refresh();toast('Kampania uruchomiona')}
   catch(error){if($('[data-preflight-error]'))$('[data-preflight-error]').textContent=error.message;throw error}
  });
  syncLanguages();
@@ -259,7 +311,11 @@ function setManualQueueLayout(root,layout){
 function updateManualProgress(root,label,value,max,showCount=true){
  const [caption,bar]=root.children;
  const title=translateUiText(label);
- const text=value===undefined||!showCount?title:`${title} ${value}/${max}`;
+ let text=title;
+ if(value!==undefined&&max>0){
+  if(showCount)text+=` ${value}/${max} · ${progressPercent(value,max)}`;
+  else if(value===max)text+=` · ${progressPercent(value,max)}`;
+ }
  if(caption.textContent!==text)caption.textContent=text;
  if(bar.getAttribute('aria-label')!==title)bar.setAttribute('aria-label',title);
  if(bar.max!==max)bar.max=max;
@@ -335,16 +391,20 @@ function renderManualQueueRuns(campaignId,runs){
  notice.hidden=runs.length>0;
  const emptyLabel=translateUiText('Nie ma jeszcze uruchomionych zadań.');
  if(!notice.hidden&&notice.textContent!==emptyLabel)notice.textContent=emptyLabel;
- for(const task of runs){
+ const ordered=[...runs.filter(task=>task.status==='running'),...runs.filter(task=>task.status!=='running')];
+ let nextRow=list.firstElementChild;
+ for(const task of ordered){
   let row=rows.get(task.id);
   if(!row){
    row=document.createElement('article');
    row.className='signal-card';
    row.dataset.runId=task.id;
    row.innerHTML=`<div class="panel-head"><strong data-no-translate></strong><span data-no-translate></span></div><p class="hint" data-no-translate></p><p class="hint manual-wait-countdown" data-no-translate hidden></p>${manualProgressMarkup}<details class="manual-queue-progress-details" hidden><summary>Czynności scenariusza</summary><ol data-no-translate></ol></details><p class="hint" data-no-translate></p><div class="actions"></div>`;
-   list.append(row);
   }
+  if(row!==nextRow)list.insertBefore(row,nextRow);
+  nextRow=row.nextElementSibling;
   rows.delete(task.id);
+  row.dataset.active=String(task.status==='running');
   const tileStatus=task.failed===true?'error':task.status;
   if(row.dataset.status!==tileStatus)row.dataset.status=tileStatus;
   const status=[translateUiText(labels[task.status]||''),task.dryRun?translateUiText('Próba'):'',
@@ -442,6 +502,8 @@ setInterval(()=>{
 },500);
 
 document.addEventListener('click',event=>{
+ const classic=event.target.closest('[data-linkedin-campaign-start]');
+ if(classic){void run(classic,()=>showCampaignPreflight(Number(classic.dataset.linkedinCampaignStart)));return}
  const reprepare=event.target.closest('[data-campaign-reprepare]');
  if(reprepare){confirmCampaignReprepare(Number(reprepare.dataset.campaignReprepare));return}
  const button=event.target.closest('[data-manual-queue-command], [data-manual-campaign-start]');
@@ -474,7 +536,7 @@ function renderCampaignWorkspace(c){
  $('#content').innerHTML=`<button class="link" data-action="back">← Wszystkie kampanie</button>
   <section id="campaign-workspace-header"></section>
   <div id="campaign-workspace-error">${campaignWorkspaceError(w)}</div>
-  <div class="campaign-tabs" role="tablist" aria-label="${esc(translateUiText('Widoki kampanii'))}">${tabs.map(([tab,label])=>`<button type="button" id="campaign-tab-${tab}" role="tab" data-campaign-tab="${tab}" aria-controls="campaign-${tab}">${label}</button>`).join('')}</div>
+  <div class="campaign-tabs" role="tablist" aria-label="${esc(translateUiText('Widoki kampanii'))}">${tabs.map(([tab,label],index)=>`<button type="button" id="campaign-tab-${tab}" role="tab" data-campaign-tab="${tab}" aria-controls="campaign-${tab}"><span class="tab-step-number" aria-hidden="true">${index+1}</span><span>${label}</span></button>`).join('')}</div>
   ${tabs.map(([tab,label])=>`<section class="panel campaign-tab-panel" id="campaign-${tab}" data-campaign-id="${c.id}" role="tabpanel" aria-labelledby="campaign-tab-${tab}" hidden>
    ${tab==='manual-queue'?`
     <div class="panel-head manual-queue-header">
@@ -516,7 +578,7 @@ function renderCampaignWorkspaceLive(id){
  const w=campaignWorkspace(id),data=campaignWorkspaceData(w);
  renderCampaignWorkspaceHeader(c,w,data);$('#campaign-workspace-error').innerHTML=campaignWorkspaceError(w);
  if(!document.activeElement?.closest('#campaign-recipients'))renderCampaignRecipients(w,data);
- renderCampaignSequence(c,data);renderCampaignResults(data);syncLanguages();
+ renderCampaignSequence(c,data);renderCampaignResults(data);renderCampaignMessageContactTiles(w,data);syncLanguages();
 }
 function campaignWorkspaceMessage(id){if(!selectedCampaign)return null;const w=campaignWorkspace(selectedCampaign);for(const person of campaignWorkspaceData(w)?.recipients||[]){const message=person.messages.find(message=>message.id===id);if(message)return message}return null}
 async function changeCampaignRecipient(w,contactId,action){
@@ -605,9 +667,9 @@ document.addEventListener('click',event=>{
   if(person)confirmCampaignRecipientRemoval(w,person);
  }
  if(button.matches('[data-campaign-tab],[data-campaign-review]')){w.tab=button.dataset.campaignTab||'messages';w.awaitReview=false;if(w.tab==='messages'){if(w.data&&campaignMessagePage(w.id).loaded&&!campaignMessagePage(w.id).loading)rememberCampaignReview(w);else w.awaitReview=true}updateCampaignTab(w);renderCampaignWorkspaceHeader(state.campaigns.find(c=>c.id===selectedCampaign),w,campaignWorkspaceData(w));syncLanguages()}
- if(button.matches('[data-campaign-recipient-page]')){w.page=Number(button.dataset.campaignRecipientPage);document.activeElement?.blur();loadCampaignWorkspace(w.id)}
+ if(button.matches('[data-campaign-recipient-page], [data-campaign-message-contact-page]')){w.page=Number(button.dataset.campaignRecipientPage??button.dataset.campaignMessageContactPage);document.activeElement?.blur();loadCampaignWorkspace(w.id)}
  if(button.matches('[data-campaign-workspace-retry]'))loadCampaignWorkspace(w.id);
 });
-document.addEventListener('change',event=>{if(event.target.matches('[data-campaign-recipient-size]')){const w=campaignWorkspace(selectedCampaign);w.size=Number(event.target.value);w.page=1;event.target.blur();loadCampaignWorkspace(w.id)}});
+document.addEventListener('change',event=>{if(event.target.matches('[data-campaign-recipient-size], [data-campaign-message-contact-size]')){const w=campaignWorkspace(selectedCampaign);w.size=Number(event.target.value);w.page=1;event.target.blur();loadCampaignWorkspace(w.id)}});
 document.addEventListener('toggle',event=>{const node=event.target;if(node.matches?.('[data-campaign-person]')&&node.isConnected){const w=campaignWorkspace(selectedCampaign),id=Number(node.dataset.campaignPerson);node.open?w.open.add(id):w.open.delete(id)}},true);
 document.addEventListener('keydown',event=>{const button=event.target.closest('[data-campaign-tab]');if(!button||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const tabs=[...document.querySelectorAll('[data-campaign-tab]')],index=tabs.indexOf(button),next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;tabs[next].click();tabs[next].focus()});

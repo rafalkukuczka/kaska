@@ -50,6 +50,21 @@ class ProspectingTests(unittest.TestCase):
         with patch.dict(os.environ, {'HUNTER_API_KEY': 'fixture-key'}), patch('prospecting.Hunter.request', side_effect=self.provider):
             self.manager.verify(run_id)
 
+    def test_cancelling_search_stops_before_next_provider_request(self):
+        run_id = self.setup_run(search_languages=['en', 'de'])
+        self.manager.lock.acquire()
+
+        def first_request(endpoint, params=None, body=None):
+            self.assertTrue(self.manager.cancel_run(run_id))
+            return self.provider(endpoint, params, body)
+
+        with patch.dict(os.environ, {'HUNTER_API_KEY': 'fixture-key'}), \
+                patch('prospecting.Hunter.request', side_effect=first_request) as request:
+            self.manager.execute(run_id, 'search')
+        request.assert_called_once()
+        self.assertEqual(self.manager.get_run(run_id)['status'], 'interrupted')
+        self.assertFalse(self.manager.lock.locked())
+
     def test_add_selected_contacts_without_tags_does_not_create_campaigns(self):
         run_id=self.setup_run();person=self.search(run_id);self.verify(run_id)
         result=self.manager.add_contacts({'id':run_id,'candidate_ids':[person['id']]},app.add_contact)

@@ -15,6 +15,26 @@ class LeadSearchTests(unittest.TestCase):
     setUp = test_app.SystemTests.setUp
     tearDown = test_app.SystemTests.tearDown
 
+    def test_bell_acknowledges_current_events_without_marking_discover_updates_read(self):
+        finder = app.lead_finder
+        with patch('languages.data_simulation', return_value=True):
+            search_id = finder.create({'query':'Acme'})['search']['id']
+        with app.db() as c:
+            lead_search._event(c, search_id, 'example.com', 'signal', 'Pierwsza aktualizacja', 'first')
+        self.assertEqual(finder.state(notifications_only=True)['bell_notifications'][0]['count'], 1)
+
+        opened = finder.acknowledge_bell()
+        self.assertEqual(opened['notifications'][0]['count'], 1)
+        state = finder.state(search_id)
+        self.assertEqual(state['bell_notifications'], [])
+        self.assertTrue(state['events'][0]['unread'])
+
+        with app.db() as c:
+            lead_search._event(c, search_id, 'example.com', 'qualification', 'Druga aktualizacja', 'second')
+        newer, = finder.acknowledge_bell()['notifications']
+        self.assertEqual((newer['count'], newer['signals'], newer['qualifications']), (1, 0, 1))
+        self.assertEqual(finder.acknowledge_bell()['notifications'], [])
+
     def test_immediate_project_results_and_shared_async_research(self):
         finder = app.lead_finder
         criteria = [{'label': 'Modernizacja PLC', 'alternatives': ['modernizacja PLC']}]

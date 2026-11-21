@@ -130,7 +130,7 @@ def valid_people(rows, domain, excluded=()):
         yield {**row, 'value': email, 'sources': sources}
 
 
-def waterfall(hunter, domain, limit, titles='', department='', exclude=(), progress=None, hunter_params=None):
+def waterfall(hunter, domain, limit, titles='', department='', exclude=(), progress=None, hunter_params=None, *, allow_apollo=True):
     """Use Apollo only for the missing slots. Retain successful results on failure."""
     params = dict(hunter_params or {'domain': domain, 'limit': limit, 'type': 'personal',
         'provenance': 'found', 'required_field': 'full_name', 'decision_maker': 'true'})
@@ -154,7 +154,7 @@ def waterfall(hunter, domain, limit, titles='', department='', exclude=(), progr
         if 'inną domenę' in str(exc):
             raise
     missing = limit - len(contacts)
-    if missing and domain and os.getenv('APOLLO_API_KEY', '').strip():
+    if allow_apollo and missing and domain and os.getenv('APOLLO_API_KEY', '').strip():
         try:
             if progress: progress('Apollo')
             apollo = Apollo()

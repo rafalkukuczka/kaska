@@ -195,10 +195,16 @@ class Discovery:
 
     def cancel(self,item):
         project=shared_project.get(self.db,item.get('project_id'))
-        with self.db() as c:
-            if not c.execute("UPDATE opportunity_searches SET status='cancelling',stage='Zatrzymywanie po bieżącym zapytaniu',updated=? WHERE id=? AND project_id=? AND status='running'",(time.time(),int(item['id']),project['id'])).rowcount:
-                raise ValueError('To wyszukiwanie nie jest uruchomione w tym projekcie.')
+        if not self.cancel_run(int(item['id']),project['id']):
+            raise ValueError('To wyszukiwanie nie jest uruchomione w tym projekcie.')
         return {'ok':True}
+
+    def cancel_run(self,run_id,project_id=None):
+        with self.db() as c:
+            return bool(c.execute("""UPDATE opportunity_searches
+                SET status='cancelling',stage='Zatrzymywanie po bieżącym zapytaniu',updated=?
+                WHERE id=? AND status='running' AND (? IS NULL OR project_id=?)""",
+                (time.time(),run_id,project_id,project_id)).rowcount)
 
     def checkpoint(self,run_id,project,stage=None):
         with self.db() as c:run=c.execute('SELECT status,signature FROM opportunity_searches WHERE id=? AND project_id=?',(run_id,project['id'])).fetchone()
@@ -332,7 +338,12 @@ class Discovery:
         finally:self.lock.release()
 
     def finish(self,run_id,status,stage,warnings,added):
-        with self.db() as c:c.execute('UPDATE opportunity_searches SET status=?,stage=?,warnings=?,added=?,updated=? WHERE id=?',(status,stage,json.dumps(warnings[-30:],ensure_ascii=False),added,time.time(),run_id))
+        with self.db() as c:
+            c.execute("""UPDATE opportunity_searches SET
+                status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE ? END,
+                stage=CASE WHEN status='cancelling' THEN 'Wyszukiwanie zatrzymane' ELSE ? END,
+                warnings=?,added=?,updated=? WHERE id=?""",
+                (status,stage,json.dumps(warnings[-30:],ensure_ascii=False),added,time.time(),run_id))
 
     def post(self,path,item):
         if path=='start':return self.start(item)

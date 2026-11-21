@@ -3,7 +3,7 @@ let prospectDraftPending=null;
 function finishProspectDraft(){
   if(prospectDraftPending===null)return;
   const record=state.prospecting?.runs.find(r=>r.id===prospectDraftPending);
-  if(!record||record.status==='drafting'||(record.status==='ready'&&!record.campaign_id&&!record.error))return;
+  if(!record||['drafting','cancelling'].includes(record.status)||(record.status==='ready'&&!record.campaign_id&&!record.error))return;
   prospectDraftPending=null;
   if(record.campaign_id){
     prospectSelected.clear();
@@ -11,7 +11,7 @@ function finishProspectDraft(){
     toast('Szkice gotowe. Sprawdź treść przed uruchomieniem wysyłki.');
   }else if(record.error)toast(record.error);
 }
-const prospectStatus={searching:'Szukanie klientów',verifying:'Weryfikacja emaili',drafting:'Tworzenie szkiców',ready:'Do przeglądu',error:'Wymaga uwagi',interrupted:'Przerwano'};
+const prospectStatus={searching:'Szukanie klientów',verifying:'Weryfikacja emaili',drafting:'Tworzenie szkiców',cancelling:'Przerywanie…',ready:'Do przeglądu',error:'Wymaga uwagi',interrupted:'Przerwano'};
 const verificationLabels={unverified:'Nie sprawdzono',valid:'Zweryfikowany',invalid:'Nieprawidłowy',accept_all:'Accept-all — niepotwierdzony',unknown:'Nie udało się potwierdzić',pending:'Weryfikacja w toku',webmail:'Poczta prywatna',disposable:'Adres tymczasowy'};
 function prospectEligible(p){return !p.simulated&&p.verification_status==='valid'&&p.qualification!=='rejected'&&p.checked_at>Date.now()/1000-7*86400&&p.verified_at>Date.now()/1000-31*86400&&!state.contacts.some(c=>c.email.toLowerCase()===p.email.toLowerCase())}
 function renderHunterSettings(){
@@ -140,7 +140,14 @@ async function bulkLeadResults(button,record){
  }finally{leadImportBusy.delete(key);if(view==='prospecting'){document.activeElement?.blur();renderProspecting();syncLeadImportControls();syncLanguages()}}
 }
 function renderEnrichmentTrace(steps){
- return Array.isArray(steps)?`<ul class="enrichment-trace">${steps.map(step=>`<li><strong data-no-translate>${esc(step.provider)}</strong> · <span>${step.status==='error'?'Błąd źródła':'Dodane kontakty:'}</span> ${Number(step.added)||0}${step.error?`<p class="error" data-no-translate>${esc(step.error)}</p>`:''}</li>`).join('')}</ul>`:'';
+ if(!Array.isArray(steps)||!steps.length)return '';
+ return `<ul class="enrichment-trace" aria-label="Przebieg badania kontaktów">${steps.map(step=>{
+  const status=step.status==='error'?'Błąd źródła':step.status==='skipped'?'Pominięto':'Znalezione kontakty';
+  const sources=(step.urls||[]).map(url=>sourceLink(url,url)).filter(Boolean);
+  return `<li><strong data-no-translate>${esc(step.provider)}</strong> · <span>${status}</span>${step.status==='ok'?' '+(Number(step.added)||0):''}
+  ${step.error?`<p class="hint" data-no-translate>${esc(step.error)}</p>`:''}${step.detail?`<p class="hint">${esc(step.detail)}</p>`:''}
+  ${sources.length?`<ul>${sources.map(link=>`<li>${link}</li>`).join('')}</ul>`:''}</li>`;
+ }).join('')}</ul>`;
 }
 function renderEnrichmentPipeline(record){
  const pipeline=JSON.parse(record.filters||'{}').pipeline;
@@ -148,9 +155,10 @@ function renderEnrichmentPipeline(record){
 }
 function renderLeadCompanies(rows,record,busy){
  const groups=new Map();for(const person of rows){const key=String(person.domain||person.company).toLowerCase();if(!groups.has(key))groups.set(key,[]);groups.get(key).push(person)}
+ const hasSavedContact=savedCompanyContacts();
  return `<div class="lead-companies">${[...groups.entries()].map(([group,people])=>{
-  const key=JSON.stringify([state.seller_project.id,record.id,group]),first=people[0],hasContacts=people.some(leadExisting);
-  return `<details class="signal-card discover-company lead-company" data-lead-company="${esc(key)}" ${leadCompanyPanels.has(key)?'open':''}><summary><span class="discover-company-toggle ${hasContacts?'has-contacts':''}" aria-hidden="true"></span><h3 data-no-translate>${esc(first.company||first.domain)}</h3><span class="badge gray">${people.length} <span>Kontakty</span></span></summary><div class="discover-company-body">${first.domain?`<p class="hint" data-no-translate>${esc(first.domain)}</p>`:''}${people.map(person=>{
+  const key=JSON.stringify([state.seller_project.id,record.id,group]),first=people[0],hasContacts=hasSavedContact(first.company,first.domain)||people.some(leadExisting);
+  return `<details class="signal-card discover-company lead-company${hasContacts?' has-saved-contact':''}" data-lead-company="${esc(key)}" ${leadCompanyPanels.has(key)?'open':''}><summary><span class="discover-company-toggle ${hasContacts?'has-contacts':''}" aria-hidden="true"></span><h3 data-no-translate>${esc(first.company||first.domain)}</h3>${hasContacts?'<small class="saved-company-badge">W kontaktach</small>':''}<span class="badge gray">${people.length} <span>Kontakty</span></span></summary><div class="discover-company-body">${first.domain?`<p class="hint" data-no-translate>${esc(first.domain)}</p>`:''}${people.map(person=>{
    const existing=leadExisting(person),sources=JSON.parse(person.sources||'[]'),evidence=JSON.parse(person.evidence||'{}');
    return `<article class="discover-found-contact lead-person" data-lead-person="${esc(person.id)}"><div class="panel-head"><label class="check"><input type="checkbox" data-prospect-id="${esc(person.id)}" ${busy?'disabled':''} ${prospectSelected.has(person.id)?'checked':''}><span data-no-translate><strong>${esc(person.name)}</strong><small>${esc(person.role)} · ${esc(person.email)}</small></span></label><span class="badge ${person.verification_status==='valid'?'':'gray'}">${esc(verificationLabels[person.verification_status]||person.verification_status)}</span></div>${existing?'<span class="badge gray">Już w kontaktach</span>':''}${person.simulated?'<span class="badge warn">Symulacja</span>':''}<p data-no-translate>${esc(person.fit_reason)}</p><details class="lead-person-evidence"><summary>Szczegóły i źródła</summary><p data-no-translate>${esc(evidence.company_summary)}</p><p class="hint"><span>Kontakt:</span> <strong data-no-translate>${esc(evidence.contact_provider||evidence.provider||'')}</strong></p>${renderEnrichmentTrace(evidence.enrichment)}${person.error?`<p class="error" data-no-translate>${esc(person.error)}</p>`:''}<p data-no-translate>${esc(person.why_now)}</p><p data-no-translate>${esc(person.missing_data)}</p>${sources.map(source=>`<p><a class="link" href="${esc(source.url)}" target="_blank" rel="noopener noreferrer">${esc(source.url)}</a></p>`).join('')}</details><div class="lead-person-tags"><p class="hint">Tagi są opcjonalne.</p>${contactTagsControl(leadTags(record,person),'lead-tags-'+person.id)}</div></article>`;
   }).join('')}</div></details>`;
@@ -158,10 +166,10 @@ function renderLeadCompanies(rows,record,busy){
 }
 function syncLeadImportControls(){
  const button=$('[data-prospect-action=add]'),record=state.prospecting?.runs.find(run=>run.id===prospectRunId);
- if(button)button.disabled=!prospectSelected.size||!record||leadImportBusy.has(leadRunKey(record))||['searching','verifying','drafting'].includes(record.status);
+ if(button)button.disabled=!prospectSelected.size||!record||leadImportBusy.has(leadRunKey(record))||['searching','verifying','drafting','cancelling'].includes(record.status);
  if(record&&leadImportBusy.has(leadRunKey(record)))$('#prospect-results')?.querySelectorAll('input,select,button').forEach(input=>input.disabled=true);
  if(record){
-  const busy=leadImportBusy.has(leadRunKey(record))||['searching','verifying','drafting'].includes(record.status),p=leadResultPage(record);
+  const busy=leadImportBusy.has(leadRunKey(record))||['searching','verifying','drafting','cancelling'].includes(record.status),p=leadResultPage(record);
   const visible=[...document.querySelectorAll('[data-prospect-id]')],selected=visible.filter(input=>input.checked).length,all=$('[data-lead-all]');
   if(all){all.checked=!!visible.length&&selected===visible.length;all.indeterminate=selected>0&&selected<visible.length;all.disabled=busy||!visible.length}
   document.querySelectorAll('[data-lead-bulk-action]').forEach(control=>control.disabled=busy||!prospectSelected.size||(control.dataset.leadBulkAction==='tags'&&!p.tags.length));
@@ -196,7 +204,7 @@ function renderProspecting(){
   }
   const areasMarkup=prospectSearchAreas(),areasRoot=$('#prospect-search-areas');if(areasRoot._markup!==areasMarkup){areasRoot.innerHTML=areasMarkup;areasRoot._markup=areasMarkup}
   $('#prospect-integrations').innerHTML=`${data.hunter?'✓ Hunter podłączony.':'Podłącz Hunter, aby wyszukiwać klientów.'} ${data.apollo?'✓ Apollo uzupełnia brakujące kontakty.':''} ${state.integrations.ai?'✓ OpenAI ocenia dopasowanie firm.':'Bez OpenAI wyniki wymagają ręcznej oceny.'} <span>Po wyszukiwaniu adresy są automatycznie weryfikowane.</span> <button class="link" data-view="settings">Otwórz Integracje →</button>`;
-  const busy=data.runs.some(r=>['searching','verifying','drafting'].includes(r.status))||leadImportBusy.size>0;
+  const busy=data.runs.some(r=>['searching','verifying','drafting','cancelling'].includes(r.status))||leadImportBusy.size>0;
   $('#prospect-search').disabled=$('#prospect-form').dataset.searching==='true'||$('#prospect-form').dataset.translating==='true'||!data.hunter||busy||!dashboardCanSearch(sellerProject(),$('#dashboard-audience').value);
   if(!data.runs.some(r=>r.id===prospectRunId))prospectRunId=data.runs[0]?.id;
   const selectedRun=data.runs.find(r=>r.id===prospectRunId),root=$('#prospect-results');
@@ -208,7 +216,7 @@ function renderProspecting(){
   const known=new Set(rows.map(row=>row.id));for(const id of prospectSelected)if(!known.has(id))prospectSelected.delete(id);
   pagination.page=Math.max(1,Math.min(pagination.page,Math.max(1,Math.ceil(rows.length/pagination.size))));
   const pageRows=rows.slice((pagination.page-1)*pagination.size,pagination.page*pagination.size);
-  root.innerHTML=`<div class="panel-head"><p><strong>${esc(prospectStatus[selectedRun.status]||selectedRun.status)}</strong> · ${esc(selectedRun.stage)}</p><span class="badge gray">${rows.length} osób</span></div>${selectedRun.status==='drafting'?`<div class="draft-progress" role="status"><p><span>Gotowe szkice:</span> <strong>${Number(selectedRun.draft_completed)||0} / ${Number(selectedRun.draft_total)||0}</strong></p><progress aria-label="Postęp tworzenia szkiców" max="${Number(selectedRun.draft_total)||1}" value="${Number(selectedRun.draft_completed)||0}"></progress><p class="hint">Generowanie trwa w tle. Możesz przejść do innej zakładki i wrócić do wyników.</p></div>`:''}${selectedRun.error?`<p class="error">${esc(selectedRun.error)}</p>`:''}${warnings.filter(w=>w!=='Dane fikcyjne. Nie można użyć ich do rzeczywistej kampanii.').map(w=>`<p class="hint">${esc(w)}</p>`).join('')}
+  root.innerHTML=`<div class="panel-head"><p><strong>${esc(prospectStatus[selectedRun.status]||selectedRun.status)}</strong> · ${esc(selectedRun.stage)}</p><span class="badge gray">${rows.length} osób</span></div>${selectedRun.status==='drafting'?`<div class="draft-progress" role="status"><p><span>Gotowe szkice:</span> <strong>${Number(selectedRun.draft_completed)||0} / ${Number(selectedRun.draft_total)||0}${selectedRun.draft_total?` · ${progressPercent(selectedRun.draft_completed,selectedRun.draft_total)}`:''}</strong></p><progress aria-label="Postęp tworzenia szkiców" ${selectedRun.draft_total?`max="${selectedRun.draft_total}" value="${Number(selectedRun.draft_completed)||0}"`: ''}></progress><p class="hint">Generowanie trwa w tle. Możesz przejść do innej zakładki i wrócić do wyników.</p></div>`:''}${selectedRun.error?`<p class="error">${esc(selectedRun.error)}</p>`:''}${warnings.filter(w=>w!=='Dane fikcyjne. Nie można użyć ich do rzeczywistej kampanii.').map(w=>`<p class="hint">${esc(w)}</p>`).join('')}
     <details><summary>Oferta i zastosowane filtry wyszukiwarki</summary><p>${esc(selectedRun.offer)}</p><pre class="prospect-filters">${esc(JSON.stringify(JSON.parse(selectedRun.filters||'{}'),null,2))}</pre><p class="hint">Filtry wynikają z interpretacji opisu przez Hunter. Sprawdź, czy odpowiadają Twoim wymaganiom.</p></details>
     ${renderEnrichmentPipeline(selectedRun)}${leadResultPagination(pagination,rows.length)}${leadBulkPanel(pagination,busy)}${rows.length?renderLeadCompanies(pageRows,selectedRun,busy):empty(busy?'Trwa wyszukiwanie…':'Brak kontaktów dla tych kryteriów','Możesz zmienić opis firm, stanowiska lub dział. Brak wyników nie oznacza błędu połączenia.')}
     ${rows.length>pagination.size?leadResultPagination(pagination,rows.length):''}

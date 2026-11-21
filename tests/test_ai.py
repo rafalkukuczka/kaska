@@ -60,6 +60,16 @@ class OpenAITests(unittest.TestCase):
             self.assertEqual(json.loads(payload['input']), {'contact': 'Anna'})
             self.assertEqual(result['body'], 'Hello')
 
+    def test_responses_request_accepts_inline_image(self):
+        image = 'data:image/jpeg;base64,/9j/4P/Z'
+        with patch('ai_service.urllib.request.build_opener') as opener:
+            opener.return_value.open.return_value = self.response({'transcript':'Email: sales@example.net'})
+            ai_service.generate_json('Read the contact', {}, ('transcript',), api_key='sk-test', image_url=image)
+            payload = json.loads(opener.return_value.open.call_args.args[0].data)
+        self.assertEqual(payload['input'][0]['content'][1],
+                         {'type':'input_image', 'image_url':image, 'detail':'auto'})
+        self.assertFalse(payload['store'])
+
     def test_auth_and_quota_errors_never_expose_provider_body(self):
         for code in (401, 429, 500):
             with self.subTest(code=code), patch('ai_service.urllib.request.build_opener') as opener:

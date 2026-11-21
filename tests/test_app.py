@@ -55,6 +55,92 @@ class SystemTests(unittest.TestCase):
         with app.db() as c:
             c.execute("UPDATE campaigns SET status='active'")
 
+    def test_campaign_preparation_counts_drafts_and_clears_finished_jobs(self):
+        progress = []
+
+        def draft(*_):
+            job, = app.campaign_preparation_jobs()
+            progress.append((job['completed'], job['total']))
+            return 'Subject', 'Body'
+
+        with patch('app.ai_copy', side_effect=draft):
+            app.prepare(1)
+        self.assertEqual(progress, [(0, 2), (1, 2)])
+        self.assertEqual(app.campaign_preparation_jobs(), [])
+
+        with patch('app.ai_copy', side_effect=ValueError('Draft failed')):
+            with self.assertRaisesRegex(ValueError, 'Draft failed'):
+                app.prepare(1)
+        self.assertEqual(app.campaign_preparation_jobs(), [])
+
+    def test_campaign_preparation_can_stop_without_replacing_existing_messages(self):
+        app.prepare(1)
+        with app.db() as c:
+            before = [dict(row) for row in c.execute('SELECT * FROM messages ORDER BY id')]
+
+        def stop_during_first_draft(*_):
+            job, = app.campaign_preparation_jobs()
+            self.assertTrue(app.cancel_campaign_preparation(job['id']))
+            self.assertEqual(app.campaign_preparation_jobs()[0]['status'], 'cancelling')
+            return 'Uncommitted subject', 'Uncommitted body'
+
+        with patch('app.ai_copy', side_effect=stop_during_first_draft) as copy:
+            with self.assertRaises(app.CampaignPreparationCancelled):
+                app.prepare(1)
+            copy.assert_called_once()
+        with app.db() as c:
+            self.assertEqual([dict(row) for row in c.execute('SELECT * FROM messages ORDER BY id')], before)
+        self.assertEqual(app.campaign_preparation_jobs(), [])
+
+    def test_contact_paste_extracts_only_supplied_values_and_skips_ai_in_simulation(self):
+        text = 'Kontakt: Anna Nowak\nul. Poranna 90A\n41-103 Siemianowice Śląskie\nNIP 6342721154\nTel. 609 02 57 57\nMail: anna@example.com\nStrona: company.example'
+        with patch('app.ai_service.ready', return_value=True), patch('app.ai_service.generate_json') as ai:
+            local = app.parse_contact({'text':text}, simulated=True)
+            ai.assert_not_called()
+            ai.return_value = {'email':'anna@example.com', 'name':'Anna Nowak', 'phone':'555 000 000', 'website':'company.example'}
+            extracted = app.parse_contact({'text':text})
+            self.assertIn('address', ai.call_args.kwargs['optional_fields'])
+            ai.side_effect = ValueError('OpenAI unavailable')
+            self.assertEqual(app.parse_contact({'text':text}), local)
+        self.assertEqual(local['fields']['phone'], '609 02 57 57')
+        self.assertEqual(local['fields']['address'], 'ul. Poranna 90A\n41-103 Siemianowice Śląskie')
+        self.assertEqual(local['fields']['notes'], 'NIP 6342721154')
+        self.assertEqual(extracted, {**local,'used_ai':True})
+
+    def test_contact_paste_accepts_international_signatures_and_formatted_addresses(self):
+        cases = [
+            ('Full name: Alex Smith\n350 5th Avenue\nNew York, NY 10118\nPhone +1 212 555 0142\nalex@example.net',
+             '350 5th Avenue\nNew York, NY 10118', '+1 212 555 0142'),
+            ('Name: Léa Moreau\nAdresse : 10 rue de Rivoli\n75004 Paris\nTél. +33 1 23 45 67 89\nlea@example.net',
+             '10 rue de Rivoli\n75004 Paris', '+33 1 23 45 67 89'),
+            ('Name: Max Weber\nFriedrichstraße 20\n10117 Berlin\nTelefon: +49 30 12345678\nmax@example.net',
+             'Friedrichstraße 20\n10117 Berlin', '+49 30 12345678'),
+        ]
+        for text, address, phone in cases:
+            fields = app.parse_contact({'text':text}, simulated=True)['fields']
+            self.assertEqual((fields['address'],fields['phone']), (address,phone))
+        text = 'Address\n2-8-1 Nishi-Shinjuku\nTokyo 163-8001'
+        with patch('app.ai_service.ready', return_value=True), patch('app.ai_service.generate_json',
+                return_value={'address':'2-8-1 Nishi-Shinjuku, Tokyo 163-8001'}):
+            self.assertEqual(app.parse_contact({'text':text})['fields']['address'],
+                             '2-8-1 Nishi-Shinjuku, Tokyo 163-8001')
+
+    def test_contact_image_returns_reviewable_fields_and_requires_live_vision(self):
+        image = 'data:image/jpeg;base64,/9j/4P/Z'
+        transcript = '350 5th Avenue\nNew York, NY 10118\nEmail: sales@example.net'
+        with patch('app.ai_service.ready', return_value=True), patch('app.ai_service.generate_json') as ai:
+            with self.assertRaisesRegex(ValueError, 'trybie symulacji'):
+                app.parse_contact({'image':image}, simulated=True)
+            with self.assertRaisesRegex(ValueError, 'obrazu'):
+                app.parse_contact({'image':'data:image/jpeg;base64,YWJj'})
+            ai.assert_not_called()
+            ai.return_value = {'transcript':transcript, 'email':'wrong@example.net'}
+            result = app.parse_contact({'image':image})
+            self.assertEqual(ai.call_args.kwargs['image_url'], image)
+        self.assertEqual(result['transcript'], transcript)
+        self.assertEqual(result['fields']['email'], 'sales@example.net')
+        self.assertEqual(result['fields']['address'], '350 5th Avenue\nNew York, NY 10118')
+
     def test_personalization_deduplication_and_persistence(self):
         with app.db() as c:
             app.add_contact(c, {'email': 'ANNA@example.com'})
@@ -335,6 +421,71 @@ class SystemTests(unittest.TestCase):
             self.assertEqual(c.execute('SELECT COUNT(*) FROM replies').fetchone()[0], 1)
             self.assertEqual(c.execute('SELECT campaign_id FROM replies').fetchone()[0],1)
             self.assertEqual(c.execute('SELECT status FROM messages WHERE position=1').fetchone()[0], 'cancelled')
+
+    def test_headless_contact_research_pins_public_hosts(self):
+        browser = app.headless_browser
+        def resolve(host, *_args, **_kwargs):
+            address = '127.0.0.1' if host.startswith('www.') else '93.184.216.34'
+            return [(None, None, None, None, (address, 443))]
+        with (patch('manual_headless.socket.getaddrinfo', side_effect=resolve),
+              patch.object(browser, 'request', return_value={'pages': []}) as dispatch):
+            self.assertEqual(browser.contacts('firm.example/kontakt', 'reader'), {'pages': []})
+            dispatch.assert_called_once_with({'method': 'contact-research', 'args': {
+                'url': 'https://firm.example/kontakt', 'hosts': {'firm.example': '93.184.216.34'},
+                'source': 'reader'}}, contacts=True)
+            with self.assertRaisesRegex(ValueError, 'publiczną'):
+                browser.contacts('https://www.firm.example/kontakt', 'reader')
+
+    def test_capture_contact_reuses_existing_contact_and_preserves_opt_out(self):
+        with app.db() as c:
+            project = app.project_scope.active(c)
+            item = {'confirmed': True, 'project_id': project, 'name': 'Alex Nowak', 'email': 'alex@example.com',
+                    'company': 'Example', 'role': 'Director', 'tag': 'Ze strony',
+                    'source': 'https://example.com/team?session=secret#alex'}
+            with self.assertRaises(ValueError):
+                app.capture_contact(c, {**item, 'confirmed': False})
+            with self.assertRaises(ValueError):
+                app.capture_contact(c, {**item, 'project_id': project + 1})
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM contacts').fetchone()[0], 1)
+            first = app.capture_contact(c, item)
+            c.execute("UPDATE contacts SET status='unsubscribed' WHERE id=?", (first['id'],))
+            duplicate = app.capture_contact(c, {**item, 'email': 'ALEX@EXAMPLE.COM', 'name': 'Other',
+                                               'phone': '+49 (0)2203 / 297 11 10',
+                                               'tag': 'Nowy', 'source': 'https://example.com/directory'})
+            app.capture_contact(c, {**item, 'phone': '+48 123 456 789'})
+            self.assertFalse(first['existing'])
+            self.assertEqual(duplicate, {'id': first['id'], 'existing': True})
+            contact = c.execute('SELECT * FROM contacts WHERE id=?', (first['id'],)).fetchone()
+            self.assertEqual((contact['status'], contact['name'], contact['company'], contact['role']),
+                             ('unsubscribed', 'Alex Nowak', 'Example', 'Director'))
+            self.assertEqual(json.loads(contact['tags']), ['Ze strony', 'Nowy'])
+            self.assertEqual(json.loads(contact['research_data'])['work_phone'], '+49 (0)2203 / 297 11 10')
+            self.assertEqual([source['url'] for source in json.loads(contact['research_data'])['sources']],
+                             ['https://example.com/team', 'https://example.com/directory'])
+            with self.assertRaises(ValueError):
+                app.update_contact_phone(c, {'id': first['id'], 'phone': 'invalid'})
+            app.update_contact_phone(c, {'id': first['id'], 'phone': ''})
+            research = json.loads(c.execute('SELECT research_data FROM contacts WHERE id=?', (first['id'],)).fetchone()[0])
+            self.assertNotIn('work_phone', research)
+            self.assertEqual(len(research['sources']), 2)
+
+    def test_contact_edit_rejects_duplicates_and_keeps_relationships(self):
+        with app.db() as c:
+            app.add_contact(c, {'email': 'existing@example.com'})
+            c.execute("UPDATE contacts SET status='unsubscribed' WHERE id=1")
+            edit = {'id': 1, 'email': 'EXISTING@EXAMPLE.COM', 'name': 'Anna Edytowana', 'phone': '+48 123 456 789',
+                    'company': 'Acme Polska', 'role': 'Dyrektor', 'notes': 'Nowe dane', 'tags': 'Kwalifikacja'}
+            with self.assertRaisesRegex(ValueError, 'już istnieje'):
+                app.update_contact(c, edit)
+            self.assertEqual(c.execute('SELECT email FROM contacts WHERE id=1').fetchone()[0], 'anna@example.com')
+            app.update_contact(c, {**edit, 'email': 'NOWA@EXAMPLE.COM'})
+            row = c.execute('SELECT * FROM contacts WHERE id=1').fetchone()
+            self.assertEqual((row['email'], row['name'], row['status']), ('nowa@example.com', 'Anna Edytowana', 'unsubscribed'))
+            self.assertEqual(json.loads(row['tags']), ['Kwalifikacja'])
+            self.assertEqual(json.loads(row['research_data'])['work_phone'], '+48 123 456 789')
+        with patch('prospecting.Hunter.request') as lookup:
+            self.assertTrue(app.hunter_contact('nowa@example.com', simulated=True)['phone'])
+            lookup.assert_not_called()
 
     def test_http_import_csrf_edit_and_unsubscribe(self):
         server = app.ThreadingHTTPServer(('127.0.0.1', 0), app.Handler)

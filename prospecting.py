@@ -47,7 +47,7 @@ class Hunter:
             raise ValueError('Podłącz własny klucz Hunter API w Integracjach. Klucz demonstracyjny nie wyszukuje prawdziwych klientów.')
 
     def request(self, endpoint, params=None, body=None):
-        if endpoint not in ('account', 'discover', 'domain-search', 'email-verifier'):
+        if endpoint not in ('account', 'discover', 'domain-search', 'email-verifier', 'people/find'):
             raise ValueError('Nieznana operacja Hunter')
         query = dict(params or {}, api_key=self.key)
         request = urllib.request.Request('https://api.hunter.io/v2/' + endpoint + '?' + urlencode(query),
@@ -56,7 +56,7 @@ class Hunter:
             def redirect_request(self, *args, **kwargs):
                 return None
         try:
-            provider = 'Hunter' if endpoint in ('domain-search','email-verifier') else None
+            provider = 'Hunter' if endpoint in ('domain-search','email-verifier','people/find') else None
             with billable_activity.track(provider), urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
                 if response.status == 202:
                     return {'data': {'status': 'pending'}}
@@ -70,6 +70,8 @@ class Hunter:
                 raise ValueError('Hunter zwrócił nieprawidłową odpowiedź.')
             return result
         except urllib.error.HTTPError as exc:
+            if endpoint == 'people/find' and exc.code == 404:
+                return {'data': None}
             errors = {401: 'Nieprawidłowy klucz Hunter API.', 403: 'Hunter: brak dostępu do funkcji lub limit zapytań.',
                       429: 'Hunter: wyczerpano limit konta. Sprawdź dostępne kredyty.',
                       451: 'Hunter: osoba wykluczyła przetwarzanie swoich danych.'}
@@ -114,7 +116,11 @@ def init_schema(c):
         if name not in columns:
             c.execute('ALTER TABLE prospect_runs ADD COLUMN '+name+' INTEGER NOT NULL DEFAULT 0')
     # Interrupted operations require an explicit retry; never repeat billable calls on startup.
-    c.execute("UPDATE prospect_runs SET status='interrupted',stage='Przerwano pracę serwera. Uruchom nowe wyszukiwanie lub ponów weryfikację.' WHERE status IN ('searching','verifying','drafting')")
+    c.execute("UPDATE prospect_runs SET status='interrupted',stage='Przerwano pracę serwera. Uruchom nowe wyszukiwanie lub ponów weryfikację.' WHERE status IN ('searching','verifying','drafting','cancelling')")
+
+
+class Cancelled(Exception):
+    pass
 
 
 class Prospecting:
@@ -200,7 +206,24 @@ class Prospecting:
         if not set(fields) <= allowed:
             raise ValueError('Nieprawidłowa aktualizacja wyszukiwania')
         with self.db() as c:
-            c.execute('UPDATE prospect_runs SET ' + ','.join(k+'=?' for k in fields) + ',updated=? WHERE id=?', (*fields.values(), time.time(), run_id))
+            changed = c.execute('UPDATE prospect_runs SET ' + ','.join(k+'=?' for k in fields) +
+                                ",updated=? WHERE id=? AND status!='cancelling'", (*fields.values(), time.time(), run_id)).rowcount
+            if not changed and fields.get('status') != 'error':
+                raise Cancelled()
+
+    def cancel_run(self, run_id):
+        with self.db() as c:
+            return bool(c.execute("""UPDATE prospect_runs SET status='cancelling',
+                stage='Zatrzymywanie po bieżącym zapytaniu',updated=?
+                WHERE id=? AND status IN ('searching','verifying','drafting')""", (time.time(),run_id)).rowcount)
+
+    def release_run(self, run_id):
+        try:
+            with self.db() as c:
+                c.execute("""UPDATE prospect_runs SET status='interrupted',stage='Przerwano operację.',updated=?
+                    WHERE id=? AND status='cancelling'""", (time.time(),run_id))
+        finally:
+            self.lock.release()
 
     def start(self, item):
         project=shared_project.get(self.db,item.get('project_id'));project_id=project['id']
@@ -262,11 +285,13 @@ class Prospecting:
             else:
                 self.verify(run_id)
             self.update(run_id, status='ready', stage='Wyniki gotowe do przeglądu')
+        except Cancelled:
+            pass
         except Exception as exc:
             diagnostics.log_error('Nie udało się ukończyć wyszukiwania leadów id=%s' % run_id, exc)
             self.update(run_id, status='error', error=str(exc) if isinstance(exc, ValueError) else 'Nie udało się ukończyć operacji. Zapisane wyniki pozostają dostępne.', stage='Operacja zatrzymana')
         finally:
-            self.lock.release()
+            self.release_run(run_id)
 
     def get_run(self, run_id):
         with self.db() as c:
@@ -355,6 +380,8 @@ class Prospecting:
             signals = []
             evidence['signals'] = signals
             for person in (people.get('emails') or [])[:run['per_company']]:
+                if self.get_run(run_id)['status']=='cancelling':
+                    raise Cancelled()
                 email = str(person.get('value', '')).strip().lower()
                 if not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+', email) or email.rsplit('@', 1)[1] != domain:
                     continue
@@ -421,7 +448,7 @@ class Prospecting:
             raise ValueError('Trwa już operacja. Zaczekaj na zakończenie.')
         try:
             Hunter()
-            self.update(run_id, status='verifying', stage='Sprawdzanie adresów w Hunter', error='')
+            self.update(run_id, status='verifying', stage='Sprawdzanie adresów w Hunter', error='', draft_completed=0, draft_total=0)
             threading.Thread(target=self.execute, args=(run_id, 'verify'), daemon=True).start()
         except Exception:
             self.lock.release()
@@ -503,7 +530,7 @@ class Prospecting:
             raise
         finally:
             if not handed_off:
-                self.lock.release()
+                self.release_run(run_id)
 
     def _draft_error(self, run_id, exc):
         if self.get_run(run_id)['status'] == 'drafting':
@@ -513,11 +540,13 @@ class Prospecting:
     def _draft_worker(self, run, rows):
         try:
             self._generate_drafts(run, rows)
+        except Cancelled:
+            pass
         except Exception as exc:
             diagnostics.log_error('Nie udało się przygotować szkiców dla wyszukiwania id=%s' % run['id'], exc)
             self._draft_error(run['id'], exc)
         finally:
-            self.lock.release()
+            self.release_run(run['id'])
 
     def _validate_draft(self, c, rows, project_id=None):
         for row in rows:
@@ -535,6 +564,8 @@ class Prospecting:
         for row in rows:
             context = dict(row, notes=json.dumps({'fit_reason': row['fit_reason'], 'evidence': json.loads(row['evidence']), 'why_now': row['why_now']}, ensure_ascii=False))
             for position, step in enumerate(steps):
+                if self.get_run(run_id)['status']=='cancelling':
+                    raise Cancelled()
                 subject, body = self.ai_copy(context, campaign, step)
                 generated.append((row['id'], position, subject, body))
                 self.update(run_id, draft_completed=len(generated))
@@ -543,6 +574,9 @@ class Prospecting:
             raise ValueError('Poczta jest zajęta. Poczekaj chwilę i ponów tworzenie szkiców.')
         try:
             with self.db() as c:
+                c.execute('BEGIN IMMEDIATE')
+                if c.execute('SELECT status FROM prospect_runs WHERE id=?',(run_id,)).fetchone()['status']=='cancelling':
+                    raise Cancelled()
                 self._validate_draft(c, rows, run['project_id'])  # Re-check suppression and duplicates after slow external generation.
                 campaign_id = c.execute("INSERT INTO campaigns(name,offer,audience,status,created,website,audience_mode,material_mode,language,project_id) VALUES(?,?,?,'draft',?,?,'selected','auto',?,?)",
                     ('Klienci · ' + str(run_id), run['offer'], run['audience'], time.time(), run['website'], run['language'],run['project_id'])).lastrowid

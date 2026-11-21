@@ -70,7 +70,7 @@ class SimulationDatabase:
                         self._store_mode(target, True, generation)
                         target.execute("UPDATE campaigns SET status='paused' WHERE status='active'")
                         target.execute("UPDATE messages SET status='uncertain' WHERE status='sending'")
-                        target.execute("UPDATE prospect_runs SET status='interrupted',stage='' WHERE status IN ('searching','verifying','drafting')")
+                        target.execute("UPDATE prospect_runs SET status='interrupted',stage='' WHERE status IN ('searching','verifying','drafting','cancelling')")
                         target.execute("UPDATE opportunity_searches SET status='interrupted',stage='' WHERE status IN ('running','cancelling')")
                         target.execute("UPDATE lead_search_jobs SET status='cancelled',lease=0 WHERE status IN ('pending','running')")
                         target.execute("UPDATE discovery_pilots SET search_status='interrupted',search_detail='' WHERE search_status='running'")

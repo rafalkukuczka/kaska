@@ -1,6 +1,7 @@
 import csv
 import contact_groups
 import contact_tags
+import contact_intake
 import campaign_messages
 import campaign_edit
 import campaign_workspace
@@ -34,7 +35,7 @@ from email.parser import BytesParser
 from email.utils import make_msgid, parseaddr, formataddr
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote, urlunsplit
 import public_data
 import content_library
 import ai_service
@@ -339,9 +340,54 @@ def delete_campaign(campaign_id):
         c.execute('INSERT INTO events(created,detail) VALUES(?,?)', (time.time(), 'Usunięto kampanię: '+campaign['name']))
 
 
+campaign_preparations = {}
+campaign_preparations_lock = threading.Lock()
+
+
+class CampaignPreparationCancelled(ValueError):
+    pass
+
+
+@contextmanager
+def track_campaign_preparation(campaign, total):
+    job_id = 'campaign-prepare-' + secrets.token_hex(8)
+    scope = simulation_database.scope.get()
+    job = {'id': job_id, 'kind': 'campaign-prepare', 'campaign_id': campaign['id'],
+           'label': 'Przygotowywanie wiadomości', 'project_name': campaign['project_name'],
+           'total': total, 'completed': 0, 'status': 'running', 'cancellable': True}
+    with campaign_preparations_lock:
+        campaign_preparations[job_id] = (scope, job)
+    try:
+        yield job
+    finally:
+        with campaign_preparations_lock:
+            campaign_preparations.pop(job_id)
+
+
+def campaign_preparation_jobs():
+    scope = simulation_database.scope.get()
+    with campaign_preparations_lock:
+        return [job.copy() for generation, job in campaign_preparations.values() if generation == scope]
+
+
+def cancel_campaign_preparation(job_id):
+    with campaign_preparations_lock:
+        entry = campaign_preparations.get(job_id)
+        if not entry or entry[0] != simulation_database.scope.get() or not entry[1]['cancellable']:
+            return False
+        entry[1].update(status='cancelling', stage='Zatrzymywanie po bieżącym zapytaniu')
+        return True
+
+
+def check_campaign_preparation(progress):
+    if progress['status'] == 'cancelling':
+        raise CampaignPreparationCancelled('Przerwano przygotowywanie wiadomości.')
+
+
 def prepare(campaign_id):
     with db() as c:
-        campaign = c.execute('SELECT * FROM campaigns WHERE id=?', (campaign_id,)).fetchone()
+        campaign = c.execute("""SELECT p.*, s.name AS project_name FROM campaigns p
+            LEFT JOIN seller_projects s ON s.id=p.project_id WHERE p.id=?""", (campaign_id,)).fetchone()
         if not campaign or campaign['status'] not in ('draft','paused'):
             raise ValueError('Przed przygotowaniem wiadomości wstrzymaj kampanię.')
         contacts = campaign_edit.recipients(c,campaign)
@@ -352,21 +398,42 @@ def prepare(campaign_id):
         steps = c.execute('SELECT * FROM steps WHERE campaign_id=? ORDER BY position', (campaign_id,)).fetchall()
     if not contacts:
         raise ValueError('Brak aktywnych kontaktów spełniających wybór odbiorców i warunki sekwencji.')
-    messages = []
+    drafts = []
     for contact in contacts:
         history=[row for row in existing.values() if row['contact_id']==contact['id']]
         if incremental and any(row['status'] in ('uncertain','sending') or
                 ((row['status']=='cancelled' or row['deleted']) and row['position']<len(steps)
                  and (contact['id'],row['position']) not in restorable) for row in history):continue
-        first=existing.get((contact['id'],0))
-        baseline=(first['sent_at'] or first['due'])-steps[0]['delay_days']*86400 if first else time.time()
+        pending = []
         for step in steps:
             old=existing.get((contact['id'],step['position']))
             if incremental and old and (contact['id'],step['position']) not in restorable and (old['status']!='queued' or old['deleted'] or old['sent_at']):continue
-            subject, body = ai_copy(contact, campaign, step)
-            due=old['due'] if incremental and old else baseline+step['delay_days']*86400
-            messages.append((campaign_id, contact['id'], step['position'], subject, body, due))
+            pending.append((step, old))
+        if pending:
+            drafts.append((contact, pending))
+    with track_campaign_preparation(campaign, sum(len(pending) for _, pending in drafts)) as progress:
+        messages = []
+        for contact, pending in drafts:
+            first=existing.get((contact['id'],0))
+            baseline=(first['sent_at'] or first['due'])-steps[0]['delay_days']*86400 if first else time.time()
+            for step, old in pending:
+                with campaign_preparations_lock:
+                    check_campaign_preparation(progress)
+                subject, body = ai_copy(contact, campaign, step)
+                due=old['due'] if incremental and old else baseline+step['delay_days']*86400
+                messages.append((campaign_id, contact['id'], step['position'], subject, body, due))
+                with campaign_preparations_lock:
+                    progress['completed'] = len(messages)
+        save_prepared_messages(campaign, messages, incremental, existing, restorable, progress)
+    event(f'Przygotowano {len(messages)} wiadomości dla kampanii {campaign["name"]}')
+
+
+def save_prepared_messages(campaign, messages, incremental, existing, restorable, progress):
+    campaign_id = campaign['id']
     with MAIL_LOCK,db() as c:
+        with campaign_preparations_lock:
+            check_campaign_preparation(progress)
+            progress.update(stage='Zapisywanie wiadomości', cancellable=False)
         c.execute('BEGIN IMMEDIATE')
         current = c.execute('SELECT status,revision FROM campaigns WHERE id=?', (campaign_id,)).fetchone()
         if not current or current['status']!=campaign['status'] or current['revision']!=campaign['revision']:
@@ -381,7 +448,6 @@ def prepare(campaign_id):
             elif incremental and (row[1],row[2]) in existing:
                 c.execute("UPDATE messages SET subject=?,body=?,due=? WHERE campaign_id=? AND contact_id=? AND position=? AND status='queued' AND deleted=0",(row[3],row[4],row[5],row[0],row[1],row[2]))
             else:c.execute('INSERT INTO messages(campaign_id,contact_id,position,subject,body,due) VALUES(?,?,?,?,?,?)',row)
-    event(f'Przygotowano {len(messages)} wiadomości dla kampanii {campaign["name"]}')
 
 
 def send_one():
@@ -396,7 +462,7 @@ def send_one():
         last = c.execute('SELECT MAX(sent_at) FROM messages').fetchone()[0] or 0
         if sent >= int(os.getenv('DAILY_SEND_LIMIT', '50')) or time.time() - last < int(os.getenv('SEND_INTERVAL_SECONDS', '60')):
             return
-        eligible = c.execute("""SELECT m.*, t.email,t.company,t.role,p.conditions, p.language FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id
+        eligible = c.execute("""SELECT m.*, t.email,t.company,t.role,p.conditions,p.language,p.project_id,p.material_mode,p.attachment_ref FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id
             WHERE m.status='queued' AND m.deleted=0 AND p.status='active' AND COALESCE(p.channel,'email')='email' AND t.status='active' AND t.simulated=0 AND m.due<=?
             AND campaign_matches(p.conditions,t.email,t.company,t.role)=1
             AND NOT EXISTS(SELECT 1 FROM messages prev WHERE prev.campaign_id=m.campaign_id AND prev.contact_id=m.contact_id AND prev.position<m.position AND prev.status!='sent')
@@ -416,6 +482,15 @@ def send_one():
             msg=candidate;break
         if not msg:
             return
+        attachment = None
+        if msg['position']==0 and msg['material_mode']=='document':
+            try:
+                attachment = offer_documents.campaign_attachment(c, msg['project_id'], msg['campaign_id'],
+                                                                 msg['attachment_ref'], content=True)
+            except ValueError as error:
+                c.execute("UPDATE campaigns SET status='paused' WHERE id=?", (msg['campaign_id'],))
+                c.execute('UPDATE messages SET error=? WHERE id=?', (str(error), msg['id']))
+                return
         message_id = make_msgid()
         c.execute("UPDATE messages SET status='sending',message_id=?,body=? WHERE id=?", (message_id, sender_placeholders(msg['body']), msg['id']))
         c.commit()
@@ -431,6 +506,10 @@ def send_one():
         footer = '\n\n' + languages.LANGUAGES.get(msg['language'], languages.LANGUAGES['pl'])['footer']
         mail.set_content(sender_placeholders(msg['body']) + footer + unsubscribe)
         try:
+            if attachment:
+                mime_type=offer_documents.MIME_TYPES.get(Path(attachment['name']).suffix.lower(),'application/octet-stream')
+                maintype, subtype=mime_type.split('/',1)
+                mail.add_attachment(attachment['original'], maintype=maintype, subtype=subtype, filename=attachment['name'])
             security = os.getenv('SMTP_SECURITY', 'starttls')
             cls = smtplib.SMTP_SSL if security == 'ssl' else smtplib.SMTP
             with cls(os.environ['SMTP_HOST'], int(os.getenv('SMTP_PORT', '587')), timeout=30) as smtp:
@@ -511,25 +590,179 @@ def worker():
     reply.join()
 
 
-def add_contact(c, item):
-    email = str(item.get('email', '')).strip().lower()
+def contact_phone(value):
+    if not isinstance(value, str):
+        raise ValueError('Podaj poprawny numer telefonu.')
+    number = ' '.join(value.split())
+    if number and (len(number) > 45 or not re.fullmatch(r'\+?[0-9 ()./\-]+', number)
+                   or not 7 <= len(re.sub(r'[^0-9]', '', number)) <= 15):
+        raise ValueError('Numer telefonu musi zawierać od 7 do 15 cyfr.')
+    return number
+
+
+def contact_email(value):
+    email = str(value).strip().lower()
     if not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+', email) or len(email) > 254:
         raise ValueError('Nieprawidłowy email: ' + email[:100])
+    return email
+
+
+def add_contact(c, item):
+    email = contact_email(item.get('email', ''))
     group=contact_groups.normalize(c,item.get('target_group',''))
     tags=contact_tags.normalize(c,item.get('tags',group),item.get('project_id'))
     contact_tags.register(c,tags,project_scope.contact_pool(c,item.get('project_id')))
-    c.execute('INSERT OR IGNORE INTO contacts(name,email,company,role,notes,target_group,tags,contact_pool) VALUES(?,?,?,?,?,?,?,?)',
-              (str(item.get('name', '')).strip() or email.split('@')[0], email, str(item.get('company', '')), str(item.get('role', '')), str(item.get('notes', '')),'; '.join(tags),json.dumps(tags,ensure_ascii=False),project_scope.contact_pool(c,item.get('project_id'))))
+    phone = contact_phone(item.get('phone', ''))
+    details = contact_details(item, {'work_phone': phone} if phone else {})
+    return c.execute('INSERT OR IGNORE INTO contacts(name,email,company,role,notes,target_group,tags,contact_pool,research_data) VALUES(?,?,?,?,?,?,?,?,?)',
+              (str(item.get('name', '')).strip() or email.split('@')[0], email, str(item.get('company', '')), str(item.get('role', '')), str(item.get('notes', '')),'; '.join(tags),json.dumps(tags,ensure_ascii=False),project_scope.contact_pool(c,item.get('project_id')),
+               json.dumps(details, ensure_ascii=False))).rowcount == 1
+
+
+def contact_details(item, research):
+    for key, validate in (('website', contact_intake.website), ('address', contact_intake.address)):
+        if key not in item:
+            continue
+        value = validate(item[key])
+        if value:
+            research[key] = value
+        else:
+            research.pop(key, None)
+    return research
+
+
+def parse_contact(item, simulated=False):
+    if 'image' in item:
+        suggestions, transcript = contact_intake.read_image(item['image'], ai_service, simulated=simulated)
+        result = {'used_ai':True, 'transcript':transcript}
+    else:
+        suggestions, used_ai = contact_intake.split(item.get('text'), ai_service, simulated=simulated)
+        result = {'used_ai':used_ai}
+    fields = {}
+    validators = {'email':contact_email, 'phone':contact_phone, 'website':contact_intake.website, 'address':contact_intake.address}
+    for key, value in suggestions.items():
+        if len(value) > contact_intake.FIELDS[key]:
+            continue
+        try:
+            fields[key] = validators[key](value) if key in validators else value
+        except ValueError:
+            continue
+    return {**result, 'fields':fields}
+
+
+def update_contact_phone(c, item):
+    contact_id = int(item['id'])
+    project_scope.require_contact(c, contact_id)
+    phone = contact_phone(item['phone'])
+    previous = json.loads(c.execute('SELECT research_data FROM contacts WHERE id=?', (contact_id,)).fetchone()[0])
+    if phone:
+        previous['work_phone'] = phone
+    else:
+        previous.pop('work_phone', None)
+    c.execute('UPDATE contacts SET research_data=? WHERE id=?', (json.dumps(previous, ensure_ascii=False), contact_id))
+
+
+def update_contact(c, item):
+    contact_id = int(item['id'])
+    if 'project_id' in item and item['project_id'] != project_scope.active(c):
+        raise ValueError('Aktywny projekt się zmienił. Otwórz formularz ponownie.')
+    pool = project_scope.contact_pool(c)
+    project_scope.require_contact(c, contact_id)
+    email = contact_email(item['email'])
+    if c.execute('SELECT 1 FROM contacts WHERE email=? AND contact_pool=? AND id!=?', (email, pool, contact_id)).fetchone():
+        raise ValueError('Kontakt z tym adresem e-mail już istnieje.')
+    values = [item[field] for field in ('name', 'company', 'role', 'notes', 'phone')]
+    if any(not isinstance(value, str) for value in values) or not values[0].strip():
+        raise ValueError('Podaj imię i nazwisko oraz popraw dane kontaktu.')
+    name, company, role, notes, phone = (value.strip() for value in values)
+    research = json.loads(c.execute('SELECT research_data FROM contacts WHERE id=?', (contact_id,)).fetchone()[0])
+    research = contact_details(item, research)
+    phone = contact_phone(phone)
+    if phone:
+        research['work_phone'] = phone
+    else:
+        research.pop('work_phone', None)
+    contact_tags.set_tags(c, contact_id, item['tags'])
+    c.execute('UPDATE contacts SET name=?,email=?,company=?,role=?,notes=?,research_data=? WHERE id=?',
+              (name, email, company, role, notes, json.dumps(research, ensure_ascii=False), contact_id))
+
+
+def hunter_contact(email, simulated=False):
+    email = contact_email(email)
+    if simulated:
+        return {'name': 'Anna Testowa', 'company': 'Firma demonstracyjna', 'role': 'Kierownik sprzedaży',
+                'phone': '+1 202 555 0147'}
+    person = prospecting.Hunter().request('people/find', {'email': email})['data']
+    if person is None or (isinstance(person, dict) and person.get('status') == 'pending'):
+        return {}
+    if not isinstance(person, dict) or str(person.get('email', '')).casefold() != email:
+        raise ValueError('Hunter zwrócił wynik dla innego adresu e-mail.')
+    name = person.get('name') if isinstance(person.get('name'), dict) else {}
+    employment = person.get('employment') if isinstance(person.get('employment'), dict) else {}
+    try:
+        phone = contact_phone(person.get('phone') or '')
+    except ValueError:
+        phone = ''
+    fields = {'name': name.get('fullName'), 'company': employment.get('name'), 'role': employment.get('title'), 'phone': phone}
+    return {key: value.strip()[:250] for key, value in fields.items() if isinstance(value, str) and value.strip()}
+
+
+def capture_contact(c, item, simulated=False):
+    if not isinstance(item, dict) or item.get('confirmed') is not True:
+        raise ValueError('Potwierdź dane kontaktu i tag przed zapisem.')
+    project_id = project_scope.active(c)
+    if item.get('project_id') != project_id:
+        raise ValueError('Aktywny projekt się zmienił. Odczytaj kontakt ponownie.')
+    fields = {}
+    for key, limit in (('name', 250), ('email', 254), ('company', 250), ('role', 250), ('source', 2048)):
+        value = item.get(key, '')
+        if not isinstance(value, str) or len(value) > limit or any(ord(char) < 32 for char in value):
+            raise ValueError('Dane kontaktu zawierają nieprawidłowe pole.')
+        fields[key] = value.strip()
+    email = fields['email'].lower()
+    phone = contact_phone(item.get('phone', ''))
+    tag = item.get('tag', '')
+    tags = contact_tags.normalize(c, [tag], project_id)
+    if not tags:
+        raise ValueError('Wybierz lub wpisz tag kontaktu.')
+    source = urlparse(fields['source'])
+    if source.scheme not in ('http', 'https') or not source.hostname or source.username is not None:
+        raise ValueError('Nieprawidłowy adres strony źródłowej.')
+    source_url = urlunsplit((source.scheme, source.netloc, source.path, '', ''))
+    pool = project_scope.contact_pool(c, project_id)
+    existing = c.execute('SELECT id, research_data FROM contacts WHERE email=? AND contact_pool=?', (email, pool)).fetchone()
+    if existing:
+        contact_id = existing['id']
+        contact_tags.set_tags(c, contact_id, tags, merge=True, project_id=project_id)
+        previous = json.loads(existing['research_data'])
+    else:
+        add_contact(c, {**fields, 'tags': tags, 'project_id': project_id})
+        contact_id = c.execute('SELECT id FROM contacts WHERE email=? AND contact_pool=?', (email, pool)).fetchone()['id']
+        previous = {}
+        if simulated:
+            c.execute('UPDATE contacts SET simulated=1 WHERE id=?', (contact_id,))
+    evidence = {'sources': [{'url': source_url, 'last_seen': datetime.now(timezone.utc).date().isoformat()}]}
+    if phone:
+        evidence['work_phone'] = phone
+    if source.hostname in ('linkedin.com', 'www.linkedin.com') and source.path.startswith('/in/'):
+        evidence['linkedin'] = source_url
+    research = discover_contacts.merge_attributes(previous, evidence)
+    c.execute('UPDATE contacts SET research_data=? WHERE id=?', (json.dumps(research, ensure_ascii=False), contact_id))
+    return {'id': contact_id, 'existing': existing is not None}
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    def respond(self, payload, status=200, content_type='application/json; charset=utf-8'):
+    def respond(self, payload, status=200, content_type='application/json; charset=utf-8', filename=None):
         raw = payload if isinstance(payload, bytes) else json.dumps(payload, ensure_ascii=False).encode() if content_type.startswith('application/json') else payload.encode()
         self.send_response(status)
         self.send_header('Content-Type', content_type)
+        if filename is not None:
+            disposition = 'inline' if content_type=='application/pdf' else 'attachment'
+            self.send_header('Content-Disposition', f"{disposition}; filename*=UTF-8''{quote(filename, safe='')}")
+            self.send_header('Content-Length', str(len(raw)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https://tile.openstreetmap.org; frame-ancestors 'none'; base-uri 'none'")
@@ -548,10 +781,30 @@ class Handler(BaseHTTPRequestHandler):
             return self.get(path)
 
     def get(self, path):
-        if path.path == '/api/offer/documents':
+        if path.path == '/api/contacts/research-status':
+            with db() as c:
+                project_id = project_scope.active(c)
+            simulated = bool(simulation_database.scope.get())
+            return self.respond({'simulation':simulated,'jobs':[] if simulated else discover_contact_finder.research_status(project_id)})
+        if path.path == '/api/contacts/capture-context':
+            with db() as c:
+                project_id = project_scope.active(c)
+                name = c.execute('SELECT name FROM seller_projects WHERE id=?', (project_id,)).fetchone()['name']
+                result = {'csrf': workspace_csrf(), 'project_id': project_id, 'project_name': name,
+                          'tags': contact_tags.catalog(c, project_id), 'simulation': bool(simulation_database.scope.get())}
+            return self.respond(result)
+        if path.path in ('/api/offer/documents', '/api/offer/documents/file'):
             try:
-                project_id=int(parse_qs(path.query).get('project_id',['0'])[0])
-                return self.respond({'documents':offer_documents.documents(db,project_id)})
+                query = parse_qs(path.query)
+                project_id = int(query.get('project_id', ['0'])[0])
+                campaign_id = int(query['campaign_id'][0]) if 'campaign_id' in query else None
+                draft_key = query.get('draft_key', [None])[0]
+                if path.path.endswith('/file'):
+                    document_id = int(query['id'][0]) if 'id' in query else None
+                    row = offer_documents.document_file(db,project_id,campaign_id,draft_key,document_id)
+                    mime = offer_documents.MIME_TYPES.get(Path(row['name']).suffix.lower(),'application/octet-stream')
+                    return self.respond(row['original'],content_type=mime,filename=row['name'])
+                return self.respond({'documents':offer_documents.documents(db,project_id,campaign_id=campaign_id,draft_key=draft_key)})
             except ValueError as error:
                 return self.respond({'error':str(error)},400)
         if path.path == '/api/openai-usage':
@@ -601,14 +854,18 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 with db() as c:
                     project_id=project_scope.active(c)
+                    campaign_id=int(params['campaign_id'][0]) if 'campaign_id' in params else None
+                    if campaign_id is not None:
+                        project_scope.require_campaign(c,campaign_id,project_id)
                     project_scope.contact_pool(c,project_id)
                     now=time.time()
                     rows=[dict(r) for r in c.execute("""SELECT m.id,m.campaign_id,m.contact_id,m.position,m.subject,m.body,m.due,p.name AS campaign_name,p.conditions,t.name AS contact_name,t.company,t.email,t.role
                       FROM messages m JOIN campaigns p ON p.id=m.campaign_id JOIN contacts t ON t.id=m.contact_id
                       WHERE p.project_id=? AND p.channel='linkedin' AND p.status!='deleted' AND m.status='queued' AND m.deleted=0 AND t.status='active' AND t.simulated=0
+                      AND (? IS NULL OR p.id=?)
                       AND NOT EXISTS(SELECT 1 FROM messages prev WHERE prev.campaign_id=m.campaign_id AND prev.contact_id=m.contact_id AND prev.position<m.position AND prev.status!='sent')
                       AND campaign_matches(p.conditions,t.email,t.company,t.role)=1
-                      ORDER BY m.due,m.id LIMIT 500""",(project_id,))]
+                      ORDER BY m.due,m.id LIMIT 500""",(project_id,campaign_id,campaign_id))]
                     rows=[row for row in rows if sequence_conditions.matches(row['conditions'],row,row['position'],row['position']-1)]
                     for row in rows:
                         row['ready']=row['due']<=now
@@ -673,14 +930,15 @@ class Handler(BaseHTTPRequestHandler):
         if path.path == '/api/background':
             with db() as c:
                 jobs=[dict(r) for r in c.execute("""SELECT 'prospect-'||r.id AS id,'prospecting' AS kind,r.status,r.stage,p.name AS project_name,
-                  CASE WHEN r.status='drafting' THEN r.draft_completed END AS completed,
-                  CASE WHEN r.status='drafting' THEN r.draft_total END AS total
+                  CASE WHEN r.status IN ('drafting','cancelling') THEN r.draft_completed END AS completed,
+                  CASE WHEN r.status IN ('drafting','cancelling') THEN r.draft_total END AS total, 1 AS cancellable
                   FROM prospect_runs r JOIN seller_projects p ON p.id=r.project_id
-                  WHERE p.deleted=0 AND r.status IN ('searching','verifying','drafting') ORDER BY r.id DESC""")]
+                  WHERE p.deleted=0 AND r.status IN ('searching','verifying','drafting','cancelling') ORDER BY r.id DESC""")]
                 jobs.extend(dict(r) for r in c.execute("""SELECT 'opportunity-'||r.id AS id,'opportunities' AS kind,
-                  r.status,r.stage,p.name AS project_name,r.completed,r.total
+                  r.status,r.stage,p.name AS project_name,r.completed,r.total,1 AS cancellable
                   FROM opportunity_searches r JOIN seller_projects p ON p.id=r.project_id
                   WHERE p.deleted=0 AND r.status IN ('running','cancelling') ORDER BY r.id DESC"""))
+            jobs.extend(campaign_preparation_jobs())
             return self.respond({'jobs':jobs})
         if path.path == '/api/state':
             with db() as c:
@@ -797,6 +1055,46 @@ class Handler(BaseHTTPRequestHandler):
     def post_api(self, size):
         try:
             item = json.loads(self.rfile.read(size))
+            if self.path == '/api/background/cancel':
+                job_id = item['id']
+                if isinstance(job_id, str):
+                    if job_id.startswith('campaign-prepare-'):
+                        return self.respond({'ok': cancel_campaign_preparation(job_id)})
+                    prefix, separator, run_id = job_id.partition('-')
+                    if separator and run_id.isascii() and run_id.isdecimal() and len(run_id) <= 18:
+                        if prefix == 'opportunity':
+                            return self.respond({'ok': opportunity_finder.cancel_run(int(run_id))})
+                        if prefix == 'prospect':
+                            return self.respond({'ok': prospector.cancel_run(int(run_id))})
+                raise ValueError('Nieprawidłowe zadanie w tle.')
+            if self.path == '/api/contacts/capture':
+                with db() as c:
+                    c.execute('BEGIN IMMEDIATE')
+                    result = capture_contact(c, item, simulated=bool(simulation_database.scope.get()))
+                return self.respond(result)
+            if self.path == '/api/contacts/parse':
+                return self.respond(parse_contact(item, bool(simulation_database.scope.get())))
+            if self.path == '/api/contacts/manual':
+                for key, limit in contact_intake.FIELDS.items():
+                    value = item.get(key, '')
+                    if not isinstance(value, str) or len(value) > limit:
+                        raise ValueError('Sprawdź długość i format pól kontaktu.')
+                with db() as c:
+                    c.execute('BEGIN IMMEDIATE')
+                    if item.get('project_id') != project_scope.active(c):
+                        raise ValueError('Aktywny projekt się zmienił. Otwórz formularz ponownie.')
+                    if not add_contact(c, item):
+                        raise ValueError('Kontakt z tym adresem e-mail już istnieje.')
+                return self.respond({'ok':True})
+            if self.path == '/api/contacts/research':
+                with db() as c:
+                    if item.get('project_id') != project_scope.active(c):
+                        raise ValueError('Aktywny projekt się zmienił. Otwórz odczyt kontaktów ponownie.')
+                if simulation_database.scope.get():
+                    return self.respond({'pages':[{'source':'https://demo.example/kontakt','selection':{},'contacts':[
+                        {'name':'Anna Testowa','email':'kontakt@demo.example','company':'Firma demonstracyjna',
+                         'role':'Kierownik sprzedaży','phone':'+1 202 555 0147'}]}]})
+                return self.respond(headless_browser.contacts(item.get('url'), item.get('source')))
             if self.path == '/api/offer/documents':
                 return self.respond(offer_documents.upload(db,item))
             if self.path == '/api/offer/documents/remove':
@@ -828,6 +1126,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(discovery_pipeline.command(self.path.removeprefix('/api/discovery-pilot/'),item))
             if self.path == '/api/lead-search/start':
                 return self.respond(lead_finder.create(item))
+            if self.path == '/api/lead-search/bell':
+                return self.respond(lead_finder.acknowledge_bell())
             if self.path == '/api/lead-search/stop-all':
                 return self.respond(lead_finder.stop_all())
             if self.path == '/api/lead-search/signals':
@@ -842,6 +1142,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(lead_finder.browser_tick())
             if self.path == '/api/lead-search/contact-search':
                 return self.respond(discover_contact_finder.search_lead(item))
+            if self.path == '/api/lead-search/contact-tag-candidates':
+                return self.respond(discover_contact_finder.lead_tag_candidates(item))
             if self.path == '/api/lead-search/contact-add':
                 return self.respond(discover_contact_finder.add(item,from_dashboard=True))
             if self.path in ('/api/lead-search/read', '/api/lead-search/save'):
@@ -956,6 +1258,17 @@ class Handler(BaseHTTPRequestHandler):
                 with db() as c:
                     for row in reader:
                         add_contact(c, {**row,'tags':row.get('tags') or row.get('target_group') or item.get('tags',item.get('target_group',''))})
+            elif self.path == '/api/contact/phone':
+                with db() as c:
+                    c.execute('BEGIN IMMEDIATE')
+                    update_contact_phone(c, item)
+            elif self.path == '/api/contact/update':
+                with MAIL_LOCK, db() as c:
+                    c.execute('BEGIN IMMEDIATE')
+                    update_contact(c, item)
+            elif self.path == '/api/contact/hunter':
+                simulated = bool(simulation_database.scope.get())
+                return self.respond({'fields': hunter_contact(item['email'], simulated), 'simulated': simulated})
             elif self.path == '/api/contact/group':
                 return self.respond(contact_groups.assign(db,item))
             elif self.path == '/api/contact/tags':
@@ -977,6 +1290,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('Dodaj od 1 do 6 kroków')
                 with db() as c:
                     project_id = project_scope.active(c)
+                    if item.get('project_id', project_id) != project_id:
+                        raise ValueError('Projekt się zmienił. Otwórz kreator kampanii ponownie.')
                     if 'language' not in item:
                         item['language'] = shared_project.message_language(db,project_id)
                     extra=library.validate_campaign(c,item)
@@ -987,6 +1302,8 @@ class Handler(BaseHTTPRequestHandler):
                     scenarios=manual_interaction.validate_scenarios(item.get('manual_scenarios',[]))
                     if channel=='manual' and not scenarios:raise ValueError('Dodaj co najmniej jeden scenariusz Manual interaction.')
                     campaign_id = c.execute('INSERT INTO campaigns(name,offer,audience,created,project_id,channel,manual_scenarios) VALUES(?,?,?,?,?,?,?)', (item['name'], item['offer'], item.get('audience', ''), time.time(),project_id,channel,json.dumps(scenarios,ensure_ascii=False))).lastrowid
+                    offer_documents.save_campaign_settings(c, project_id, campaign_id, item, creating=True)
+                    offer_documents.save_attachment(c, project_id, campaign_id, item, channel)
                     c.execute('UPDATE campaigns SET website=?,audience_mode=?,contact_ids=?,material_mode=?,material_ids=?,language=?,cta=?,cta_url=?,pain_points=?,value_props=?,proof_points=? WHERE id=?',extra+(campaign_id,))
                     c.execute('UPDATE campaigns SET conditions=? WHERE id=?', (json.dumps(conditions), campaign_id))
                     c.execute('UPDATE campaigns SET target_group=? WHERE id=?',(target_group,campaign_id))
@@ -1002,6 +1319,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond({'ok': True, 'id': campaign_id, 'project_id': project_id, 'revision': revision})
             elif self.path == '/api/campaign/edit-data':
                 return self.respond(campaign_edit.read(db,int(item['id'])))
+            elif self.path == '/api/campaign/clone':
+                return self.respond(campaign_edit.clone(db,item))
             elif self.path == '/api/campaign/update':
                 return self.respond(campaign_edit.save(db,library,MAIL_LOCK,ai_copy,item))
             elif self.path == '/api/campaign/prepare':
@@ -1020,13 +1339,14 @@ class Handler(BaseHTTPRequestHandler):
                     if not campaign:
                         raise ValueError('Nie znaleziono kampanii')
                     if item['status'] == 'active':
-                        if campaign['channel']=='linkedin':raise ValueError('LinkedIn korzysta z ręcznej kolejki w rozszerzeniu, nie z automatycznej wysyłki')
                         if 'fingerprint' in item and campaign_workspace.read(db,campaign['id'])['fingerprint']!=item['fingerprint']:
                             raise ValueError('Wiadomości lub odbiorcy zmienili się. Otwórz podsumowanie wysyłki ponownie.')
                         if campaign['channel']=='email' and not smtp_ready():
                             raise ValueError('Skonfiguruj SMTP w pliku .env i uruchom ponownie aplikację')
                         if not c.execute('SELECT 1 FROM messages WHERE campaign_id=? AND deleted=0', (item['id'],)).fetchone():
                             raise ValueError('Najpierw przygotuj i sprawdź wiadomości')
+                        if campaign['material_mode']=='document':
+                            offer_documents.campaign_attachment(c,campaign['project_id'],campaign['id'],campaign['attachment_ref'])
                         discovery_pilot.require_approved_messages(c,campaign['id'])
                         campaign = c.execute('SELECT * FROM campaigns WHERE id=?', (item['id'],)).fetchone()
                         if campaign['status'] == 'draft':
@@ -1072,6 +1392,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 return self.respond({'error': 'Nie znaleziono'}, 404)
             self.respond({'ok': True})
+        except CampaignPreparationCancelled as exc:
+            self.respond({'error': str(exc)}, 409)
         except (ValueError, KeyError, TypeError, IndexError) as exc:
             self.respond({'error': str(exc)}, 400)
         except Exception as exc:
@@ -1089,7 +1411,7 @@ def research_website(url, language=None):
 
 
 prospector = prospecting.Prospecting(db, library, ai_copy, MAIL_LOCK)
-discover_contact_finder = discover_contacts.DiscoverContacts(db,add_contact)
+discover_contact_finder = discover_contacts.DiscoverContacts(db,add_contact,headless_browser.contacts)
 opportunity_finder = opportunity_discovery.Discovery(db)
 discovery_pipeline = discovery_pilot.DiscoveryPilot(db, languages.data_simulation, discover_contact_finder.search,
                                                   headless_browser.request)

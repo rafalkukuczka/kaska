@@ -2,6 +2,7 @@
 from collections import defaultdict
 from datetime import date, timedelta
 import json
+from urllib.parse import urlsplit
 
 import project_scope
 from prospecting import clean_domain, safe_link
@@ -19,8 +20,8 @@ def domain_key(domain):
         return ''
 
 
-def source_links(raw, fallback=''):
-    return sorted({link for url in [fallback, *(source.get('url', '') for source in json.loads(raw))]
+def source_links(sources, fallback=''):
+    return sorted({link for url in [fallback, *(source.get('url', '') for source in sources)]
                    if (link := safe_link(url))})
 
 
@@ -28,7 +29,7 @@ def read(c, key=None, *, today=None):
     project = project_scope.active(c)
     pool = project_scope.contact_pool(c, project)
     contacts = c.execute(
-        "SELECT id,company,name,email,role,status FROM contacts WHERE contact_pool=? AND simulated=0 AND trim(company)!='' ORDER BY id",
+        "SELECT id,company,name,email,role,status,research_data FROM contacts WHERE contact_pool=? AND simulated=0 AND trim(company)!='' ORDER BY id",
         (pool,),
     ).fetchall()
     prospects = c.execute(
@@ -66,7 +67,12 @@ def read(c, key=None, *, today=None):
         company = firm(row['company'], domain_key(row['domain']))
         company['signals'].setdefault(row['id'], row)
     for row in contacts:
-        company = firm(row['company'])
+        details = json.loads(row['research_data'])
+        try:
+            website_domain = domain_key(urlsplit(details.get('website', '')).hostname or '')
+        except (ValueError, TypeError, AttributeError):
+            website_domain = ''
+        company = firm(row['company'], domain_key(details.get('domain', '')) or website_domain)
         company['contacts'][row['email'].casefold()] = row
 
     today = today or date.today()
@@ -105,16 +111,24 @@ def read(c, key=None, *, today=None):
         person = contact if contact is not None else assessment
         item = {field: person[field] for field in ('name', 'email', 'role')}
         item['saved'] = contact is not None
+        sources = set()
+        if contact is not None:
+            item['contact_id'] = contact['id']
+            details = json.loads(contact['research_data'])
+            sources.update(link for key in ('website','linkedin') if (link := safe_link(details.get(key, ''))))
+            sources.update(source_links(details.get('sources') or []))
         if assessment is not None:
             item.update({field: assessment[field] for field in ('qualification', 'fit_reason', 'missing_data', 'created')})
-            item['sources'] = source_links(assessment['sources'])
+            sources.update(source_links(json.loads(assessment['sources'])))
+        if sources:
+            item['sources'] = sorted(sources)
         people.append(item)
     return {
         **summarize(company),
         'contacts': sorted(people, key=lambda item: (not item['saved'], company_name_key(item['name']), item['email'])),
         'signals': [
             {**{field: row[field] for field in ('title', 'summary', 'quote', 'published_date', 'event_date', 'decision')},
-             'sources': source_links(row['sources'], row['url'])}
+             'sources': source_links(json.loads(row['sources']), row['url'])}
             for row in company['signals'].values()
         ],
     }

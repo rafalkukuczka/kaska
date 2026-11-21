@@ -35,7 +35,7 @@ def model_name():
     return os.getenv('OPENAI_MODEL', '').strip() or DEFAULT_MODEL
 
 
-def generate_json(instructions, data, fields, *, api_key=None, model=None, web_search=False, optional_fields=()):
+def generate_json(instructions, data, fields, *, api_key=None, model=None, web_search=False, optional_fields=(), image_url=None):
     optional_fields=set(optional_fields)
     if not optional_fields.issubset(fields):raise ValueError('Nieprawidłowa konfiguracja opcjonalnych pól AI.')
     key = (os.getenv('OPENAI_API_KEY', '') if api_key is None else api_key).strip()
@@ -44,8 +44,13 @@ def generate_json(instructions, data, fields, *, api_key=None, model=None, web_s
         raise ValueError('Podaj poprawny klucz API OpenAI w Integracjach.')
     if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}', model):
         raise ValueError('Podaj poprawną nazwę modelu OpenAI.')
+    input_text = json.dumps(data, ensure_ascii=False)
+    request_input = input_text if image_url is None else [{'role': 'user', 'content': [
+        {'type': 'input_text', 'text': input_text},
+        {'type': 'input_image', 'image_url': image_url, 'detail': 'auto'},
+    ]}]
     payload = {'model': model, 'instructions': instructions,
-               'input': json.dumps(data, ensure_ascii=False), 'store': False,
+               'input': request_input, 'store': False,
                'max_output_tokens': 4096,
                'text': {'format': {'type': 'json_schema', 'name': 'kaska_result', 'strict': True,
                    'schema': {'type': 'object', 'properties': {f: {'type': ['string','null'] if f in optional_fields else 'string'} for f in fields},

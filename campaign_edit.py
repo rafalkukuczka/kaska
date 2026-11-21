@@ -7,6 +7,7 @@ import contact_tags
 import project_scope
 import sequence_conditions
 import manual_interaction
+import offer_documents
 
 REMOVED_RECIPIENT_REASON = 'Usunięto odbiorcę z kampanii.'
 
@@ -87,13 +88,59 @@ def recipient_options(db,campaign_id,query):
 
 def read(db,campaign_id):
     with db() as c:
-        project_scope.require_campaign(c,campaign_id)
-        campaign=dict(c.execute('SELECT * FROM campaigns WHERE id=?',(campaign_id,)).fetchone())
-        steps=[dict(row) for row in c.execute('SELECT * FROM steps WHERE campaign_id=? ORDER BY position',(campaign_id,))]
-        protected=c.execute("SELECT MAX(position) FROM messages WHERE campaign_id=? AND (sent_at IS NOT NULL OR status IN ('sent','sending','uncertain'))",(campaign_id,)).fetchone()[0]
-        selected=set(json.loads(campaign['contact_ids']))
-        contacts=[dict(row) for row in c.execute('SELECT id,name,email,company,role,status,simulated FROM contacts WHERE contact_pool=?',(project_scope.contact_pool(c,campaign['project_id']),)) if row['id'] in selected]
-    return {'campaign':campaign,'steps':steps,'protected_position':protected,'selected_contacts':contacts}
+        return _read(c,campaign_id)
+
+
+def _has_queued_messages(c, campaign_id):
+    return c.execute("""SELECT 1 FROM messages WHERE campaign_id=? AND status='queued'
+        AND deleted=0 LIMIT 1""", (campaign_id,)).fetchone() is not None
+
+
+def _read(c,campaign_id):
+    project_scope.require_campaign(c,campaign_id)
+    campaign=dict(c.execute('SELECT * FROM campaigns WHERE id=?',(campaign_id,)).fetchone())
+    steps=[dict(row) for row in c.execute('SELECT * FROM steps WHERE campaign_id=? ORDER BY position',(campaign_id,))]
+    protected=c.execute("SELECT MAX(position) FROM messages WHERE campaign_id=? AND (sent_at IS NOT NULL OR status IN ('sent','sending','uncertain'))",(campaign_id,)).fetchone()[0]
+    selected=set(json.loads(campaign['contact_ids']))
+    contacts=[dict(row) for row in c.execute('SELECT id,name,email,company,role,status,simulated FROM contacts WHERE contact_pool=?',(project_scope.contact_pool(c,campaign['project_id']),)) if row['id'] in selected]
+    return {'campaign':campaign,'steps':steps,'protected_position':protected,'selected_contacts':contacts,
+            'has_queued_messages':_has_queued_messages(c,campaign_id)}
+
+
+def clone(db, item):
+    campaign_id = int(item['id'])
+    fields = ('offer','audience','project_id','website','audience_mode','contact_ids','material_mode','material_ids',
+              'language','cta','cta_url','pain_points','value_props','proof_points','conditions','target_group',
+              'audience_tags','tag_match','channel','manual_scenarios','offer_website','offer_sources','attachment_ref')
+    columns = ','.join(fields)
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        project_id = project_scope.active(c)
+        project_scope.require_campaign(c,campaign_id,project_id)
+        if item.get('project_id',project_id)!=project_id:
+            raise ValueError('Zmieniono projekt. Otwórz kampanię ponownie.')
+        source = c.execute('SELECT name FROM campaigns WHERE id=?',(campaign_id,)).fetchone()
+        requested_name = item.get('name')
+        if requested_name is not None and (not isinstance(requested_name,str) or not requested_name.strip() or len(requested_name.strip())>200):
+            raise ValueError('Podaj nazwę kampanii o długości do 200 znaków.')
+        base = requested_name.strip() if requested_name is not None else 'Kopia ' + source['name']
+        names = {row[0].casefold() for row in c.execute("SELECT name FROM campaigns WHERE project_id=? AND status!='deleted'",(project_id,))}
+        name, sequence = base, 2
+        while name.casefold() in names:
+            name = f'{base} ({sequence})'
+            sequence += 1
+        now = time.time()
+        copy_id = c.execute(f"""INSERT INTO campaigns(name,status,created,{columns})
+            SELECT ?,'draft',?,{columns} FROM campaigns WHERE id=?""",(name,now,campaign_id)).lastrowid
+        c.execute("""INSERT INTO steps(campaign_id,position,delay_days,subject,body)
+            SELECT ?,position,delay_days,subject,body FROM steps WHERE campaign_id=? ORDER BY position""",(copy_id,campaign_id))
+        c.execute("""INSERT INTO campaign_recipient_overrides(campaign_id,contact_id,included)
+            SELECT ?,contact_id,included FROM campaign_recipient_overrides WHERE campaign_id=?""",(copy_id,campaign_id))
+        c.execute("""INSERT INTO campaign_offer_documents(project_id,scope,name,digest,text,original)
+            SELECT project_id,?,name,digest,text,original FROM campaign_offer_documents WHERE project_id=? AND scope=? ORDER BY id""",
+            (f'campaign:{copy_id}',project_id,f'campaign:{campaign_id}'))
+        c.execute('INSERT INTO events(created,detail) VALUES(?,?)',(now,'Sklonowano kampanię: '+name))
+        return _read(c,copy_id)
 
 
 def save(db,library,mail_lock,ai_copy,item):
@@ -121,9 +168,11 @@ def save(db,library,mail_lock,ai_copy,item):
         extra=library.validate_campaign(c,item);group=contact_groups.campaign_group(c,item);tags,match=contact_tags.validate_campaign(c,item)
         status='paused' if current['status']!='draft' or protected is not None else 'draft'
         c.execute('UPDATE campaigns SET name=?,offer=?,audience=?,status=?,revision=revision+1 WHERE id=?',(item['name'].strip(),item['offer'].strip(),str(item.get('audience','')),status,item['id']))
+        offer_documents.save_campaign_settings(c, current['project_id'], item['id'], item)
         c.execute('UPDATE campaigns SET website=?,audience_mode=?,contact_ids=?,material_mode=?,material_ids=?,language=?,cta=?,cta_url=?,pain_points=?,value_props=?,proof_points=? WHERE id=?',extra+(item['id'],))
         channel=item.get('channel',current.get('channel','email'))
         if channel not in ('email','linkedin','manual'):raise ValueError('Nieprawidłowy kanał kampanii')
+        offer_documents.save_attachment(c, current['project_id'], item['id'], item, channel)
         scenarios=manual_interaction.validate_scenarios(item.get('manual_scenarios',current.get('manual_scenarios','[]')))
         if channel=='manual' and not scenarios:raise ValueError('Dodaj co najmniej jeden scenariusz Manual interaction.')
         old_channel=current.get('channel','email')
@@ -137,8 +186,16 @@ def save(db,library,mail_lock,ai_copy,item):
         c.execute('DELETE FROM steps WHERE campaign_id=?',(item['id'],))
         c.executemany('INSERT INTO steps(campaign_id,position,delay_days,subject,body) VALUES(?,?,?,?,?)',[(item['id'],step['position'],step['delay_days'],step['subject'],step['body']) for step in validated])
         updated=dict(c.execute('SELECT * FROM campaigns WHERE id=?',(item['id'],)).fetchone())
+        material_changed = (current['material_mode'] in ('auto','manual') or updated['material_mode'] in ('auto','manual')) and current['material_mode']!=updated['material_mode']
         if status=='draft':
-            c.execute("DELETE FROM messages WHERE campaign_id=? AND sent_at IS NULL AND status NOT IN ('sent','sending','uncertain')",(item['id'],))
+            draft_fields = ('offer','audience','website','language','cta','cta_url','material_ids',
+                            'pain_points','value_props','proof_points','conditions','audience_mode','contact_ids',
+                            'target_group','audience_tags','tag_match','channel')
+            steps_changed = len(validated)!=len(old_steps) or any(
+                any(value!=old_steps.get(step['position'],{}).get(key) for key,value in step.items())
+                for step in validated)
+            if steps_changed or material_changed or any(updated[key]!=current[key] for key in draft_fields):
+                c.execute("DELETE FROM messages WHERE campaign_id=? AND sent_at IS NULL AND status NOT IN ('sent','sending','uncertain')",(item['id'],))
         else:
             contacts={row['id']:row for row in recipients(c,updated)}
             for message in c.execute("SELECT * FROM messages WHERE campaign_id=? AND status='queued' AND deleted=0",(item['id'],)).fetchall():
@@ -146,7 +203,7 @@ def save(db,library,mail_lock,ai_copy,item):
                 if not contact or position>=len(validated):
                     c.execute("UPDATE messages SET status='cancelled',error='Pominięto po zmianie odbiorców lub sekwencji kampanii.' WHERE id=?",(message['id'],));continue
                 step=validated[position]
-                changed=any(updated[key]!=current[key] for key in ('offer','website','language','cta','cta_url','material_mode','material_ids','pain_points','value_props','proof_points')) or any(step[key]!=old_steps.get(position,{}).get(key) for key in ('subject','body'))
+                changed=material_changed or any(updated[key]!=current[key] for key in ('offer','website','language','cta','cta_url','material_ids','pain_points','value_props','proof_points')) or any(step[key]!=old_steps.get(position,{}).get(key) for key in ('subject','body'))
                 if changed:
                     subject,body=ai_copy(contact,updated,step,use_ai=False)
                     c.execute('UPDATE messages SET subject=?,body=? WHERE id=?',(subject,body,message['id']))
@@ -155,4 +212,5 @@ def save(db,library,mail_lock,ai_copy,item):
                     baseline=(first['sent_at'] or first['due'])-old_steps.get(0,{}).get('delay_days',0)*86400
                     c.execute('UPDATE messages SET due=? WHERE id=?',(baseline+step['delay_days']*86400,message['id']))
         c.execute('INSERT INTO events(created,detail) VALUES(?,?)',(time.time(),'Zapisano zmiany kampanii: '+updated['name']))
-    return {'ok':True,'id':item['id'],'status':status,'revision':updated['revision']}
+        has_queued_messages = _has_queued_messages(c, item['id'])
+    return {'ok':True,'id':item['id'],'status':status,'revision':updated['revision'],'has_queued_messages':has_queued_messages}

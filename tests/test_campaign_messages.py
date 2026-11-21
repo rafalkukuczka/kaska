@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import campaign_messages
 import app
 import test_app
@@ -14,10 +15,25 @@ class MessageTests(unittest.TestCase):
         result=campaign_messages.page(app.db,1,206,10)
         self.assertEqual(result['total'],2051)
         self.assertEqual(len(result['messages']),1)
-        self.assertEqual(result['messages'][0]['position'],0)
+        self.assertEqual(result['messages'][0]['position'],2050)
         self.assertEqual(campaign_messages.page(app.db,1,999,100)['page'],21)
         for size in (0,7,10000):
             with self.assertRaises(ValueError):campaign_messages.page(app.db,1,1,size)
+
+    def test_list_starts_with_first_message_in_smtp_queue(self):
+        with app.db() as c:
+            app.add_contact(c, {'name':'Second','email':'second@example.com'})
+        app.prepare(1)
+        with app.db() as c:
+            c.execute("UPDATE campaigns SET status='active' WHERE id=1")
+            c.execute('UPDATE messages SET due=10 WHERE position=0')
+            c.execute("UPDATE messages SET due=1 WHERE position=0 AND contact_id=(SELECT id FROM contacts WHERE email='second@example.com')")
+        first = campaign_messages.page(app.db,1)['messages'][0]
+        self.assertEqual(first['email'],'second@example.com')
+        with patch('app.smtplib.SMTP') as smtp:
+            app.send_one()
+            mail = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+        self.assertEqual(str(mail['To']),first['email'])
 
     def test_removal_cancels_followups_and_keeps_delivery_history(self):
         app.prepare(1)

@@ -25,6 +25,14 @@ class BackgroundTests(unittest.TestCase):
             draft=next(j for j in jobs if j['kind']=='prospecting')
             self.assertEqual((draft['completed'],draft['total'],draft['project_name']),(2,6,'Other project'))
             self.assertNotIn('PRIVATE OFFER',payload);self.assertNotIn('anna@example.com',payload)
+            request=urllib.request.Request(f'http://127.0.0.1:{app.PORT}/api/background/cancel',
+                data=json.dumps({'id':draft['id']}).encode(),
+                headers={'Content-Type':'application/json','X-CSRF-Token':app.workspace_csrf()})
+            with urllib.request.urlopen(request) as response:
+                self.assertTrue(json.load(response)['ok'])
+            with urllib.request.urlopen(f'http://127.0.0.1:{app.PORT}/api/background') as response:
+                cancelling, = json.load(response)['jobs']
+                self.assertEqual((cancelling['status'],cancelling['completed']),('cancelling',2))
             with app.db() as c:
                 c.execute("UPDATE prospect_runs SET status='ready'")
             with urllib.request.urlopen(f'http://127.0.0.1:{app.PORT}/api/background') as response:self.assertEqual(json.load(response)['jobs'],[])

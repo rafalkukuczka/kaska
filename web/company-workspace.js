@@ -57,8 +57,8 @@ function companyFit(fit){
 }
 
 function showCompany(company){
- const links=sources=>{
-  const items=(sources||[]).map(sourceLink).filter(Boolean);
+ const links=(sources,contactId)=>{
+  const items=(sources||[]).map(url=>sourceLink(url,url,contactId)).filter(Boolean);
   return items.length?`<ul>${items.map(link=>`<li>${link}</li>`).join('')}</ul>`:'';
  };
  const assessments={matched:'Dopasowany',uncertain:'Do sprawdzenia',rejected:'Odrzucony'};
@@ -71,7 +71,7 @@ function showCompany(company){
   ${person.created?`<p class="hint">${esc(new Date(person.created*1000).toLocaleDateString(uiLanguage==='en'?'en-GB':'pl-PL'))}</p>`:''}
   ${person.fit_reason?`<p data-no-translate>${esc(person.fit_reason)}</p>`:''}
   ${person.missing_data?`<p data-no-translate>${esc(person.missing_data)}</p>`:''}
-  ${links(person.sources)}</details>`).join('')||'<p>Brak kontaktów.</p>'}
+  ${links(person.sources,person.contact_id)}</details>`).join('')||'<p>Brak kontaktów.</p>'}
   <h3>Sygnały z Odkrywaj</h3>${company.signals.map(signal=>`<details class="signal-card"><summary><strong data-no-translate>${esc(signal.title)}</strong> · ${decisions[signal.decision]}</summary>
   <p class="hint">${signal.published_date?'Publikacja '+esc(signal.published_date):''} ${signal.event_date?'Zdarzenie '+esc(signal.event_date):''}</p>
   <p data-no-translate>${esc(signal.summary)}</p><blockquote data-no-translate>${esc(signal.quote)}</blockquote>

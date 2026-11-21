@@ -1,7 +1,11 @@
 """Evidence-backed contact acquisition from Discover, with explicit grouped import."""
 import json
+import os
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
 from urllib.parse import urlparse
 
 import contact_groups
@@ -49,8 +53,126 @@ def merge_attributes(previous, current):
     return result
 
 
+def research_source(value):
+    if not isinstance(value, str) or len(value) > 2000:
+        return ''
+    try:
+        url = urlparse(value.strip())
+        if url.scheme in ('http','https') and url.hostname and url.username is None and url.port in (None,443):
+            return url._replace(scheme='https',fragment='').geturl()
+    except ValueError:
+        pass
+    return ''
+
+
 class DiscoverContacts:
-    def __init__(self,db,add_contact):self.db,self.add_contact=db,add_contact
+    def __init__(self,db,add_contact,browser_reader=None):
+        self.db,self.add_contact,self.browser_reader=db,add_contact,browser_reader
+        self.status_lock = threading.Lock()
+        self.status_by_company = {}
+
+    def research_status(self, project_id):
+        with self.status_lock:
+            rows = [dict(row) for (project, _),row in self.status_by_company.items() if project == project_id]
+        return sorted(rows, key=lambda row:(row['status'] != 'running',-row['updated']))[:12]
+
+    def update_status(self, key, **fields):
+        with self.status_lock:
+            self.status_by_company[key].update(updated=time.time(), **fields)
+            if len(self.status_by_company) > 100:
+                finished = [key for key,row in self.status_by_company.items() if row['status'] != 'running']
+                if finished:
+                    del self.status_by_company[min(finished,key=lambda key:self.status_by_company[key]['updated'])]
+
+    def browser_contacts(self, pages, domain, company, limit):
+        people = {}
+        for page in pages:
+            source = research_source(page.get('source'))
+            if not source:
+                continue
+            for contact in page.get('contacts', []):
+                email = str(contact.get('email', '')).strip().lower()
+                if (len(email)>254 or not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+', email)
+                        or email.rsplit('@',1)[1]!=domain):
+                    continue
+                name = str(contact.get('name') or '').strip()
+                current = people.setdefault(email, {'value':email,'type':'web','provenance':'found',
+                    'first_name':'','position':'','work_phone':'','provider':'Strona źródłowa','sources':[]})
+                current['first_name'] = current['first_name'] or name
+                current['position'] = current['position'] or contact.get('role')
+                current['work_phone'] = current['work_phone'] or contact.get('phone')
+                if not any(item['uri']==source for item in current['sources']):
+                    current['sources'].append({'uri':source,'last_seen_on':date.today().isoformat()})
+        results = sorted(people.values(), key=lambda person: not person['first_name'])[:limit]
+        for person in results:
+            person['first_name'] = person['first_name'] or company
+        return results
+
+    def automatic_search(self, firm, domain, params, limit, titles, project_id):
+        home = f'https://{domain}/' if domain else ''
+        urls = list(dict.fromkeys([*firm.get('source_urls', []), *([home] if home else [])])) if self.browser_reader else []
+        key = (project_id, domain or firm['company'].casefold())
+        with self.status_lock:
+            if self.status_by_company.get(key, {}).get('status') == 'running':
+                raise ValueError('Badanie tej firmy już trwa.')
+            self.status_by_company[key] = {'company':firm['company'],'domain':domain,'status':'running','stage':'website',
+                                           'completed':0,'total':len(urls),'found':0,'errors':0,'updated':time.time()}
+        try:
+            result = self.read_contact_sources(firm, domain, params, limit, titles, key, urls, home)
+        except Exception:
+            self.update_status(key,status='failed',stage='finished')
+            raise
+        self.update_status(key,status='done',stage='finished',found=len(result.get('emails', [])))
+        return result
+
+    def read_contact_sources(self, firm, domain, params, limit, titles, key, urls, home):
+        trace = []
+        if urls:
+            pages = {}
+            errors = 0
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                tasks = {pool.submit(self.browser_reader, url, follow_links=url==home):url for url in urls}
+                for completed,task in enumerate(as_completed(tasks),1):
+                    url = tasks[task]
+                    try:
+                        batch = task.result()['pages']
+                        pages[url] = batch
+                        found = self.browser_contacts(batch,domain,firm['company'],limit)
+                        trace.append({'provider':'Chrome headless','status':'ok','added':len(found),
+                                      'urls':list(dict.fromkeys([url,*[page['source'] for page in batch]]))})
+                    except (ValueError, OSError) as error:
+                        errors += 1
+                        trace.append({'provider':'Chrome headless','status':'error','error':str(error),'urls':[url]})
+                    self.update_status(key,completed=completed,errors=errors)
+            people = self.browser_contacts((page for url in urls for page in pages.get(url, [])),domain,firm['company'],limit)
+            if people:
+                return {'domain':domain,'emails':people,'enrichment':trace}
+        else:
+            trace.append({'provider':'Chrome headless','status':'skipped','detail':'Brak domeny firmy.'})
+        if not os.getenv('HUNTER_API_KEY', '').strip():
+            trace.append({'provider':'Hunter','status':'skipped','detail':'Podłącz Huntera w Integracjach.'})
+        else:
+            try:
+                self.update_status(key,stage='hunter')
+                found = waterfall(Hunter(),domain,limit,titles,hunter_params=params)
+                return {**found,'enrichment':[*trace,*found.get('enrichment',[])]}
+            except ValueError as error:
+                trace.append({'provider':'Hunter','status':'error','error':str(error)})
+        return {'domain':domain,'emails':[],'enrichment':trace}
+
+    def discover_sources(self, c, project, company):
+        rows = c.execute("""SELECT domain,url,website,sources FROM discovered_opportunities WHERE project_id=? AND company=? COLLATE NOCASE
+            UNION ALL SELECT p.domain,'','',p.sources FROM prospect_candidates p JOIN prospect_runs r ON r.id=p.run_id
+            WHERE r.project_id=? AND p.company=? COLLATE NOCASE""", (project,company,project,company))
+        urls, domains = [], set()
+        for row in rows:
+            if row['domain']:
+                domains.add(row['domain'])
+            entries = json.loads(row['sources'])
+            candidates = [row['url'],row['website'], *[entry.get('url') or entry.get('uri') if isinstance(entry,dict) else entry
+                                                     for entry in entries]]
+            urls.extend(url for value in candidates if (url:=research_source(value)))
+        return urls, next(iter(domains)) if len(domains)==1 else ''
 
     def person_tags(self,c,item,email):
         if 'tags_by_contact' in item:
@@ -102,6 +224,10 @@ class DiscoverContacts:
         project=shared_project.get(self.db,item.get('project_id'))
         if languages.data_simulation(self.db):raise ValueError('Włączona jest symulacja pobierania. Rzeczywiste wyszukiwanie jest wyłączone.')
         company=item.get('company','')
+        provider=item.get('provider')
+        if provider not in (None, 'hunter', 'auto'):
+            raise ValueError('Nieznany dostawca danych kontaktowych.')
+        known_domain = ''
         if not isinstance(company,str) or not company.strip() or len(company)>200:raise ValueError('Nieprawidłowa firma.')
         with self.db() as c:
             names=[row['company'] for row in c.execute('SELECT DISTINCT p.company FROM prospect_candidates p JOIN prospect_runs r ON r.id=p.run_id WHERE r.project_id=?',(project['id'],))]
@@ -109,6 +235,8 @@ class DiscoverContacts:
             names.extend(row['company'] for row in c.execute('SELECT DISTINCT company FROM contacts WHERE contact_pool=?',(project_scope.contact_pool(c,project['id']),)))
             name=next((name for name in names if name.casefold()==company.strip().casefold()),None)
             firm=researched_company or ({'company':name,'quote':'Firma z wyników wyszukiwania lub Kontaktów.'} if name else None)
+            if firm and provider=='auto' and researched_company is None:
+                firm['source_urls'],known_domain = self.discover_sources(c,project['id'],firm['company'])
         if not firm:raise ValueError('Wybierz firmę z Discover w tym projekcie.')
         limit=item.get('limit',5)
         if type(limit)!=int or not 1<=limit<=10:raise ValueError('Wybierz od 1 do 10 kontaktów.')
@@ -119,11 +247,12 @@ class DiscoverContacts:
             parsed=urlparse(domain)
             if parsed.scheme not in ('https','http') or parsed.username or parsed.password:raise ValueError('Podaj poprawną domenę firmy.')
             domain=parsed.hostname or ''
-        domain=clean_domain(domain) if domain else ''
+        domain=clean_domain(domain or known_domain) if domain or known_domain else ''
         params={'limit':limit,'type':'personal','provenance':'found','required_field':'full_name'}
         params.update({'domain':domain} if domain else {'company':firm['company']})
         if titles.strip():params['job_titles']=titles.strip()
-        data=waterfall(Hunter(),domain,limit,titles.strip(),hunter_params=params)
+        data = (self.automatic_search(firm,domain,params,limit,titles.strip(),project['id']) if provider=='auto' else
+                waterfall(Hunter(),domain,limit,titles.strip(),hunter_params=params,allow_apollo=provider is None))
         if not isinstance(data,dict) or not isinstance(data.get('emails',[]),list):raise ValueError('Hunter zwrócił nieprawidłową listę kontaktów.')
         found_domain=clean_domain(data['domain']) if data.get('domain') else domain
         if domain and found_domain!=domain:raise ValueError('Hunter zwrócił inną domenę. Wynik nie został zapisany.')
@@ -132,11 +261,12 @@ class DiscoverContacts:
             if not isinstance(person,dict):continue
             email=str(person.get('value') or '').strip().lower()
             if not found_domain or not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+',email) or len(email)>254 or email.rsplit('@',1)[1]!=found_domain:continue
-            if person.get('type')!='personal' or person.get('provenance') not in (None,'found'):continue
+            if person.get('type') not in ('personal','web') or person.get('provenance') not in (None,'found'):continue
             name=' '.join(str(person.get(key) or '').strip() for key in ('first_name','last_name')).strip()[:250]
             raw_sources=person.get('sources') or []
             if not isinstance(raw_sources,list):continue
-            sources=[{'url':safe_link(source.get('uri','')),'last_seen':str(source.get('last_seen_on') or '')[:100],
+            link = research_source if person.get('type')=='web' else safe_link
+            sources=[{'url':link(source.get('uri','')),'last_seen':str(source.get('last_seen_on') or '')[:100],
                       'kind':str(source.get('kind') or 'email')[:40]} for source in raw_sources[:20] if isinstance(source,dict)]
             sources=[source for source in sources if source['url']]
             if not name or not sources or email in seen:continue
@@ -159,24 +289,54 @@ class DiscoverContacts:
             raise ValueError('Wybierz wyszukiwanie i firmę w Dashboardzie.')
         with self.db() as c:
             project = project_scope.active(c)
-            row = c.execute("""SELECT f.name,f.domain FROM lead_search_companies f JOIN lead_searches s ON s.id=f.search_id
+            if item.get('project_id', project) != project:
+                raise ValueError('Projekt się zmienił. Otwórz wyniki wyszukiwania ponownie.')
+            row = c.execute("""SELECT f.name,f.domain,f.url,f.evidence FROM lead_search_companies f JOIN lead_searches s ON s.id=f.search_id
                 WHERE s.id=? AND s.project_id=? AND f.domain=?""", (item['search_id'],project,domain)).fetchone()
             profile = c.execute('SELECT profile FROM lead_company_profiles WHERE project_id=? AND domain=?',
                                 (project,domain)).fetchone()
-            kinds = [r[0] for r in c.execute("""SELECT DISTINCT v.kind FROM lead_signals v
+            signals = c.execute("""SELECT DISTINCT v.kind,v.url FROM lead_signals v
                 JOIN lead_signal_subscriptions b ON b.run_id=v.run_id
                 JOIN lead_signal_runs r ON r.id=b.run_id
                 WHERE b.search_id=? AND r.domain=? AND v.source_date>=date('now','-30 days')""",
-                                            (item['search_id'],domain))]
+                                            (item['search_id'],domain)).fetchall()
+            research = c.execute('SELECT pages FROM lead_research WHERE project_id=? AND domain=?',(project,domain)).fetchone()
         if not row:
             raise ValueError('Nie znaleziono firmy w tym wyszukiwaniu i projekcie.')
-        titles = lead_sources.contact_roles(json.loads(profile['profile']) if profile else {},kinds)
-        request = {'project_id':project,'company':row['name'][:200],'domain':row['domain'],'limit':5,'titles':titles}
+        company_profile = json.loads(profile['profile']) if profile else {}
+        titles = lead_sources.contact_roles(company_profile,[signal['kind'] for signal in signals])
+        request = {'project_id':project,'company':row['name'][:200],'domain':row['domain'],'limit':5,'titles':titles,
+                   'provider':item.get('provider')}
         firm = {'company':row['name'],'quote':'Firma z wyników Dashboardu · '+row['domain']}
+        evidence = json.loads(row['evidence'])
+        cached_pages = json.loads(research['pages']) if research else []
+        identity = company_profile.get('identity') or {}
+        sources = [row['url'], *[signal['url'] for signal in signals], *[entry.get('url') for entry in [
+            *evidence,*cached_pages,*company_profile.get('jobs', [])] if isinstance(entry,dict)], identity.get('url'), identity.get('register_url')]
+        firm['source_urls'] = [url for source in sources if (url:=research_source(source))]
         result = self.search(request,researched_company=firm)
-        if titles and not result['contacts']:
+        if request['provider'] is None and titles and not result['contacts']:
             result = self.search({**request,'titles':''},researched_company=firm)
         return {**result,'suggested_roles':titles}
+
+    def lead_tag_candidates(self, item):
+        with self.db() as c:
+            project_id = project_scope.active(c)
+            if item.get('project_id') != project_id or type(item.get('search_id')) is not int:
+                raise ValueError('Otwórz wyniki wyszukiwania w bieżącym projekcie.')
+            firms = c.execute("""SELECT f.name,f.domain FROM lead_search_companies f
+                JOIN lead_searches s ON s.id=f.search_id WHERE s.project_id=? AND s.id=?""",
+                (project_id,item['search_id'])).fetchall()
+            names = {' '.join(firm['name'].casefold().split()) for firm in firms}
+            domains = {firm['domain'] for firm in firms}
+            pool = project_scope.contact_pool(c,project_id)
+            contacts = []
+            for row in c.execute('SELECT id,name,email,company,research_data FROM contacts WHERE contact_pool=? ORDER BY name,id',(pool,)):
+                company = ' '.join(row['company'].casefold().split())
+                domain = json.loads(row['research_data']).get('domain') or (row['email'].rsplit('@',1)[-1] if not company else '')
+                if company in names or str(domain).strip().lower().removeprefix('www.').rstrip('.') in domains:
+                    contacts.append({key:row[key] for key in ('id','name','email','company')})
+        return {'contacts':contacts}
 
     def add(self,item,*,from_dashboard=False):
         project=shared_project.get(self.db,item.get('project_id'))

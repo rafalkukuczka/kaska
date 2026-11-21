@@ -109,7 +109,7 @@ class Library:
 
     def select(self,contact,campaign):
         campaign=dict(campaign);mode=campaign.get('material_mode','none');website=campaign.get('website','')
-        if mode=='none' or not website:return None
+        if mode not in ('auto','manual') or not website:return None
         with self.db() as c:rows=[dict(r) for r in c.execute('SELECT * FROM materials WHERE enabled=1')]
         rows=[r for r in rows if domain(r['website'])==domain(website)]
         if mode=='manual':
@@ -126,7 +126,7 @@ class Library:
     def validate_campaign(self,c,item):
         mode=item.get('audience_mode','all'); material_mode=item.get('material_mode','none')
         ids=item.get('contact_ids',[]);materials=item.get('material_ids',[])
-        if mode not in ('all','selected','group','tags') or material_mode not in ('none','auto','manual'):raise ValueError('Nieprawidłowy tryb odbiorców lub materiałów')
+        if mode not in ('all','selected','group','tags') or material_mode not in ('none','auto','manual','document'):raise ValueError('Nieprawidłowy tryb odbiorców lub materiałów')
         if not isinstance(ids,list) or not isinstance(materials,list):raise ValueError('Lista kontaktów i materiałów musi być tablicą')
         ids=list(dict.fromkeys(int(i) for i in ids));materials=list(dict.fromkeys(int(i) for i in materials))
         if mode=='selected' and not ids:raise ValueError('Wybierz co najmniej jednego odbiorcę')
@@ -135,7 +135,7 @@ class Library:
         website=str(item.get('website','')).strip()
         if website and '://' not in website:website='https://'+website
         if website:public_url(website)
-        if material_mode!='none' and not website:raise ValueError('Podaj stronę nadawcy do wyboru materiałów')
+        if material_mode in ('auto','manual') and not website:raise ValueError('Podaj stronę nadawcy do wyboru materiałów')
         if material_mode=='manual' and not materials:raise ValueError('Wybierz materiał do wysłania')
         for material_id in materials:
             row=c.execute('SELECT * FROM materials WHERE id=? AND enabled=1',(material_id,)).fetchone()

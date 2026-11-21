@@ -82,7 +82,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await saveNearTabs.isVisible(),true);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.setViewportSize({width:1440,height:1000});
-  await page.locator('nav [data-view=campaigns]').click();await page.locator('[data-action=new-campaign]').click();
+  await page.locator('nav [data-view=campaigns]').click();await page.locator('[data-action=new-campaign]').click();await page.locator('#new-campaign-form button.primary').click();
   await page.locator('[data-builder-step="1"]').click();
   const campaign=page.locator('#campaign-form');
   assert.equal(await campaign.locator('[data-builder=discover]').isVisible(),false);
@@ -93,13 +93,14 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await campaign.locator('[name=website]').fill('example.com');
   assert.equal(await campaign.locator('[data-builder=discover]').isVisible(),true);
   assert.equal(await page.locator('[data-builder=website-shortcut]').isVisible(),true);
-  await page.locator('[data-builder=exit]').click();await page.locator('[data-action=new-campaign]').click();await page.locator('[data-builder-step="1"]').click();
+  assert.equal(await campaign.locator('#project-picker').count(),0);
+  await page.locator('[data-builder=exit]').click();await page.locator('[data-action=new-campaign]').click();await page.locator('#new-campaign-form button.primary').click();await page.locator('[data-builder-step="1"]').click();
   assert.equal(await campaign.locator('[data-generate-example]').isVisible(),false);
   assert.equal(await campaign.locator('[data-read-proof]').isVisible(),true);
   await campaign.locator('[name=website]').fill('');
   await page.locator('[data-builder=exit]').click();
   await page.locator('#ui-language').selectOption('en');
-  await page.locator('[data-action=new-campaign]').click();await page.locator('[data-builder-step="1"]').click();
+  await page.locator('[data-action=new-campaign]').click();await page.locator('#new-campaign-form button.primary').click();await page.locator('[data-builder-step="1"]').click();
   await page.getByRole('button',{name:'Generate example data',exact:true}).waitFor();
   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   assert.deepEqual(reads,[]);assert.deepEqual(errors,[]);

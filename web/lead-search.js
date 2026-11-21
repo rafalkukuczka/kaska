@@ -13,6 +13,9 @@ const signalCheckLabels = {
 const leadJobDetail = detail => detail?.startsWith('Extra data:') ? 'AI zwróciło wynik w nieprawidłowym formacie.' : detail;
 let leadNotificationSelection = null;
 let leadSearchPollActive = false;
+let leadBellCursor = 0;
+let leadBellEpoch;
+let leadBellPending = null;
 const leadUpdateKinds = {
   company:['Firmy','Nowa firma'], signal:['Sygnały','Sygnał'],
   qualification:['Kwalifikacje','Kwalifikacja'], contact:['Decydenci','Decydent'],
@@ -38,21 +41,57 @@ function leadSearchNotification(row, selected = false) {
   </button>`;
 }
 
-function leadSearchBell(data) {
-  if (data.project_id !== state?.seller_project.id) return;
+function renderLeadBellCount(notifications) {
   const bell = $('#lead-notification-bell');
-  const count = data.notifications.reduce((total, row) => total + row.count, 0);
+  const count = notifications.reduce((total, row) => total + row.count, 0);
   const badge = $('#lead-notification-count');
   badge.textContent = count;
   badge.hidden = !count;
   bell.setAttribute('aria-label', (count ? count + ' · ' : '') + translateUiText('Powiadomienia Discover'));
+}
+
+function renderLeadBellItems(notifications) {
   const content = $('#lead-notification-items');
-  const markup = data.notifications.map(row => leadSearchNotification(row)).join('') || '<p class="hint">Brak nowych informacji.</p>';
+  const markup = notifications.map(row => leadSearchNotification(row)).join('') || '<p class="hint">Brak nowych informacji.</p>';
   if (content._markup !== markup) {
     content.innerHTML = markup;
     content._markup = markup;
   }
 }
+
+function leadSearchBell(data) {
+  if (data.project_id !== state?.seller_project.id || leadBellPending === simulationEpoch) return;
+  if (leadBellEpoch !== simulationEpoch) {
+    leadBellEpoch = simulationEpoch;
+    leadBellCursor = 0;
+  }
+  const cursor = data.bell_seen_event ?? 0;
+  if (cursor < leadBellCursor) return;
+  leadBellCursor = cursor;
+  const notifications = data.bell_notifications ?? data.notifications;
+  renderLeadBellCount(notifications);
+  if (!$('#lead-bell-menu').open) renderLeadBellItems(notifications);
+}
+
+$('#lead-bell-menu').addEventListener('toggle', async event => {
+  if (!event.currentTarget.open || !state || leadBellPending === simulationEpoch) return;
+  const epoch = simulationEpoch;
+  leadBellPending = epoch;
+  renderLeadBellCount([]);
+  try {
+    const result = await api('lead-search/bell', {});
+    if (epoch !== simulationEpoch) return;
+    leadBellEpoch = epoch;
+    leadBellCursor = result.bell_seen_event;
+    renderLeadBellItems(result.notifications);
+    syncLanguages();
+  } catch (error) {
+    if (epoch === simulationEpoch) toast(error.message);
+  } finally {
+    if (leadBellPending === epoch) leadBellPending = null;
+    void pollLeadSearch();
+  }
+});
 
 function dashboardLeadResults() {
   return `<section class="panel lead-search-results" id="dashboard-lead-results" hidden><div class="panel-head">
@@ -68,7 +107,6 @@ function dashboardLeadResults() {
       <div class="lead-agent-status" hidden>
         <details><summary>Praca agentów</summary><p class="hint" data-lead-other-jobs hidden></p><ul></ul>
           <button type="button" class="secondary" data-lead-job-more>Pokaż więcej zadań</button></details>
-        <button type="button" class="secondary danger" data-lead-stop hidden>Przerwij wszystkie</button>
       </div>
       <div class="lead-results-layout" role="group" aria-label="Widok wyników">
         <label class="lead-status-filter" for="lead-company-status"><span>Status firmy</span>
@@ -77,6 +115,13 @@ function dashboardLeadResults() {
           </select>
         </label>
         <small class="hint" data-lead-status-count role="status" hidden></small>
+        <details class="lead-contact-bulk" data-lead-contact-bulk hidden>
+          <summary>Operacje zbiorcze</summary>
+          <div class="actions">
+            <button type="button" class="secondary" data-lead-contact-search-all>Zbadaj dane kontaktowe</button>
+            <button type="button" class="secondary" data-lead-contact-tag-all>Dodaj tag do kontaktów</button>
+          </div>
+        </details>
         <button type="button" class="secondary" data-lead-priority hidden>Najmocniejsze sygnały na górę</button>
         <button type="button" class="secondary" data-lead-layout="list" aria-pressed="true">Lista</button>
         <button type="button" class="secondary" data-lead-layout="tiles" aria-pressed="false">Kafelki</button>
@@ -93,7 +138,7 @@ function bindDashboardLeadSearch(root, project) {
   const button = form.querySelector('button[type=submit]');
   root._searchProgress = form.querySelector('[data-dashboard-search-progress]');
   const query = () => (input.value.trim() || sellerProject().audience || sellerProject().offer || '').trim().slice(0,1200);
-  const sync = () => { button.disabled = Boolean(root._starting || query().length < 2); };
+  const sync = () => { button.disabled = Boolean(root._starting || root._stopping || query().length < 2); };
   root._run = leadSearchSelection.get(project.id);
   root._syncSearch = sync;
   const results = root.querySelector('#lead-company-results');
@@ -119,12 +164,12 @@ function bindDashboardLeadSearch(root, project) {
     event.preventDefault();
     const text = query();
     const limit = Number(companyLimit.value);
-    if (root._starting || text.length < 2) return;
+    if (root._starting || root._stopping || text.length < 2) return;
     root._starting = true;
-    renderDashboardSearchProgress(root, {label:'Uruchamiam wyszukiwanie…'});
-    run(button, async () => {
+    renderDashboardSearchProgress(root);
+    root._startRequest = run(button, async () => {
       await flushSellerProject();
-      if (!root.isConnected || state.seller_project.id !== project.id) return;
+      if (root._stopping || !root.isConnected || state.seller_project.id !== project.id) return;
       window.postMessage({type:'KATIE_LEAD_BROWSER_POLL'}, location.origin);
       const data = await api('lead-search/start', {query:text,company_limit:limit});
       if (!root.isConnected) return;
@@ -135,7 +180,8 @@ function bindDashboardLeadSearch(root, project) {
       leadSearchBell(data);
     }).finally(() => {
       root._starting = false;
-      renderDashboardSearchProgress(root, root._lastSearchProgress);
+      root._startRequest = null;
+      renderDashboardSearchProgress(root);
       sync();
     });
   });
@@ -170,20 +216,42 @@ function bindDashboardLeadSearch(root, project) {
     tasks._limit += 24;
     tasks._renderItems();
   });
-  root.querySelector('[data-lead-stop]').addEventListener('click', event => {
-    void run(event.currentTarget, async () => {
-      const result = await api('lead-search/stop-all',{});
-      toast(translateUiText(result.stopped_jobs ? 'Przerwano wszystkie wyszukiwania agentowe.' : 'Brak wyszukiwań agentowych do przerwania.'));
-      if (!root.isConnected || state.seller_project.id !== project.id) return;
-      const generation = root._generation = (root._generation || 0) + 1;
-      const data = await leadSearchRead(root._run);
-      if (!root.isConnected || generation !== root._generation || data.project_id !== project.id) return;
-      renderLeadSearchResults(root,data);
-      leadSearchBell(data);
-      syncLanguages();
+  root._searchProgress.querySelector('[data-lead-stop]').addEventListener('click', () => {
+    if (root._stopping) return;
+    const startRequest = root._startRequest;
+    const wasStarting = root._starting;
+    root._stopping = true;
+    renderDashboardSearchProgress(root);
+    sync();
+    void run(null, async () => {
+      try {
+        // Wait for an in-flight creation request before stopping the new search.
+        await startRequest;
+        const result = await api('lead-search/stop-all',{});
+        toast(translateUiText(result.stopped_jobs ? 'Przerwano wszystkie wyszukiwania agentowe.' :
+          wasStarting ? 'Wyszukiwanie przerwane' : 'Brak wyszukiwań agentowych do przerwania.'));
+        if (!root.isConnected || state.seller_project.id !== project.id) return;
+        const generation = root._generation = (root._generation || 0) + 1;
+        const data = await leadSearchRead(root._run);
+        if (!root.isConnected || generation !== root._generation || data.project_id !== project.id) return;
+        renderLeadSearchResults(root,data);
+        leadSearchBell(data);
+        syncLanguages();
+      } finally {
+        root._stopping = false;
+        if (root.isConnected) renderDashboardSearchProgress(root);
+        sync();
+      }
     });
   });
   root.addEventListener('click', event => {
+    const bulk = event.target.closest('[data-lead-contact-search-all], [data-lead-contact-tag-all]');
+    if (bulk && root._run && root._contactCompanies?.length) {
+      if (bulk.hasAttribute('data-lead-contact-search-all')) void researchAllLeadContacts(root._run, root._contactCompanies, project.id);
+      else void tagLeadContacts(root._run, project.id);
+      bulk.closest('details').open = false;
+      return;
+    }
     const button = event.target.closest('[data-lead-contact-search]');
     const company = button?.closest('[data-company]');
     if (company && root._run) void researchLeadContacts(root._run, company, project.id);
@@ -215,13 +283,18 @@ function filterLeadCompanies(root) {
   root.querySelector('[data-lead-status-empty]').hidden = !companies.length || visible > 0;
 }
 
-function leadSearchCompany(company, node, hasOwnSignals, criterionCount) {
+function leadSearchCompany(company, node, hasOwnSignals, criterionCount, hasContacts) {
   if (!node) {
     node = document.createElement('details');
     node.className = 'lead-search-company';
     node.dataset.company = company.domain;
-    node.innerHTML = '<summary><strong></strong><span></span><small class="hint lead-company-qualification" hidden></small><small class="hint lead-company-domain"></small></summary><div class="lead-company-details"></div>';
+    node.innerHTML = '<summary><strong></strong><span></span><small class="hint lead-company-qualification" hidden></small><small class="hint lead-company-domain"></small><small class="saved-company-badge" hidden></small></summary><div class="lead-company-details"></div>';
   }
+  node.classList.toggle('has-saved-contact', hasContacts);
+  const contactBadge = node.querySelector('.saved-company-badge');
+  contactBadge.hidden = !hasContacts;
+  const contactLabel = translateUiText('W kontaktach');
+  if (contactBadge.textContent !== contactLabel) contactBadge.textContent = contactLabel;
   const row = JSON.stringify([company,hasOwnSignals,criterionCount,uiLanguage]);
   if (node._row === row) return node;
   node._row = row;
@@ -240,6 +313,7 @@ function leadSearchCompany(company, node, hasOwnSignals, criterionCount) {
   node.querySelector('.lead-company-details').innerHTML = `
     <div class="actions">
       <button type="button" class="secondary" data-lead-contact-search>Zbadaj dane kontaktowe</button>
+      ${manualContactButton(company.name,company.domain)}
       ${hasOwnSignals ? '<button type="button" class="link" data-lead-private-signal>Dodaj własny sygnał</button>' : ''}
     </div>
     ${evidence.length ? '<h3>Dowody dopasowania do kryteriów</h3>' : ''}
@@ -298,32 +372,53 @@ function recordLeadProjectSignal(root,company) {
   });
 }
 
+function leadContactChoices(data, field) {
+  return data.contacts.map(person => `<article class="lead-contact-choice">
+    <label class="check"><input type="checkbox" name="${field}" value="${esc(person.id)}">
+      <span data-no-translate><strong>${esc(person.name)}</strong> · ${esc(person.email)}</span></label>
+    ${person.role ? `<p class="hint" data-no-translate>${esc(person.role)}</p>` : ''}
+    ${person.existing ? '<span class="badge gray">Już w kontaktach</span>' : ''}
+    ${contactResearchDetails(person.attributes,true,person.existing?.id)}
+  </article>`).join('');
+}
+
+function searchLeadContactData(searchId, company, projectId) {
+  return api('lead-search/contact-search',{search_id:searchId,domain:company.domain,company:company.name,project_id:projectId,provider:'auto'});
+}
+
+function saveLeadContactData(data, company, projectId, selected, tags) {
+  const item = {id:data.id,project_id:projectId,confirm_company:true,selected,tags};
+  return data.simulated
+    ? api('discover/contacts/add-simulation',{...item,company,contacts:data.contacts.filter(person=>selected.includes(person.id))})
+    : api('lead-search/contact-add',item);
+}
+
+function leadContactSelection(fields, field) {
+  return fields.getAll(field).map(Number);
+}
+
 async function researchLeadContacts(searchId, company, projectId) {
   const name = company.querySelector('summary strong').textContent.slice(0,200);
   const domain = company.dataset.company;
   const epoch = simulationEpoch;
   modal(`<h2>Dane kontaktowe</h2><p data-no-translate>${esc(name)} · ${esc(domain)}</p>
-    <div id="lead-contact-content"><p class="hint" role="status">Szukam kontaktów w firmie…</p></div>`);
+    <div id="lead-contact-content"><p class="hint" role="status">${monitoringSimulation?'Przygotowuję dane symulowane…':'Czytam stronę źródłową firmy w Chrome headless…'}</p></div>
+    <div class="actions contact-intake-manual">${manualContactButton(name,domain,'Dodaj ręcznie')}</div>`);
   const panel = $('#lead-contact-content');
   const current = () => panel.isConnected && $('#modal').open && state.seller_project.id === projectId && simulationEpoch === epoch;
   try {
-    const data = await api('lead-search/contact-search',{search_id:searchId,domain,company:name,project_id:projectId});
+    const data = await searchLeadContactData(searchId,{domain,name},projectId);
     if (!current()) return;
+    const log = renderEnrichmentTrace(data.enrichment);
     if (!data.contacts.length) {
-      panel.innerHTML = '<p class="hint">Brak kontaktów z udokumentowanym adresem służbowym dla tej firmy.</p>';
+      panel.innerHTML = log+'<p class="hint">Brak kontaktów z udokumentowanym adresem służbowym dla tej firmy.</p>';
       return;
     }
-    panel.innerHTML = `<form id="lead-contact-save-form">
+    panel.innerHTML = log+`<form id="lead-contact-save-form">
       ${data.simulated ? '<p class="notice">To przykładowe kontakty. Zapis trafi do kopii danych w symulacji.</p>' : ''}
       ${data.suggested_roles ? `<p class="hint"><span>Sugerowane stanowiska</span> · <span data-no-translate>${esc(data.suggested_roles)}</span></p>` : ''}
       <fieldset class="lead-contact-select"><legend>Wybierz kontakty do zapisania</legend>
-      ${data.contacts.map(person => `<article class="lead-contact-choice">
-        <label class="check"><input type="checkbox" name="selected" value="${esc(person.id)}">
-          <span data-no-translate><strong>${esc(person.name)}</strong> · ${esc(person.email)}</span></label>
-        ${person.role ? `<p class="hint" data-no-translate>${esc(person.role)}</p>` : ''}
-        ${person.existing ? '<span class="badge gray">Już w kontaktach</span>' : ''}
-        ${contactResearchDetails(person.attributes)}
-      </article>`).join('')}</fieldset>
+      ${leadContactChoices(data,'selected')}</fieldset>
       ${contactTagsControl('', 'lead-contact-tags')}
       <div class="actions"><button class="primary" type="submit">Zapisz w Kontaktach</button>
       <button type="button" class="secondary close">Anuluj</button></div>
@@ -334,14 +429,11 @@ async function researchLeadContacts(searchId, company, projectId) {
       void run(event.submitter, async () => {
         if (!current()) return;
         const fields = new FormData(form);
-        const selected = fields.getAll('selected').map(Number);
+        const selected = leadContactSelection(fields,'selected');
         const tags = contactTags(fields.get('tags'));
         if (!selected.length) throw new Error('Wybierz kontakty z wyników wyszukiwania.');
         if (!tags.length) throw new Error('Dodaj co najmniej jeden tag.');
-        const item = {id:data.id,project_id:projectId,confirm_company:true,selected,tags};
-        const saved = data.simulated
-          ? await api('discover/contacts/add-simulation',{...item,company:name,contacts:data.contacts.filter(person=>selected.includes(person.id))})
-          : await api('lead-search/contact-add',item);
+        const saved = await saveLeadContactData(data,name,projectId,selected,tags);
         if (current()) $('#modal').close();
         await refresh();
         toast(`${translateUiText('Dodano kontaktów')} ${saved.added} · ${translateUiText('Uzupełniono istniejących')} ${saved.existing}`);
@@ -352,9 +444,108 @@ async function researchLeadContacts(searchId, company, projectId) {
   }
 }
 
+async function researchAllLeadContacts(searchId, companies, projectId) {
+  const epoch = simulationEpoch;
+  modal(`<h2>Zbadaj dane kontaktowe</h2><p class="hint">Badanie obejmuje wszystkie firmy z bieżącego wyszukiwania. Zamknięcie okna zatrzyma uruchamianie kolejnych badań.</p>
+    <div id="lead-contact-bulk-body"></div>`);
+  const panel = $('#lead-contact-bulk-body');
+  const current = () => panel.isConnected && $('#modal').open && state.seller_project.id===projectId && simulationEpoch===epoch;
+  const results = [];
+  for (const company of companies) {
+    if (!current()) return;
+    panel.innerHTML = `<p role="status"><span>Badanie firmy</span> <strong data-no-translate>${esc(company.name)}</strong> · ${results.length} / ${companies.length} · ${progressPercent(results.length,companies.length)}</p>
+      <progress aria-label="Zbadane firmy" value="${results.length}" max="${companies.length}"></progress>`;
+    try { results.push({company,data:await searchLeadContactData(searchId,company,projectId)}); }
+    catch (error) { results.push({company,error:error.message}); }
+  }
+  if (!current()) return;
+  const groups = results.map(({company,data,error},index) => `<details class="lead-contact-select">
+    <summary><strong data-no-translate>${esc(company.name)}</strong> · ${data?.contacts.length??0}</summary>
+    ${error?`<p class="error" data-no-translate>${esc(error)}</p>`:renderEnrichmentTrace(data?.enrichment)}
+    ${data?leadContactChoices(data,'company-'+index):''}<p data-bulk-contact-save-error="${index}" role="alert"></p>
+  </details>`).join('');
+  const anyContacts = results.some(row=>row.data?.contacts.length);
+  panel.innerHTML = `<p role="status"><span>Zbadane firmy</span> ${results.length} / ${companies.length}</p>
+    <form id="lead-contact-bulk-form">${groups}
+    ${anyContacts?`<label class="check"><input type="checkbox" data-select-bulk-contact-all><span>Zaznacz wszystkie kontakty</span></label>
+      ${contactTagsControl('', 'lead-bulk-research-tags')}
+      <div class="actions"><button class="primary">Zapisz w Kontaktach</button></div>`:'<p>Brak kontaktów do zapisania.</p>'}</form>`;
+  if (!anyContacts) return;
+  const form = panel.querySelector('form');
+  const all = form.querySelector('[data-select-bulk-contact-all]');
+  all.onchange = () => { for (const input of form.querySelectorAll('input[name^="company-"]:enabled')) input.checked=all.checked; };
+  form.onsubmit = event => {
+    event.preventDefault();
+    void run(event.submitter,async()=>{
+      const fields = new FormData(form),tags = contactTags(fields.get('tags'));
+      const selections = results.map((row,index)=>({row,index,selected:leadContactSelection(fields,'company-'+index)}))
+        .filter(entry=>entry.selected.length);
+      if (!selections.length) throw Error('Wybierz kontakty z wyników wyszukiwania.');
+      if (!tags.length) throw Error('Dodaj co najmniej jeden tag.');
+      let added=0,existing=0,failed=false;
+      for (const {row,index,selected} of selections) {
+        if (!current()) break;
+        const status=form.querySelector('[data-bulk-contact-save-error="'+index+'"]');
+        try {
+          const saved=await saveLeadContactData(row.data,row.company.name,projectId,selected,tags);
+          added+=saved.added;existing+=saved.existing;
+          for(const input of form.querySelectorAll('input[name="company-'+index+'"]')){
+            if(selected.includes(Number(input.value))){input.checked=false;input.disabled=true}
+          }
+          status.textContent='';
+        } catch(error) { failed=true;status.textContent=error.message;status.closest('details').open=true; }
+      }
+      if (current()&&!failed) $('#modal').close();
+      await refresh();
+      toast(`${translateUiText('Dodano kontaktów')} ${added} · ${translateUiText('Uzupełniono istniejących')} ${existing}`);
+    });
+  };
+  syncLanguages();
+}
+
+async function tagLeadContacts(searchId, projectId) {
+  const epoch=simulationEpoch;
+  modal('<h2>Dodaj tag do kontaktów</h2><div id="lead-contact-bulk-body"><p role="status">Wczytuję kontakty…</p></div>');
+  const panel=$('#lead-contact-bulk-body');
+  const current=()=>panel.isConnected&&$('#modal').open&&state.seller_project.id===projectId&&simulationEpoch===epoch;
+  try{
+    const {contacts}=await api('lead-search/contact-tag-candidates',{search_id:searchId,project_id:projectId});
+    if(!current())return;
+    if(!contacts.length){panel.textContent='Firmy z tego wyszukiwania nie mają zapisanych kontaktów.';return}
+    panel.innerHTML=`<form><fieldset class="lead-contact-select"><legend>Kontakty zapisane w bazie · ${contacts.length}</legend>
+      ${contacts.map(contact=>`<label class="check lead-contact-choice"><input type="checkbox" name="ids" value="${contact.id}" checked>
+      <span data-no-translate><strong>${esc(contact.name)}</strong> · ${esc(contact.email)}</span></label>`).join('')}
+      </fieldset>${contactTagsControl('', 'lead-bulk-existing-tags')}<button class="primary">Przypisz tagi</button></form>`;
+    const form=panel.querySelector('form');
+    form.onsubmit=event=>{
+      event.preventDefault();
+      void run(event.submitter,async()=>{
+        if(!current())return;
+        const fields=new FormData(form),ids=leadContactSelection(fields,'ids'),tags=contactTags(fields.get('tags'));
+        if(!ids.length||!tags.length)throw Error('Wybierz kontakty i co najmniej jeden tag.');
+        let updated=0;
+        for(let start=0;start<ids.length&&current();start+=2000){
+          const saved=await api('contacts/tags/bulk',{ids:ids.slice(start,start+2000),tags,project_id:projectId});
+          updated+=saved.updated;
+        }
+        if(current())$('#modal').close();
+        await refresh();
+        toast(translateUiText('Zaktualizowano kontakty:')+' '+updated);
+      });
+    };
+    syncLanguages();
+  }catch(error){if(current())panel.textContent=error.message}
+}
+
 function dashboardSearchProgress(data, active) {
-  if (!data.search?.live || data.search.stopped || monitoringSimulation) return null;
-  if (active.some(job => job.kind === 'discover')) return {label:'Wyszukiwanie nowych firm'};
+  if (monitoringSimulation) return null;
+  const otherWork = data.active_agent_jobs ? {label:'Praca agentów'} : null;
+  if (!data.search?.live || data.search.stopped) return otherWork;
+  const pendingDiscovery = active.filter(job => job.kind === 'discover').length;
+  if (pendingDiscovery) {
+    const completed = data.jobs.filter(job => job.kind === 'discover' && ['done','failed'].includes(job.status)).length;
+    return {label:'Wyszukiwanie nowych firm', completed, total:completed + pendingDiscovery};
+  }
   const remaining = new Set(active.filter(job => job.kind === 'research' || job.kind === 'evaluate').map(job => job.domain));
   if (remaining.size) {
     const total = data.companies.length;
@@ -366,16 +557,26 @@ function dashboardSearchProgress(data, active) {
     const pending = active.filter(job => job.kind === 'signals').length;
     return {label:'Weryfikacja sygnałów projektu', completed, total:completed + pending};
   }
-  return null;
+  return otherWork;
 }
 
-function renderDashboardSearchProgress(root, progress) {
+function renderDashboardSearchProgress(root) {
   const panel = root._searchProgress;
+  const progress = (root._starting ? {label:'Uruchamiam wyszukiwanie…'} : root._lastSearchProgress) ||
+    (root._stopping ? {label:'Praca agentów'} : null);
   panel.hidden = !progress;
   if (!progress) return;
-  const label = panel.querySelector('p'), bar = panel.querySelector('progress');
-  const text = translateUiText(progress.label) + (progress.total ? ` · ${progress.completed} / ${progress.total}` : '');
+  const label = panel.querySelector('#dashboard-search-stage'), bar = panel.querySelector('progress');
+  const completion = panel.querySelector('[data-dashboard-search-completion]');
+  const stop = panel.querySelector('[data-lead-stop]');
+  const text = translateUiText(progress.label);
   if (label.textContent !== text) label.textContent = text;
+  const counter = progress.total ? `${progress.completed} / ${progress.total} · ${progressPercent(progress.completed,progress.total)}` : translateUiText('W trakcie…');
+  if (completion.textContent !== counter) completion.textContent = counter;
+  stop.disabled = Boolean(root._stopping);
+  const action = translateUiText(root._stopping ? 'Przerywanie…' : 'Przerwij');
+  if (stop.textContent !== action) stop.textContent = action;
+  stop.title = translateUiText('Zatrzymuje aktywne wyszukiwania');
   if (progress.total) {
     bar.max = progress.total;
     bar.value = progress.completed;
@@ -392,11 +593,13 @@ function renderLeadSearchResults(root, data) {
   controls.hidden = !run;
   const progress = root.querySelector('#lead-run-progress');
   const list = root.querySelector('#lead-company-results');
+  root._contactCompanies = data.companies.map(company=>({name:company.name,domain:company.domain}));
+  root.querySelector('[data-lead-contact-bulk]').hidden = !run || !root._contactCompanies.length;
   root.querySelector('.lead-results-layout').hidden = !run;
   const active = data.jobs.filter(job => ['pending','running'].includes(job.status));
   const failed = data.jobs.filter(job => job.status === 'failed');
   root._lastSearchProgress = dashboardSearchProgress(data, active);
-  renderDashboardSearchProgress(root, root._lastSearchProgress);
+  renderDashboardSearchProgress(root);
   renderLeadAgentActivity(root, data, active, failed);
   if (!run) {
     progress.textContent = translateUiText('Wpisz, kogo szukasz w tym projekcie.');
@@ -448,8 +651,9 @@ function renderLeadSearchResults(root, data) {
   root._ownSignalTypes = (data.signal_types || []).filter(item=>ownSignalTypes.has(item.key));
   root.querySelector('[data-lead-priority]').hidden = !data.companies.some(company=>company.priority);
   const known = new Map(Array.from(list.children).map(node => [node.dataset.company,node]));
+  const hasSavedContact = savedCompanyContacts();
   for (const company of data.companies) {
-    const node = leadSearchCompany(company, known.get(company.domain),root._ownSignalTypes.length>0,run.criteria.length);
+    const node = leadSearchCompany(company, known.get(company.domain),root._ownSignalTypes.length>0,run.criteria.length,hasSavedContact(company.name,company.domain));
     if (!node.isConnected) list.append(node);
   }
   const reveal = root._reveal?.searchId===run.id ? root._reveal : null;
@@ -480,7 +684,6 @@ function renderLeadAgentActivity(root, data, active, failed) {
   const stopped = data.jobs.filter(job => job.status === 'cancelled');
   const activity = [...active,...failed,...stopped,...completedDiscovery,...completedSignals,...completedBrowser];
   tasks.hidden = !activity.length && !data.active_agent_jobs;
-  tasks.querySelector('[data-lead-stop]').hidden = !data.active_agent_jobs;
   const otherJobs = Math.max(0, data.active_agent_jobs - active.length);
   const other = tasks.querySelector('[data-lead-other-jobs]');
   other.hidden = !otherJobs;
@@ -624,6 +827,7 @@ async function pollLeadSearch() {
   if (!state || leadSearchPollActive) return;
   leadSearchPollActive = true;
   const project = state.seller_project.id;
+  const epoch = simulationEpoch;
   const currentView = view;
   if (currentView === 'dashboard' && !monitoringSimulation) window.postMessage({type:'KATIE_LEAD_BROWSER_POLL'}, location.origin);
   const root = $('#dashboard-lead-results') || $('#lead-discover-feed');
@@ -633,7 +837,7 @@ async function pollLeadSearch() {
   try {
     const data = await leadSearchRead(currentView === 'lead-discover' ? selection?.id : root?._run,
       !['dashboard','lead-discover'].includes(currentView));
-    if (state.seller_project.id !== project || data.project_id !== project || (root?.isConnected && generation!==root._generation)) return;
+    if (epoch!==simulationEpoch || state.seller_project.id !== project || data.project_id !== project || (root?.isConnected && generation!==root._generation)) return;
     leadSearchBell(data);
     if (root?.isConnected && currentView === view && generation === root._generation && selection === leadNotificationSelection) {
       if (currentView === 'dashboard' && !root._starting) renderLeadSearchResults(root,data);

@@ -46,6 +46,11 @@ if __name__=='__main__':
     def hunter_fixture(self, endpoint, params=None, body=None):
         if self.key != 'browser-fixture-only':
             raise ValueError('Browser fixture requires its isolated test key')
+        if endpoint == 'people/find':
+            email = (params or {}).get('email')
+            return {'data': {'email': email, 'name': {'fullName': 'Anna Hunter'},
+                             'employment': {'name': 'Hunter Fixture', 'title': 'Director'},
+                             'phone': '+48 123 456 789'} if email == 'updated-qa@example.com' else None}
         if endpoint == 'discover':
             return {'data': [{'domain': 'buyer.example', 'organization': 'Buyer Retail'}], 'meta': {'filters': {'headquarters_location': {'include': [{'country': 'PL'}]}}}}
         if endpoint == 'domain-search':

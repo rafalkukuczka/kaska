@@ -116,6 +116,7 @@ async function simulationApi(path,data={}){
     existing:state.contacts.some(contact=>contact.email.toLowerCase()===email)};
   });
   result={id:simulationResultId(),company:data.company,domain,organization:data.company,contacts,simulated:true};
+  if(data.provider==='auto')result.enrichment=[{provider:'Symulacja',status:'ok',added:contacts.length,detail:'Przygotowano przykładowe wyniki.'}];
   if(path==='discover/contacts/search')(results.contactSearches||={})[result.id]=result;
  }else if(path==='discover/contacts/add'){
   const search=results.contactSearches?.[data.id];

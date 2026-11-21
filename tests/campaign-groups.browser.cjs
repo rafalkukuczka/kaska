@@ -20,7 +20,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
    await api('contact/status',{id:state.contacts.find(c=>c.email==='paused@retail.example').id,status:'paused'});await refresh();
   });
   await page.locator('nav [data-view=campaigns]').click();
-  await page.locator('[data-action=new-campaign]').click();
+  await page.locator('[data-action=new-campaign]').click();await page.locator('#new-campaign-form button.primary').click();
   assert.equal(await page.locator('#build-mode').inputValue(),'tags');
   assert.equal(await page.locator('#builder-target-tags').isVisible(),true);
   await page.locator('#build-name').fill('Retail campaign');
@@ -33,7 +33,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('#build-tag-match').selectOption('all');
   assert.ok((await page.locator('#builder-recipient-hint').innerText()).endsWith('1'));
   await page.locator('[data-builder=save-draft]').click();
-  await page.locator('[data-builder=exit]').click();await page.locator('[data-action=new-campaign]').click();
+  await page.locator('[data-builder=exit]').click();await page.locator('[data-action=new-campaign]').click();await page.locator('#new-campaign-form button.primary').click();
   assert.equal(await page.locator('[name=audience_tags][value=Retail]').isChecked(),true);
   await page.evaluate(async()=>{
    sellerPending={website:'https://seller.example',offer:'Project offer',audience:'Project audience',pain_points:'Pain one\nPain two',value_props:'Project value',proof_points:'Project proof'};
@@ -51,7 +51,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('[name=proof_points]').inputValue(),'Project proof');
   await page.locator('#build-offer').fill('Campaign override');
   assert.equal(await page.evaluate(()=>sellerProject().offer),'Project offer');
-  await page.locator('[data-builder=exit]').click();await page.locator('[data-action=new-campaign]').click();
+  await page.locator('[data-builder=exit]').click();await page.locator('[data-action=new-campaign]').click();await page.locator('#new-campaign-form button.primary').click();
   assert.equal(await page.locator('#build-offer').inputValue(),'Campaign override');
   await page.locator('[data-builder-step="1"]').click();await page.locator('#build-offer').fill('Offer for retailers');
   await page.locator('[data-builder-step="3"]').click();
@@ -71,7 +71,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   });assert.equal(bad,400);
   await page.reload();await page.waitForFunction(()=>state?.campaigns?.length);
   assert.deepEqual(await page.evaluate(()=>JSON.parse(state.campaigns.find(c=>c.name==='Retail campaign').audience_tags)),['ERP','Retail']);
-  await page.locator('[data-action=new-campaign]').click();await page.locator('#build-mode').selectOption('all');
+  await page.locator('[data-action=new-campaign]').click();await page.locator('#new-campaign-form button.primary').click();await page.locator('#build-mode').selectOption('all');
   assert.equal(await page.locator('#builder-target-tags').isHidden(),true);assert.equal(await page.locator('[name=audience_tags]').first().isDisabled(),true);
   await page.locator('#build-mode').selectOption('tags');await page.locator('[name=audience_tags][value=Retail]').check();
   await page.setViewportSize({width:390,height:844});

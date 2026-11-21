@@ -4,17 +4,39 @@ function contactTags(value){
  const values=Array.isArray(value)?value:String(value||'').split(';'),seen=new Set();
  return values.map(tag=>String(tag).normalize('NFC').trim()).filter(tag=>{const key=tag.toLocaleLowerCase();if(!tag||seen.has(key))return false;seen.add(key);return true});
 }
-function contactResearchDetails(data){
- if(!data||!Object.keys(data).length)return '';
+function savedCompanyContacts(){
+ const nameKey=value=>String(value||'').normalize('NFC').trim().replace(/\s+/g,' ').toLocaleLowerCase();
+ const domainKey=value=>String(value||'').trim().toLowerCase().replace(/^www\./,'').replace(/\.$/,'');
+ const names=new Set((state.contact_company_counts||[]).filter(row=>row.total>0).map(row=>nameKey(row.company)));
+ const domains=new Set();
+ for(const contact of state.contacts){
+  const name=nameKey(contact.company);
+  if(name)names.add(name);
+  const research=contact.research_data;
+  const known=[research?.domain,!name&&contact.email?.split('@').pop()];
+  if(research?.website){
+   try{known.push(new URL(research.website).hostname)}catch{}
+  }
+  for(const value of known){
+   const domain=domainKey(value);
+   if(domain)domains.add(domain);
+  }
+ }
+ return (company,domain)=>names.has(nameKey(company))||domains.has(domainKey(domain));
+}
+function contactResearchDetails(data,showPhone=true,contactId){
+ if(!data||!Object.keys(data).some(key=>showPhone||key!=='work_phone'))return '';
  const labels={first_name:'Imię',last_name:'Nazwisko',domain:'Domena firmy',work_phone:'Telefon służbowy',department:'Dział',
   seniority:'Szczebel stanowiska',city:'Miasto',state:'Region',country:'Kraj',provider:'Dostawca danych'};
- const attributes=Object.entries(labels).filter(([key])=>data[key]).map(([key,label])=>
+ const attributes=Object.entries(labels).filter(([key])=>data[key]&&(showPhone||key!=='work_phone')).map(([key,label])=>
   `<div><dt>${label}</dt><dd data-no-translate>${esc(data[key])}</dd></div>`).join('');
- const sources=(data.sources||[]).map(item=>`<li>${sourceLink(item.url)||esc(item.url)}
+ const sources=(data.sources||[]).map(item=>`<li>${sourceLink(item.url,item.url,contactId)||esc(item.url)}
   ${item.last_seen?`<small data-no-translate>${esc(item.last_seen)}</small>`:''}</li>`).join('');
  return `<details class="contact-research-details"><summary>Dodatkowe dane i źródła</summary>
   ${attributes?`<dl>${attributes}</dl>`:''}
-  ${data.linkedin?`<p>${sourceLink(data.linkedin,'Profil LinkedIn')||esc(data.linkedin)}</p>`:''}
+  ${data.website?`<p>${sourceLink(data.website,data.website,contactId)||esc(data.website)}</p>`:''}
+  ${data.address?`<p><strong>Adres</strong><br><span class="contact-postal-address" data-no-translate>${esc(data.address)}</span></p>`:''}
+  ${data.linkedin?`<p>${sourceLink(data.linkedin,'Profil LinkedIn',contactId)||esc(data.linkedin)}</p>`:''}
   ${sources?`<ul>${sources}</ul>`:''}</details>`;
 }
 function contactTagsControl(value='',id='contact-tags'){
@@ -87,6 +109,246 @@ function contactGroupForm(id){
  modal(`<h2>Tagi kontaktu</h2><p data-no-translate>${esc(contact.name)} · ${esc(contact.email)}</p><form id="contact-group-form">${contactTagsControl(contact.tags||'')}<p class="hint">Pozostaw puste, aby usunąć wszystkie tagi kontaktu.</p><div class="actions"><button class="primary">Zapisz tagi</button><button type="button" class="secondary close">Anuluj</button></div></form>`);
  $('#contact-group-form').onsubmit=e=>{e.preventDefault();run(e.submitter,async()=>{await api('contact/tags',{id,tags:e.target.elements.tags.value});$('#modal').close();await refresh();toast('Tagi kontaktu zapisane.')})};
 }
+function manualContactButton(company,website,label='Dodaj kontakt ręcznie'){
+ return `<button type="button" class="secondary" data-manual-contact-company="${esc(company)}" data-contact-website="${esc(website)}">${esc(label)}</button>`;
+}
+
+function contactLocationFields(prefix,{website='',address=''}={}){
+ return `<label for="${prefix}-website">Strona internetowa</label><input id="${prefix}-website" name="website" inputmode="url" maxlength="2048" value="${esc(website)}" placeholder="firma.pl">
+ <label for="${prefix}-address">Adres</label><textarea id="${prefix}-address" name="address" rows="2" maxlength="600">${esc(address)}</textarea>`;
+}
+
+function contactIntakeMarkup(text){
+ return `<section class="contact-intake">
+   <label for="contact-intake-text">Wklej dane kontaktu lub obraz</label>
+   <textarea id="contact-intake-text" rows="4" maxlength="5000" placeholder="Podpis e-mail, zdjęcie wizytówki lub zrzut ekranu">${esc(text)}</textarea>
+   <div class="contact-intake-image" data-contact-intake-image hidden>
+    <img alt="${esc(translateUiText('Wklejony obraz kontaktu'))}">
+    <button type="button" class="link" data-contact-intake-remove-image>Usuń obraz</button>
+   </div>
+   <button type="button" class="secondary" data-contact-intake-parse>Rozdziel dane</button>
+   <p class="hint" role="status" data-contact-intake-feedback></p>
+  </section>`;
+}
+function showManualContactForm({company='',website='',text=''}={}){
+ const epoch=simulationEpoch,project_id=state.seller_project.id;
+ modal(`<h2>Dodaj kontakt</h2><form id="contact-form">
+  ${contactIntakeMarkup(text)}
+  <div class="row">
+   <div><label for="new-contact-name">Imię i nazwisko</label><input id="new-contact-name" name="name" maxlength="250"></div>
+   <div><label for="new-contact-email">E-mail</label><input id="new-contact-email" name="email" type="email" maxlength="254" required></div>
+  </div>
+  <label for="new-contact-phone">Telefon</label><input id="new-contact-phone" name="phone" type="tel" maxlength="45">
+  <div class="row">
+   <div><label for="new-contact-company">Firma</label><input id="new-contact-company" name="company" maxlength="250" value="${esc(company)}"></div>
+   <div><label for="new-contact-role">Stanowisko</label><input id="new-contact-role" name="role" maxlength="250"></div>
+  </div>
+  ${contactLocationFields('new-contact',{website})}
+  ${contactTagsControl()}
+  <label for="new-contact-notes">Notatki</label><textarea id="new-contact-notes" name="notes" maxlength="1200"></textarea>
+  <p class="error" role="alert" data-contact-intake-error></p>
+  <div class="actions"><button type="submit" class="primary">Zapisz kontakt</button><button type="button" class="secondary" data-contact-intake-cancel>Anuluj</button></div>
+ </form>`);
+ const form=$('#contact-form'),error=form.querySelector('[data-contact-intake-error]');
+ const active=()=>form.isConnected&&$('#modal').open&&epoch===simulationEpoch&&project_id===state.seller_project.id;
+ bindContactIntake(form,active);
+ form.querySelector('[data-contact-intake-cancel]').onclick=()=>$('#modal').close();
+ form.onsubmit=event=>{
+  event.preventDefault();
+  if(!active())return;
+  void run(event.submitter,async()=>{
+   error.textContent='';
+   try{
+    await api('contacts/manual',{...Object.fromEntries(new FormData(form)),project_id});
+    if(active())$('#modal').close();
+    await refresh();
+    toast(translateUiText('Kontakt zapisany.'));
+   }catch(failure){if(active())error.textContent=translateUiText(failure.message)}
+  });
+ };
+ syncLanguages();
+}
+
+async function prepareContactImage(file){
+ if(!['image/png','image/jpeg','image/webp'].includes(file.type))throw Error('Wklej obraz PNG, JPEG lub WebP.');
+ if(file.size>20_000_000)throw Error('Obraz kontaktu jest zbyt duży.');
+ const bitmap=await createImageBitmap(file).catch(()=>{throw Error('Nie udało się odczytać obrazu kontaktu.')});
+ try{
+  const scale=Math.min(1,2400/Math.max(bitmap.width,bitmap.height));
+  const canvas=document.createElement('canvas');
+  canvas.width=Math.max(1,Math.round(bitmap.width*scale));
+  canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+  const context=canvas.getContext('2d',{alpha:false});
+  context.fillStyle='#fff';
+  context.fillRect(0,0,canvas.width,canvas.height);
+  context.drawImage(bitmap,0,0,canvas.width,canvas.height);
+  for(const quality of [0.94,0.84,0.72]){
+   const result=canvas.toDataURL('image/jpeg',quality);
+   if(result.startsWith('data:image/jpeg;base64,')&&result.length<=1_800_000)return result;
+  }
+  throw Error('Obraz kontaktu jest zbyt duży.');
+ }finally{bitmap.close()}
+}
+
+function bindContactIntake(form,active,{mergeNotes=false}={}){
+ const source=form.querySelector('#contact-intake-text'),parse=form.querySelector('[data-contact-intake-parse]');
+ const feedback=form.querySelector('[data-contact-intake-feedback]'),error=form.querySelector('[data-contact-intake-error]');
+ const preview=form.querySelector('[data-contact-intake-image]'),thumbnail=preview.querySelector('img');
+ let attempt=0,image='';
+ function resetInput(){
+  attempt++;image='';preview.hidden=true;thumbnail.removeAttribute('src');
+  parse.disabled=false;feedback.textContent='';error.textContent='';
+ }
+ async function split(){
+  const input=source.value.trim();
+  const imageToRead=image;
+  if((!input&&!imageToRead)||!active())return;
+  const request=++attempt,previous=Object.fromEntries(new FormData(form));
+  parse.disabled=true;error.textContent='';
+  feedback.textContent=translateUiText(imageToRead?'Odczytuję obraz kontaktu…':'Rozdzielam dane kontaktu…');
+  try{
+   const {fields,transcript}=await api('contacts/parse',imageToRead?{image:imageToRead}:{text:input});
+   if(!active()||request!==attempt)return;
+   if(imageToRead&&transcript)source.value=transcript;
+   for(const [key,value] of Object.entries(fields)){
+    const field=form.elements.namedItem(key);
+    if(!field||field.value!==previous[key])continue;
+    if(mergeNotes&&key==='notes'&&field.value){
+     if(!field.value.includes(value))field.value+='\n'+value;
+    }else field.value=value;
+   }
+   feedback.textContent=translateUiText(Object.keys(fields).length?'Sprawdź uzupełnione pola przed zapisaniem.':'Uzupełnij brakujące pola ręcznie.');
+  }catch(failure){
+   if(active()&&request===attempt){feedback.textContent='';error.textContent=translateUiText(failure.message)}
+  }finally{if(request===attempt)parse.disabled=false}
+ }
+ source.oninput=resetInput;
+ preview.querySelector('[data-contact-intake-remove-image]').onclick=()=>{
+  resetInput();source.focus();
+ };
+ source.onpaste=event=>{
+  const clipboard=event.clipboardData;
+  const file=[...(clipboard?.files||[])].find(file=>file.type.startsWith('image/'))||
+    [...(clipboard?.items||[])].find(item=>item.kind==='file'&&item.type.startsWith('image/'))?.getAsFile();
+  if(!file){setTimeout(()=>void split(),0);return}
+  event.preventDefault();
+  resetInput();
+  const request=attempt;
+  parse.disabled=true;feedback.textContent=translateUiText('Odczytuję obraz kontaktu…');
+  void prepareContactImage(file).then(encoded=>{
+   if(!active()||request!==attempt)return;
+   image=encoded;thumbnail.src=image;preview.hidden=false;source.value='';
+   return split();
+  }).catch(failure=>{
+   if(!active()||request!==attempt)return;
+   feedback.textContent='';error.textContent=translateUiText(failure.message);
+  }).finally(()=>{if(request===attempt)parse.disabled=false});
+ };
+ parse.onclick=()=>void split();
+ if(source.value)void split();
+}
+
+document.addEventListener('click',event=>{
+ const button=event.target.closest('[data-manual-contact-company]');
+ if(button)showManualContactForm({company:button.dataset.manualContactCompany,website:button.dataset.contactWebsite});
+});
+
+let pendingContactIntake;
+function openPendingContactIntake(){
+ if(!state||!pendingContactIntake)return;
+ const {id,draft}=pendingContactIntake;
+ pendingContactIntake=null;
+ const url=new URL(location.href);
+ if(url.searchParams.get('contactIntake')!==id)return;
+ url.searchParams.delete('contactIntake');
+ history.replaceState(null,'',url);
+ if(draft&&typeof draft.text==='string'&&draft.text.trim()&&draft.text.length<=5000){
+  if(draft.target){
+   const {contactId,projectId,generation}=draft.target;
+   const contact=state.contacts.find(row=>row.id===contactId);
+   if(projectId!==state.seller_project.id||generation!==(state.simulation_generation||'')||!contact){
+    toast(translateUiText('Wróć do projektu kontaktu i otwórz jego źródło ponownie.'));
+    return;
+   }
+   showContactEditForm(contact,draft.text);
+  }else showManualContactForm({text:draft.text,website:typeof draft.website==='string'?draft.website:''});
+ }else toast(translateUiText('Zaznaczenie wygasło. Odczytaj je ponownie w Outreach.'));
+}
+
+window.addEventListener('message',event=>{
+ if(event.source!==window||event.origin!==location.origin||event.data?.type!=='KATIE_CONTACT_INTAKE')return;
+ const {id,draft}=event.data;
+ if(id!==new URLSearchParams(location.search).get('contactIntake'))return;
+ pendingContactIntake={id,draft};
+ openPendingContactIntake();
+});
+
+document.addEventListener('click',event=>{
+ const button=event.target.closest('[data-action=contact-edit]');if(!button)return;
+ const id=Number(button.dataset.id),contact=state.contacts.find(row=>row.id===id);
+ if(contact)showContactEditForm(contact);
+});
+function showContactEditForm(contact,text=''){
+ const {id}=contact,epoch=simulationEpoch,project_id=state.seller_project.id;
+ modal(`<h2>Edytuj kontakt</h2><form id="contact-edit-form">
+ ${text?`<p><span>Kontakt do uzupełnienia</span> · <strong data-no-translate>${esc(contact.name)} · ${esc(contact.email)}</strong></p>${contactIntakeMarkup(text)}`:''}
+ <label for="edit-contact-name">Imię i nazwisko</label><input id="edit-contact-name" name="name" required value="${esc(contact.name)}">
+ <label for="edit-contact-email">E-mail</label><input id="edit-contact-email" name="email" type="email" maxlength="254" required value="${esc(contact.email)}">
+ <label for="edit-contact-phone">Telefon</label><input id="edit-contact-phone" name="phone" type="tel" maxlength="45" value="${esc(contact.research_data?.work_phone||'')}">
+ <div class="row">
+  <div><label for="edit-contact-company">Firma</label><input id="edit-contact-company" name="company" value="${esc(contact.company)}"></div>
+  <div><label for="edit-contact-role">Stanowisko</label><input id="edit-contact-role" name="role" value="${esc(contact.role)}"></div>
+ </div>
+ <div class="actions"><button type="button" class="secondary" data-contact-hunter>Pobierz dane z Huntera</button></div>
+ <div data-contact-hunter-result aria-live="polite"></div>
+ ${contactLocationFields('edit-contact',contact.research_data||{})}
+ ${contactTagsControl(contact.tags||'','edit-contact-tags')}
+ <label for="edit-contact-notes">Notatki</label><textarea id="edit-contact-notes" name="notes">${esc(contact.notes)}</textarea>
+ <p class="error" role="alert" data-contact-intake-error></p>
+ <div class="actions"><button class="primary">Zapisz kontakt</button><button type="button" class="secondary" data-contact-intake-cancel>Anuluj</button></div></form>`);
+ const form=$('#contact-edit-form');
+ const active=()=>form.isConnected&&$('#modal').open&&epoch===simulationEpoch&&project_id===state.seller_project.id;
+ const error=form.querySelector('[data-contact-intake-error]');
+ const email=form.elements.email,hunter=form.querySelector('[data-contact-hunter]'),suggestions=form.querySelector('[data-contact-hunter-result]');
+ email.oninput=()=>suggestions.replaceChildren();
+ hunter.onclick=()=>{
+  if(!email.reportValidity())return;
+  const requestedEmail=email.value.trim().toLowerCase();
+  run(hunter,async()=>{
+   suggestions.textContent='Pobieram dane z Huntera…';
+   try{
+    const {fields,simulated}=await api('contact/hunter',{id,email:requestedEmail});
+    if(!form.isConnected||email.value.trim().toLowerCase()!==requestedEmail)return;
+    const labels={name:'Imię i nazwisko',phone:'Telefon',company:'Firma',role:'Stanowisko'};
+    const found=Object.keys(labels).filter(key=>fields[key]);
+    if(!found.length){suggestions.textContent='Hunter nie znalazł danych dla tego adresu.';return}
+    suggestions.innerHTML=`<p><strong>${simulated?'Dane testowe Huntera':'Dane z Huntera'}</strong></p>
+     <ul>${found.map(key=>`<li>${labels[key]}: <span data-no-translate>${esc(fields[key])}</span></li>`).join('')}</ul>
+     <button type="button" class="secondary" data-apply-hunter>Wstaw dane do formularza</button>`;
+    suggestions.querySelector('[data-apply-hunter]').onclick=()=>{
+     for(const key of found)form.elements[key].value=fields[key];
+     suggestions.textContent='Dane wstawione. Sprawdź je i zapisz kontakt.';
+    };
+   }catch(error){suggestions.replaceChildren();throw error}
+  });
+ };
+ form.onsubmit=e=>{
+  e.preventDefault();
+  if(!active())return;
+  void run(e.submitter,async()=>{
+   error.textContent='';
+   try{
+    await api('contact/update',{...Object.fromEntries(new FormData(form)),id,project_id});
+    if(active())$('#modal').close();
+    await refresh();
+    toast(translateUiText('Kontakt zapisany.'));
+   }catch(failure){if(active())error.textContent=translateUiText(failure.message)}
+  });
+ };
+ form.querySelector('[data-contact-intake-cancel]').onclick=()=>$('#modal').close();
+ if(text)bindContactIntake(form,active,{mergeNotes:true});
+ syncLanguages();
+}
 function bulkContactTagsPanel({id,count,tags,tagId,clearAttribute,applyAttribute,extra=''}){
  return `<div id="${id}" class="contact-bulk-panel"><div class="actions"><span><span>Zaznaczono kontaktów:</span> <strong id="${id==='contact-bulk-panel'?'contact-bulk-count':'lead-bulk-count'}">${count}</strong></span><button type="button" class="link" ${clearAttribute}>Odznacz wszystkie</button></div>${contactTagsControl(tags,tagId)}<p class="hint">Tagi zostaną dodane do zaznaczonych osób. Dotychczasowe tagi i statusy pozostaną zachowane. Checkbox w nagłówku zaznacza tylko widoczne kontakty.</p><button type="button" class="primary" ${applyAttribute}>Przypisz tagi do zaznaczonych</button>${extra}</div>`;
 }
@@ -131,6 +393,22 @@ async function applyBulkContactTags(){
   contactBulkSelected.clear();await refresh();toast(translateUiText('Zaktualizowano kontakty:')+' '+ids.length);
  }finally{contactBulkBusy=false;if(view==='contacts')renderContactsView()}
 }
-function visibleContacts(q=contactSearch){q=q.toLowerCase();return state.contacts.filter(c=>(contactGroupFilter==='all'||(contactGroupFilter==='ungrouped'?!contactTags(c).length:contactTags(c).some(tag=>'group:'+tag===contactGroupFilter)))&&[c.name,c.email,c.company,c.role,contactTags(c).join(' ')].join(' ').toLowerCase().includes(q))}
-function renderContacts(q){$('#contacts-body').innerHTML=visibleContacts(q).map(c=>`<tr>${contactBulkMode?`<td class="contact-bulk-check"><input type="checkbox" data-contact-bulk-id="${c.id}" aria-label="Zaznacz kontakt" ${contactBulkSelected.has(c.id)?'checked':''} ${contactBulkBusy?'disabled':''}></td>`:''}<td><strong>${esc(c.name)}</strong>${c.simulated?'<span class="badge warn">Symulacja</span>':''}<small>${esc(c.email)}</small>${contactResearchDetails(c.research_data)}</td><td>${esc(c.company)||'—'}<small>${esc(c.role)}</small></td><td><span data-no-translate>${contactTags(c).map(tag=>`<span class="badge gray">${esc(tag)}</span>`).join(' ')||esc(translateUiText('Bez tagów'))}</span><br><button class="link" data-action="contact-group" data-id="${c.id}">Edytuj tagi</button></td><td>${badge(c.status)}</td><td><button class="link" data-action="contact-status" data-id="${c.id}" data-status="paused">Wstrzymaj</button><button class="link" data-action="contact-status" data-id="${c.id}" data-status="unsubscribed">Rezygnacja</button></td></tr>`).join('')||'<tr><td colspan="'+(contactBulkMode?6:5)+'">'+translateUiText('Brak kontaktów. Dodaj osobę lub zaimportuj plik CSV.')+'</td></tr>';syncContactBulkControls()}
+function visibleContacts(q=contactSearch){q=q.toLowerCase();return state.contacts.filter(c=>(contactGroupFilter==='all'||(contactGroupFilter==='ungrouped'?!contactTags(c).length:contactTags(c).some(tag=>'group:'+tag===contactGroupFilter)))&&[c.name,c.email,c.research_data?.work_phone,c.research_data?.website,c.research_data?.address,c.company,c.role,contactTags(c).join(' ')].join(' ').toLowerCase().includes(q))}
+function renderContacts(q){
+ $('#contacts-body').innerHTML=visibleContacts(q).map(c=>{
+  const phone=c.research_data?.work_phone||'';
+  const dial=phone.startsWith('+')?'+'+phone.replace('(0)','').replace(/\D/g,''):phone.replace(/\D/g,'');
+  return `<tr>${contactBulkMode?`<td class="contact-bulk-check"><input type="checkbox" data-contact-bulk-id="${c.id}" aria-label="Zaznacz kontakt" ${contactBulkSelected.has(c.id)?'checked':''} ${contactBulkBusy?'disabled':''}></td>`:''}
+  <td><strong>${esc(c.name)}</strong>${c.simulated?'<span class="badge warn">Symulacja</span>':''}<small>${esc(c.email)}</small>
+   ${phone?`<small><a href="tel:${esc(dial)}" data-no-translate>${esc(phone)}</a></small>`:''}${contactResearchDetails(c.research_data,false,c.id)}</td>
+  <td>${esc(c.company)||'—'}<small>${esc(c.role)}</small></td>
+  <td><span data-no-translate>${contactTags(c).map(tag=>`<span class="badge gray">${esc(tag)}</span>`).join(' ')||esc(translateUiText('Bez tagów'))}</span><br>
+   <button class="link" data-action="contact-group" data-id="${c.id}">Edytuj tagi</button></td>
+  <td>${badge(c.status)}</td>
+  <td>${c.id>0?`<button class="link" data-action="contact-edit" data-id="${c.id}">Edytuj kontakt</button>`:''}
+   <button class="link" data-action="contact-status" data-id="${c.id}" data-status="paused">Wstrzymaj</button>
+   <button class="link" data-action="contact-status" data-id="${c.id}" data-status="unsubscribed">Rezygnacja</button></td></tr>`;
+ }).join('')||'<tr><td colspan="'+(contactBulkMode?6:5)+'">'+translateUiText('Brak kontaktów. Dodaj osobę lub zaimportuj plik CSV.')+'</td></tr>';
+ syncContactBulkControls();
+}
 

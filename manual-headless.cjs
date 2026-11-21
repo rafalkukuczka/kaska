@@ -1,4 +1,5 @@
 const readline = require('node:readline');
+const { readContactPages } = require('./contact-headless.cjs');
 
 const profile = process.argv[2];
 let context;
@@ -166,19 +167,24 @@ async function script({ tabId, source, args }) {
   return [{ frameId: 0, result: result.value }];
 }
 
-async function researchPage({ html, url }) {
+function startResearchBrowser() {
   if (!researchBrowser) {
     const { chromium } = require('playwright');
     const executablePath = process.env.KATIE_HEADLESS_CHROME_PATH;
     researchBrowser = chromium.launch({
       headless: true, chromiumSandbox: true,
+      args: ['--force-webrtc-ip-handling-policy=disable_non_proxied_udp'],
       ...(executablePath ? { executablePath } : { channel: 'chrome' }),
     }).catch(error => {
       researchBrowser = undefined;
       throw error;
     });
   }
-  const browser = await researchBrowser;
+  return researchBrowser;
+}
+
+async function researchPage({ html, url }) {
+  const browser = await startResearchBrowser();
   const page = await browser.newPage({ offline: true, serviceWorkers: 'block' });
   try {
     return await page.evaluate(({ html, url }) => {
@@ -210,6 +216,7 @@ async function researchPage({ html, url }) {
 async function handle(method, args) {
   switch (method) {
     case 'research': return researchPage(args);
+    case 'contact-research': return readContactPages(await startResearchBrowser(), args);
     case 'events': return { events: events.filter(event => event.id > (args.after || 0)) };
     case 'login-status': return { open: visible };
     case 'get': return describe(getTab(args.id));

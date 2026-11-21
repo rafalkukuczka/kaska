@@ -1,4 +1,11 @@
 const campaignMessagePages=new Map();
+const campaignMessageLayoutKey='kaska-campaign-messages-layout';
+let selectedCampaignMessageLayout;
+function campaignMessageLayout(){
+ if(selectedCampaignMessageLayout)return selectedCampaignMessageLayout;
+ try{return (localStorage.getItem(campaignMessageLayoutKey)??localStorage.getItem('kaska-campaign-results-layout'))==='tiles'?'tiles':'list'}
+ catch{return 'list'}
+}
 function campaignMessagePage(id){
  if(!campaignMessagePages.has(id))campaignMessagePages.set(id,{page:1,size:25,total:0,messages:[],selected:new Set(),bulk:false,busy:false,loading:false,loaded:false,sequence:0,error:''});
  return campaignMessagePages.get(id);
@@ -25,11 +32,43 @@ function campaignMessagesPagination(p){
  const pages=Math.max(1,Math.ceil(p.total/p.size));
  return `<div class="discover-company-pagination"><label><span>Wiadomości na stronie</span><select data-message-page-size ${p.busy?'disabled':''}>${[10,25,50,100].map(size=>`<option value="${size}" ${p.size===size?'selected':''}>${size}</option>`).join('')}</select></label><div class="actions"><button class="secondary" data-message-page="1" ${p.page===1||p.loading||p.busy?'disabled':''}>« <span>Pierwsza</span></button><button class="secondary" data-message-page="${p.page-1}" ${p.page===1||p.loading||p.busy?'disabled':''}>‹ <span>Poprzednia</span></button><span class="hint"><span>Strona</span> ${p.page} / ${pages}</span><button class="secondary" data-message-page="${p.page+1}" ${p.page===pages||p.loading||p.busy?'disabled':''}><span>Następna</span> ›</button><button class="secondary" data-message-page="${pages}" ${p.page===pages||p.loading||p.busy?'disabled':''}><span>Ostatnia</span> »</button></div></div>`;
 }
+function renderCampaignMessageContactTiles(w,data){
+ const root=$('#campaign-messages [data-campaign-message-contacts]');if(!root)return;
+ if(!data){root.innerHTML='<p class="hint" role="status">Wczytuję odbiorców…</p>';return}
+ const sentIds=new Set(data.summary.sent_contact_ids);
+ root.innerHTML=`${data.total?campaignRecipientPagination(w,data.total,'message-contact'):''}
+  <div class="campaign-message-contact-grid">${data.recipients.map(person=>{
+   const sent=sentIds.has(person.id)||person.messages.some(message=>message.status==='sent');
+   return `<article class="campaign-message-contact" data-delivery="${sent?'sent':'unsent'}">
+    <strong data-no-translate>${esc(person.name||person.email)}</strong><small data-no-translate>${esc(person.email)}</small>
+    ${person.company?`<small data-no-translate>${esc(person.company)}</small>`:''}
+    <span class="campaign-message-contact-status">${sent?'Wysłano':'Jeszcze nie wysłano'}</span>
+    ${person.messages.length?`<div class="campaign-message-contact-actions">${person.messages.map(message=>`
+      <div>${person.messages.length>1?`<small><span>Krok</span> ${message.position+1}</small>`:''}
+      <button type="button" class="link" data-action="message" data-id="${message.id}">Podgląd / edycja</button></div>`).join('')}</div>`:''}
+   </article>`;
+  }).join('')||'<p class="hint">Brak pasujących odbiorców</p>'}</div>`;
+}
 function renderCampaignMessages(id){
  const root=$('#campaign-messages');if(!root||Number(root.dataset.campaignId)!==id)return;
  const p=campaignMessagePage(id),campaign=state.campaigns.find(c=>c.id===id);if(!campaign)return;
+ const layout=campaignMessageLayout();
+ const heading=`<div class="panel-head campaign-messages-head"><h2><span>Wiadomości</span> · ${p.total}</h2>
+ <div class="actions">
+  <div class="actions" role="group" aria-label="Widok wiadomości">
+   <button type="button" class="secondary" data-campaign-message-layout="list" aria-pressed="${layout==='list'}">Lista</button>
+   <button type="button" class="secondary" data-campaign-message-layout="tiles" aria-pressed="${layout==='tiles'}">Kafelki</button>
+  </div>
+  ${p.loaded&&p.total?campaignReprepareButton(id,'secondary'):''}
+ </div></div>`;
+ if(layout==='tiles'){
+  root.innerHTML=heading+'<div data-campaign-message-contacts></div>';
+  const w=campaignWorkspace(id);
+  renderCampaignMessageContactTiles(w,campaignWorkspaceData(w));
+  return;
+ }
  const busy=p.busy||p.loading,visible=p.messages.filter(m=>m.status!=='sending'),selected=visible.filter(m=>p.selected.has(m.id)).length;
- root.innerHTML=`<div class="panel-head"><h2><span>Wiadomości</span> · ${p.total}</h2>${p.loaded&&p.total?campaignReprepareButton(id,'secondary'):''}</div>${p.error?`<p class="error" role="alert" data-no-translate>${esc(p.error)}</p><button class="secondary" data-message-retry>Spróbuj ponownie</button>`:''}${p.loading?'<p class="hint" role="status">Wczytuję wiadomości…</p>':''}${p.loaded&&(!p.loading||p.total)?`<label class="contact-bulk-toggle"><input type="checkbox" data-message-bulk-toggle ${p.bulk?'checked':''} ${busy?'disabled':''}><span>Operacje zbiorcze</span></label>${p.bulk?`<div class="actions message-bulk-actions"><span><span>Zaznaczono wiadomości:</span> <strong>${p.selected.size}</strong></span><button class="link" data-message-clear ${busy||!p.selected.size?'disabled':''}>Odznacz wszystkie</button><button class="secondary danger" data-message-delete ${busy||!p.selected.size||campaign.status==='active'?'disabled':''}>Usuń zaznaczone</button></div>${campaign.status==='active'?'<p class="hint">Wstrzymaj kampanię przed usunięciem wiadomości.</p>':''}`:''}${p.total?campaignMessagesPagination(p)+`<div class="table-wrap"><table><thead><tr>${p.bulk?`<th class="contact-bulk-check"><input type="checkbox" data-message-all aria-label="${esc(translateUiText('Zaznacz wszystkie widoczne wiadomości'))}" ${visible.length&&selected===visible.length?'checked':''} ${busy||!visible.length?'disabled':''}></th>`:''}<th>Odbiorca</th><th>Temat</th><th>Krok</th><th>Status</th><th></th></tr></thead><tbody>${p.messages.map(m=>`<tr>${p.bulk?`<td class="contact-bulk-check"><input type="checkbox" data-message-select="${m.id}" aria-label="${esc(translateUiText('Zaznacz wiadomość'))}" ${p.selected.has(m.id)?'checked':''} ${busy||m.status==='sending'?'disabled':''}></td>`:''}<td>${esc(m.email)}</td><td>${esc(m.subject)}${m.error?`<small class="error">${esc(m.error)}</small>`:''}</td><td>${m.position+1}</td><td>${messageDeliveryProgress(m)}</td><td><button class="link" data-action="message" data-id="${m.id}">Podgląd / edycja</button></td></tr>`).join('')}</tbody></table></div>`:empty('Najpierw przygotuj wiadomości','Powstaną osobne szkice dla każdego odbiorcy i kroku.')}`:''}`;
+ root.innerHTML=`${heading}${p.error?`<p class="error" role="alert" data-no-translate>${esc(p.error)}</p><button class="secondary" data-message-retry>Spróbuj ponownie</button>`:''}${p.loading?'<p class="hint" role="status">Wczytuję wiadomości…</p>':''}${p.loaded&&(!p.loading||p.total)?`<label class="contact-bulk-toggle"><input type="checkbox" data-message-bulk-toggle ${p.bulk?'checked':''} ${busy?'disabled':''}><span>Operacje zbiorcze</span></label>${p.bulk?`<div class="actions message-bulk-actions"><span><span>Zaznaczono wiadomości:</span> <strong>${p.selected.size}</strong></span><button class="link" data-message-clear ${busy||!p.selected.size?'disabled':''}>Odznacz wszystkie</button><button class="secondary danger" data-message-delete ${busy||!p.selected.size||campaign.status==='active'?'disabled':''}>Usuń zaznaczone</button></div>${campaign.status==='active'?'<p class="hint">Wstrzymaj kampanię przed usunięciem wiadomości.</p>':''}`:''}${p.total?campaignMessagesPagination(p)+`<div class="table-wrap"><table><thead><tr>${p.bulk?`<th class="contact-bulk-check"><input type="checkbox" data-message-all aria-label="${esc(translateUiText('Zaznacz wszystkie widoczne wiadomości'))}" ${visible.length&&selected===visible.length?'checked':''} ${busy||!visible.length?'disabled':''}></th>`:''}<th>Odbiorca</th><th>Temat</th><th>Krok</th><th>Status</th><th></th></tr></thead><tbody>${p.messages.map(m=>`<tr>${p.bulk?`<td class="contact-bulk-check"><input type="checkbox" data-message-select="${m.id}" aria-label="${esc(translateUiText('Zaznacz wiadomość'))}" ${p.selected.has(m.id)?'checked':''} ${busy||m.status==='sending'?'disabled':''}></td>`:''}<td>${esc(m.email)}</td><td>${esc(m.subject)}${m.error?`<small class="error">${esc(m.error)}</small>`:''}</td><td>${m.position+1}</td><td>${messageDeliveryProgress(m)}</td><td><button class="link" data-action="message" data-id="${m.id}">Podgląd / edycja</button></td></tr>`).join('')}</tbody></table></div>`:empty('Najpierw przygotuj wiadomości','Powstaną osobne szkice dla każdego odbiorcy i kroku.')}`:''}`;
  const all=root.querySelector('[data-message-all]');if(all)all.indeterminate=selected>0&&selected<visible.length;
 }
 async function loadCampaignMessages(id,{silent=false}={}){
@@ -62,7 +101,16 @@ document.addEventListener('change',event=>{
 });
 document.addEventListener('click',event=>{
  const button=event.target.closest('button');if(!button?.closest('#campaign-messages'))return;
- const id=selectedCampaign,p=campaignMessagePage(id);if(p.busy||p.loading)return;
+ const id=selectedCampaign,p=campaignMessagePage(id);
+ if(button.matches('[data-campaign-message-layout]')){
+  selectedCampaignMessageLayout=button.dataset.campaignMessageLayout;
+  try{localStorage.setItem(campaignMessageLayoutKey,selectedCampaignMessageLayout)}catch{}
+  renderCampaignMessages(id);
+  syncLanguages();
+  $('#campaign-messages [data-campaign-message-layout="'+selectedCampaignMessageLayout+'"]')?.focus();
+  return;
+ }
+ if(p.busy||p.loading)return;
  if(button.matches('[data-message-page]')){p.page=Number(button.dataset.messagePage);loadCampaignMessages(id)}
  if(button.matches('[data-message-retry]'))loadCampaignMessages(id);
  if(button.matches('[data-message-clear]')){p.selected.clear();renderCampaignMessages(id)}
