@@ -6,6 +6,7 @@ import time
 import urllib.error
 import urllib.request
 import openai_usage
+import billable_activity
 
 DEFAULT_MODEL = 'gpt-6-luna'
 
@@ -61,7 +62,7 @@ def generate_json(instructions, data, fields, *, api_key=None, model=None, web_s
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
-        with urllib.request.build_opener(NoRedirect).open(request, timeout=120) as response:
+        with billable_activity.track('OpenAI'), urllib.request.build_opener(NoRedirect).open(request, timeout=120) as response:
             raw = response.read(1_000_001)
         if len(raw) > 1_000_000:
             raise ValueError('Odpowiedź OpenAI jest zbyt duża.')

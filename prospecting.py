@@ -11,6 +11,7 @@ import urllib.request
 from urllib.parse import urlencode, urlparse
 
 import ai_service
+import billable_activity
 import openai_usage
 import contact_tags
 import contact_enrichment
@@ -55,7 +56,8 @@ class Hunter:
             def redirect_request(self, *args, **kwargs):
                 return None
         try:
-            with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
+            provider = 'Hunter' if endpoint in ('domain-search','email-verifier') else None
+            with billable_activity.track(provider), urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
                 if response.status == 202:
                     return {'data': {'status': 'pending'}}
                 if response.status != 200:

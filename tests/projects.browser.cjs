@@ -35,6 +35,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
    await refresh();
   });
   await page.locator('#seller-name').fill('Company A');
+  await page.locator('[data-project-tab=offer]').click();
   await page.locator('#prospect-website').fill('alpha.example');
   await page.locator('#prospect-offer').fill('Consulting A');
   await page.locator('#seller-project-form [data-point-editor=pain_points] .point-row input').fill('Pain A');
@@ -63,6 +64,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.evaluate(()=>localStorage.getItem(builderDraftKey())),null);
   assert.equal(await page.locator('#prospect-offer').inputValue(),'');
   assert.equal(await page.locator('#seller-project-form [name=pain_points]').inputValue(),'');
+  await page.locator('[data-project-tab=offer]').click();
   await page.locator('#prospect-offer').fill('Delivery B');
   await page.locator('#seller-project-form [data-point-editor=pain_points] .point-row input').fill('Pain B');
   await page.locator('#seller-project-form [data-point-editor=value_props] .point-row input').fill('Value B');

@@ -20,6 +20,7 @@ const backgroundLabels={
  'extension/translate':'Rozszerzenie · Tłumaczenie',
  'ai/suggest-audience':'Przygotowywanie filtra wyszukiwania',
  'research':'Odczyt strony i oferty','ai/refine':'Poprawianie tekstu z AI',
+ 'offer/generate':'Przygotowywanie oferty',
  'ai/selling-points':'Przygotowywanie problemów i wartości','ai/proof-points':'Odczyt dowodów ze strony',
  'ai/step-prompt':'Przygotowywanie kroku kampanii',
  'campaign/prepare':'Przygotowywanie wiadomości','prospecting/search':'Uruchamianie wyszukiwania klientów',
@@ -94,12 +95,23 @@ function renderOpenAIUsage(operations){
   ${row.web_calls?' · Web Search: '+number.format(row.web_calls):''}</small></li>`).join('');
  if(list._items!==items){list.innerHTML=items;list._items=items}
 }
+function renderBillableActivity(providers){
+ const bell=$('#openai-cost-bell'),active=providers.length>0;
+ const label=translateUiText(active?'API z możliwym kosztem':'Koszty OpenAI')+(active?' · '+providers.join(', '):'');
+ bell.classList.toggle('billable-active',active);
+ bell.title=label;
+ bell.setAttribute('aria-label',label);
+}
 async function pollOpenAIUsage(){
  if(openAIUsagePolling||document.hidden)return;
  openAIUsagePolling=true;
  try{
   const response=await fetch('/api/openai-usage');
-  if(response.ok)renderOpenAIUsage((await response.json()).operations);
+  if(response.ok){
+   const data=await response.json();
+   renderBillableActivity(data.billable_providers||[]);
+   renderOpenAIUsage(data.operations);
+  }
  }catch{}finally{openAIUsagePolling=false}
 }
 document.addEventListener('DOMContentLoaded',pollOpenAIUsage);

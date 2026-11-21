@@ -1,15 +1,19 @@
-// Data acquisition and email delivery are simulated; user-entered configuration stays on the server.
+// Local simulation results belong to one copy of the workspace.
 let monitoringSimulation=true,simulationEpoch=0;
 try{monitoringSimulation=(localStorage.getItem('kaska-simulation')||localStorage.getItem('kaska-monitoring-simulation'))!=='off'}catch{}
 let simulationResults={};
+let simulationResultsGeneration;
 let simulationIdSequence=0;
 // IDs for fictional local results only; these are never authentication tokens.
 function simulationResultId(){
  const id=typeof globalThis.crypto?.randomUUID==='function'?globalThis.crypto.randomUUID():Date.now().toString(36)+'-'+(++simulationIdSequence).toString(36)+'-'+Math.random().toString(36).slice(2);
  return 'sim-'+id;
 }
-try{simulationResults=JSON.parse(sessionStorage.getItem('kaska-data-simulation-results')||'{}')}catch{}
-const simulatedFetchPaths=new Set(['discover/opportunities/start','discover/opportunities/cancel','discover/contacts/search','prospecting/search','prospecting/verify','research','ai/proof-points','library/discover','library/add','sync']);
+try{
+ simulationResults=JSON.parse(sessionStorage.getItem('kaska-data-simulation-results')||'{}');
+ simulationResultsGeneration=sessionStorage.getItem('kaska-data-simulation-generation');
+}catch{}
+const simulatedFetchPaths=new Set(['discover/opportunities/start','discover/opportunities/cancel','discover/contacts/search','lead-search/contact-search','prospecting/search','prospecting/verify','research','ai/proof-points','library/discover','library/add','sync']);
 function shouldSimulateRequest(path,data){
  if(path==='prospecting/candidates/bulk'&&String(data?.id).startsWith('sim-')){
   if(!monitoringSimulation)throw Error('Włącz symulację, aby zmieniać fikcyjne wyniki.');return true;
@@ -41,18 +45,33 @@ function simulationContactResults(project,projects){
  }
  return simulationResults[key];
 }
-function saveSimulationResults(){try{sessionStorage.setItem('kaska-data-simulation-results',JSON.stringify(simulationResults))}catch{}}
+function saveSimulationResults(){try{
+ sessionStorage.setItem('kaska-data-simulation-results',JSON.stringify(simulationResults));
+ if(simulationResultsGeneration)sessionStorage.setItem('kaska-data-simulation-generation',simulationResultsGeneration);
+}catch{}}
 async function saveSimulationMode(enabled,csrf){
  const response=await fetch('/api/data-simulation',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({enabled})});
  const result=await response.json();if(!response.ok)throw Error(result.error||'Nie udało się zmienić symulacji.');return result.enabled;
 }
-async function loadAppState(){
- const response=await fetch('/api/state');if(!response.ok)throw Error('Nie można połączyć się z aplikacją');
- const snapshot=await response.json();
- if(snapshot.data_simulation===null)snapshot.data_simulation=await saveSimulationMode(monitoringSimulation,snapshot.csrf);
- else monitoringSimulation=snapshot.data_simulation;
+async function loadAppState(epoch){
+ const read=async()=>{
+  const response=await fetch('/api/state');if(!response.ok)throw Error('Nie można połączyć się z aplikacją');
+  return response.json();
+ };
+ let snapshot=await read();
+ if(snapshot.data_simulation===null){
+  try{await saveSimulationMode(monitoringSimulation,snapshot.csrf);snapshot=await read()}
+  catch(error){snapshot=await read();if(snapshot.data_simulation===null)throw error}
+ }
+ if(epoch!==simulationEpoch)return snapshot;
+ monitoringSimulation=snapshot.data_simulation;
  try{localStorage.setItem('kaska-simulation',monitoringSimulation?'on':'off');localStorage.setItem('kaska-monitoring-simulation',monitoringSimulation?'on':'off')}catch{}
  if(!monitoringSimulation)return snapshot;
+ if(snapshot.simulation_generation&&simulationResultsGeneration!==snapshot.simulation_generation){
+  simulationResults={};
+  simulationResultsGeneration=snapshot.simulation_generation;
+  saveSimulationResults();
+ }
  const results=fetchedSimulation(snapshot.seller_project.id),contactResults=simulationContactResults(snapshot.seller_project,snapshot.seller_projects);
  if(results){
   const demoContacts=(contactResults.contacts||[]).filter(contact=>!snapshot.contacts.some(real=>real.email.toLowerCase()===contact.email.toLowerCase()));
@@ -82,10 +101,22 @@ async function simulationApi(path,data={}){
   results.opportunityRuns=[{id,status:'completed',stage:translateUiText('Symulacja wyszukiwania zakończona'),completed:categories.size,total:categories.size,added:selected.length,warnings:[],created:now,signature:''}];
   result={id,total:categories.size,simulated:true};
  }else if(path==='discover/opportunities/cancel'){result={ok:true,simulated:true};
- }else if(path==='discover/contacts/search'){
-  const names=['Anna Kowalska','Piotr Nowak','Marta Wiśniewska','Tomasz Wójcik','Katarzyna Zielińska','Michał Kamiński','Agnieszka Lewandowska','Paweł Dąbrowski','Magdalena Szymańska','Krzysztof Woźniak'],roles=['Operations Manager','CEO','IT Director','Sales Director','Marketing Manager'];
-  result={id:simulationResultId(),company:data.company,domain:'demo.example',organization:data.company,contacts:Array.from({length:Math.max(1,Math.min(10,Math.floor(Number(data.limit)||5)))},(_,i)=>({id:i,name:names[i],email:`kontakt${i+1}@demo.example`,role:data.titles||roles[i%roles.length],sources:[],existing:null})),simulated:true};
-  (results.contactSearches||={})[result.id]=result;
+ }else if(path==='discover/contacts/search'||path==='lead-search/contact-search'){
+  const names=['Anna Kowalska','Piotr Nowak','Marta Wiśniewska','Tomasz Wójcik','Katarzyna Zielińska','Michał Kamiński','Agnieszka Lewandowska','Paweł Dąbrowski','Magdalena Szymańska','Krzysztof Woźniak'];
+  const roles=['Operations Manager','CEO','IT Director','Sales Director','Marketing Manager'];
+  const departments=['Operations','Management','IT','Sales','Marketing'];
+  const host=String(data.domain||'').toLowerCase();
+  const demoDomain=host.endsWith('.example')?host:host+'.example';
+  const domain=path==='lead-search/contact-search'&&host.length<=230&&/^[a-z0-9-]+(?:\.[a-z0-9-]+)*$/.test(host)?demoDomain:'demo.example';
+  const count=Math.max(1,Math.min(names.length,Math.floor(Number(data.limit)||5)));
+  const contacts=names.slice(0,count).map((name,index)=>{
+   const email=`kontakt${index+1}@${domain}`,department=departments[index%departments.length];
+   return {id:index,name,email,role:data.titles||roles[index%roles.length],sources:[],
+    attributes:{domain,department,provider:translateUiText('Symulacja'),sources:[]},
+    existing:state.contacts.some(contact=>contact.email.toLowerCase()===email)};
+  });
+  result={id:simulationResultId(),company:data.company,domain,organization:data.company,contacts,simulated:true};
+  if(path==='discover/contacts/search')(results.contactSearches||={})[result.id]=result;
  }else if(path==='discover/contacts/add'){
   const search=results.contactSearches?.[data.id];
   if(!search||data.confirm_company!==true)throw Error('Potwierdź dodanie kontaktów z symulacji.');
@@ -101,7 +132,7 @@ async function simulationApi(path,data={}){
    if(saved){existing++;if(group){saved.tags=contactTags([...contactTags(saved),...tags]);saved.target_group=saved.tags.join('; ')}continue}
    if(state.contacts.some(c=>!c.simulated&&c.email.toLowerCase()===person.email.toLowerCase())){existing++;continue}
    const id=Math.min(0,...contacts.map(c=>c.id))-1;
-   contacts.push({id,name:person.name,email:person.email,role:person.role,company:search.company,notes:'Fikcyjny kontakt z symulacji.',status:'active',target_group:group,tags,simulated:true});added++;
+   contacts.push({id,name:person.name,email:person.email,role:person.role,company:search.company,notes:'Fikcyjny kontakt z symulacji.',status:'active',target_group:group,tags,simulated:true,research_data:person.attributes});added++;
   }
   result={added,existing,simulated:true};
  }else if(path==='contacts/tags/bulk'){
@@ -158,15 +189,14 @@ async function simulationApi(path,data={}){
  saveSimulationResults();return result;
 }
 async function setAppSimulation(enabled){
- const checkbox=$('#app-simulation'),previous=monitoringSimulation;checkbox.disabled=true;
+ const checkbox=$('#app-simulation');checkbox.disabled=true;
  try{
   const form=$('#prospect-form')||$('#seller-project-form');if(form)updateSellerProject(form);await flushSellerProject();
   await saveSimulationMode(enabled,state.csrf);monitoringSimulation=enabled;simulationEpoch++;
   if(!enabled)pauseDeliverySimulations();
   try{localStorage.setItem('kaska-simulation',enabled?'on':'off');localStorage.setItem('kaska-monitoring-simulation',enabled?'on':'off')}catch{}
   $('#modal').close();await refresh();
- }catch(error){monitoringSimulation=previous;try{await saveSimulationMode(previous,state.csrf)}catch{}throw error}
- finally{checkbox.checked=monitoringSimulation;checkbox.disabled=false;renderSimulationControl()}
+ }finally{checkbox.checked=monitoringSimulation;checkbox.disabled=false;renderSimulationControl()}
 }
 function renderSimulationControl(){const input=$('#app-simulation');if(input)input.checked=monitoringSimulation;document.body.classList.toggle('simulation-mode',monitoringSimulation)}
 document.addEventListener('DOMContentLoaded',()=>{renderSimulationControl();$('#app-simulation').onchange=e=>run(null,()=>setAppSimulation(e.target.checked))});

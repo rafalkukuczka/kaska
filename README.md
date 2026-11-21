@@ -1,6 +1,6 @@
 # Kaśka — lokalny system kampanii sprzedażowych
 
-Aplikacja z polskim i angielskim interfejsem oraz wiadomościami w sześciu językach. Python 3.12+, bez dodatkowych bibliotek. Interfejs WWW, API, trwała baza SQLite i proces obsługujący kolejkę w jednej aplikacji. Jest to własna implementacja podstawowego procesu outbound, a nie kopia kodu lub infrastruktury Alta.
+Aplikacja z polskim i angielskim interfejsem oraz wiadomościami w sześciu językach. Wymaga Pythona 3.12 lub nowszego. Pakiet z `requirements.txt` służy do odczytu dokumentów PDF. Interfejs WWW, API, trwała baza SQLite i proces obsługujący kolejkę w jednej aplikacji. Jest to własna implementacja podstawowego procesu outbound, a nie kopia kodu lub infrastruktury Alta.
 
 Wygląd kreatora jest inspirowany demonstracją Katie: pełny ekran, cztery etapy w górnym pasku, postać Kaśki po lewej, edytor pośrodku i lawendowy panel podglądu po prawej. Postać jest własną wygenerowaną ilustracją (obraz statyczny, nie awatar mówiący). Asset: `web/assets/kaska.png`; narzędzie i pełny prompt: `web/assets/kaska-prompt.txt`. Motyw wizualny: `web/theme.css`.
 
@@ -10,10 +10,11 @@ W PowerShell w katalogu projektu:
 
 ```powershell
 Copy-Item .env.example .env
+python -m pip install -r requirements.txt
 python app.py
 ```
 
-Otwórz http://localhost:8787. Kolejne uruchomienia: `python app.py` lub `./start.ps1`. Serwer nasłuchuje wyłącznie na 127.0.0.1. Nie wymaga instalacji zależności ani konta w LeadStrong. Nie uruchamiaj równocześnie kilku instancji na tej samej bazie.
+Otwórz http://localhost:8787. Kolejne uruchomienia: `python app.py` lub `./start.ps1`. Serwer nasłuchuje wyłącznie na 127.0.0.1. Nie uruchamiaj równocześnie kilku instancji na tej samej bazie.
 
 Błędy techniczne aplikacji zapisują się lokalnie do `data/katie.log` (rotacja do trzech plików po 2 MB). Log nie zawiera treści wiadomości ani sekretów integracji. Przy Ctrl+C aplikacja zatrzymuje kolejkę wysyłkową i synchronizację odpowiedzi po zakończeniu bieżącej operacji sieciowej; wiadomości, których wyniku SMTP nie da się potwierdzić, pozostają oznaczone jako niepewne i nie są ponawiane automatycznie.
 

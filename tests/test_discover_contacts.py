@@ -137,7 +137,9 @@ class DiscoverContactTests(unittest.TestCase):
         with app.db() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM discover_contact_searches').fetchone()[0],0)
 
     def test_persist_simulation_contacts_to_named_list_with_validation_and_deduplication(self):
-        item={'company':'Demo Company','contacts':[{'name':'Demo Person','email':'contact@demo.example','role':'CEO'}],'target_group':'Demo list','confirm_company':True}
+        item={'company':'Demo Company','contacts':[{'name':'Demo Person','email':'contact@demo.example','role':'CEO',
+              'attributes':{'department':'Management','provider':'Hunter','work_phone':'+123456789'}}],
+              'target_group':'Demo list','confirm_company':True}
         with self.assertRaises(ValueError):app.discover_contact_finder.add_simulated(item)
         languages.save_data_simulation(app.db,{'enabled':True})
         for change in ({'confirm_company':False},{'target_group':''},{'contacts':[]},{'contacts':[{'name':'Real','email':'person@real.com'}]}):
@@ -147,6 +149,8 @@ class DiscoverContactTests(unittest.TestCase):
         with app.db() as c:
             row=c.execute("SELECT * FROM contacts WHERE email='contact@demo.example'").fetchone()
             self.assertEqual((row['target_group'],row['simulated']),('Demo list',1))
+            self.assertEqual(json.loads(row['research_data']),
+                             {'department':'Management','provider':'Symulacja','domain':'demo.example','sources':[]})
             c.execute("UPDATE contacts SET status='unsubscribed' WHERE id=?",(row['id'],))
         self.assertEqual(app.discover_contact_finder.add_simulated({**item,'target_group':'Updated list'})['existing'],1)
         with app.db() as c:

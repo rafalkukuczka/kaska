@@ -34,7 +34,18 @@ async function api(path,data,signal){
  finally{endBackgroundRequest(progressId)}
 }
 
-async function refresh(){const epoch=simulationEpoch,snapshot=await loadAppState();if(epoch!==simulationEpoch)return;state=snapshot;syncSellerProject();finishProspectDraft();render();syncLanguages()}
+async function refresh(){
+ const epoch=simulationEpoch,snapshot=await loadAppState(epoch);
+ if(epoch!==simulationEpoch)return;
+ if(state&&state.simulation_generation!==snapshot.simulation_generation){
+  simulationEpoch++;
+  campaignWorkspaces.clear();campaignMessagePages.clear();leadSearchSelection.clear();discoverContactPanels.clear();
+  leadNotificationSelection=null;
+  prospectSelected.clear();prospectRunId=null;prospectDraftPending=null;contactBulkSelected.clear();
+  if(view!=='builder')$('#content').replaceChildren();
+ }
+ state=snapshot;syncSellerProject();finishProspectDraft();render();syncLanguages();
+}
 function modal(content){$('#modal-content').innerHTML=content;if($('#campaign-form')){$('#campaign-form').insertAdjacentHTML('afterbegin',`<label>Strona firmy (dowolna firma dla tej kampanii)</label><div class="actions"><input id="company-url" placeholder="https://twoja-firma.pl" aria-label="Strona firmy"><button type="button" class="secondary" data-action="research">Pobierz opis firmy</button></div><p id="research-status" class="hint">Opiszesz ofertę ręcznie albo pobierzesz kontekst z publicznej strony firmy. Sprawdź wynik przed zapisem.</p>`)}$('#modal').showModal()}
 function campaignRows(){return state.campaigns.map(c=>{const messages=state.messages.filter(m=>m.campaign_id===c.id);const sent=messages.filter(m=>m.status==='sent').length;return `<tr><td><strong>${esc(c.name)}</strong><small>${esc(c.audience||campaignAudience(c))}</small></td><td>${badge(c.status)}</td><td>${sent} / ${messages.length}</td><td><button class="link" data-action="campaign" data-id="${c.id}">Otwórz →</button> <button class="link" data-action="edit-campaign" data-id="${c.id}">Edytuj</button> <button class="link danger" data-action="delete-campaign" data-id="${c.id}">Usuń kampanię</button></td></tr>`}).join('')}
 function campaignTable(){return state.campaigns.length?`<div class="table-wrap"><table><thead><tr><th>Kampania</th><th>Status</th><th>Wysłano</th><th></th></tr></thead><tbody>${campaignRows()}</tbody></table></div>`:empty('Twoja pierwsza kampania zaczyna się tutaj','Dodaj kontakty, opisz ofertę i przygotuj wiadomości.')}
@@ -54,7 +65,7 @@ function renderInbox(){
   return `<article class="inbox-reply"><div class="panel-head"><h3 data-no-translate>${esc(contact?.name||reply.contact_name||reply.email||'Kontakt')} · ${esc(reply.subject)}</h3><small class="muted">${date(reply.received)}</small></div>${reply.delivery_simulated?'<span class="badge warn">Symulowana odpowiedź</span>':''}<div class="message">${esc(reply.body)}</div>${links?`<div class="actions"><a href="${esc(links.gmail)}" class="button secondary" target="_blank" rel="noopener noreferrer" data-reply-gmail>Odpowiedz w Gmailu ↗</a><a href="${esc(links.mailto)}" class="link" data-reply-mailto>Otwórz aplikację pocztową</a></div><p class="hint" data-no-translate>${esc(links.email)}</p>`:'<p class="hint">Brak adresu email nadawcy odpowiedzi.</p>'}</article>`;
  }).join('')||empty('Jeszcze bez odpowiedzi','Po podłączeniu IMAP odpowiedzi z ostatnich 200 wiadomości w skrzynce będą sprawdzane co minutę.')}</section>`;
 }
-function renderTop(title,sub,action=''){if(title==='Integracje')action='<button class="primary" data-action="connect-gmail">Podłącz Gmail</button>';return `<div class="topline"><div><h1>${title}</h1><p class="muted">${sub}</p></div>${action}</div>${monitoringSimulation?'<p class="notice app-simulation-notice">Symulowane są pobieranie danych, wysyłka i odpowiedzi. Twoje wpisy i konfiguracja są zapisywane normalnie. Wiadomości nie są wysyłane do klientów.</p>':''}`}
+function renderTop(title,sub,action=''){if(title==='Integracje')action='<button class="primary" data-action="connect-gmail">Podłącz Gmail</button>';return `<div class="topline"><div><h1>${title}</h1><p class="muted">${sub}</p></div>${action}</div>${monitoringSimulation?'<p class="notice app-simulation-notice">Pracujesz na kopii danych z chwili włączenia symulacji. Zmiany zapisują się w kopii, a wysyłki są symulowane.</p>':''}`}
 const dashboardSearchDrafts=new Map();
 const dashboardCompanyLimits=[5,10,30,50,100];
 const dashboardCompanyLimitKey=projectId=>'kaska-lead-company-limit:'+projectId;
@@ -93,6 +104,10 @@ function leadSearchForm(leads=false){
    <p class="hint dashboard-search-context">${leads ? '<span>Puste pole oznacza wyszukiwanie według projektu.</span>' :
      `<span>Korzystasz z kryteriów projektu</span> <strong data-no-translate>${esc(project.name)}</strong> <button type="button" class="link" data-view="project">Zmień kryteria</button>`}</p>
    ${leads?'':'<p class="hint">Puste pole oznacza wyszukiwanie według projektu. Doprecyzowanie dotyczy tylko tego wyszukiwania.</p>'}
+   ${leads?'':`<div class="dashboard-search-progress" data-dashboard-search-progress hidden>
+     <p role="status" id="dashboard-search-stage"></p>
+     <progress aria-labelledby="dashboard-search-stage"></progress>
+   </div>`}
  </${leads?'div':'form'}>`;
 }
 function dashboardWelcomePanel(){
@@ -266,7 +281,18 @@ function renderSettings(){
 }
 
 // Bundled into app.js so navigation and views are delivered together.
-function sellingPointsSection(prefix){return `<section class="selling-points" data-selling-section="${prefix}"><div class="selling-heading"><h2>Stwórz unikalną propozycję wartości</h2><button type="button" class="secondary" data-suggest-points>✧ Zaproponuj z AI</button></div>${[['pain_points','Problemy odbiorców','Dodaj problem'],['value_props','Propozycje wartości','Dodaj wartość'],['proof_points','Proof points','Dodaj dowód']].map(([field,label,add])=>`<div class="point-editor" data-point-editor="${field}"><div class="point-heading"><h3 id="${prefix}-${field}-label">${label}</h3><button type="button" class="point-add" data-add-point aria-label="${add}" title="${add}">+</button></div>${field==='proof_points'?'<button type="button" class="secondary proof-scan" data-read-proof>✧ Przeczytaj ze strony z AI</button>':''}<div class="point-rows" role="group" aria-labelledby="${prefix}-${field}-label"></div><textarea name="${field}" hidden data-points-storage></textarea></div>`).join('')}<p class="hint">Problemy to hipotezy do sprawdzenia. Podawaj tylko rzeczywiste korzyści i potwierdzone wyniki.</p><p class="hint" data-points-status role="status"></p></section>`}
+function sellingPointsSection(prefix){return `<section class="selling-points" data-selling-section="${prefix}"><div class="selling-heading"><h2>Stwórz unikalną propozycję wartości</h2><button type="button" class="secondary" data-suggest-points>✧ Zaproponuj z AI</button></div>${[['pain_points','Problemy odbiorców','Dodaj problem'],['value_props','Propozycje wartości','Dodaj wartość'],['proof_points','Proof points','Dodaj dowód']].map(([field,label,add])=>`<div class="point-editor" data-point-editor="${field}"><div class="point-heading"><h3 id="${prefix}-${field}-label">${label}</h3><button type="button" class="point-add" data-add-point aria-label="${add}" title="${add}">+</button></div>${field==='proof_points'?'<button type="button" class="secondary proof-scan" data-read-proof>✧ Odczytaj dowody ze źródeł</button>':''}<div class="point-rows" role="group" aria-labelledby="${prefix}-${field}-label"></div><textarea name="${field}" hidden data-points-storage></textarea></div>`).join('')}<p class="hint">Problemy to hipotezy do sprawdzenia. Podawaj tylko rzeczywiste korzyści i potwierdzone wyniki.</p><p class="hint" data-points-status role="status"></p></section>`}
+function proofPointSources(form){
+ if(form.projectProofSources)return form.projectProofSources();
+ const website=form.elements.website.value.trim(),project=sellerProject(),projectWebsite=project.website.trim();
+ const host=value=>{try{return new URL(normalizeWebsite(value)).hostname.replace(/^www\./,'')}catch{return ''}};
+ const sameCompany=!website||!projectWebsite||host(website)===host(projectWebsite);
+ const selected=project.offer_sources||['website'];
+ const documents=sameCompany&&state.offer_document_count&&selected.includes('documents');
+ const sources=website&&(!sameCompany||(!projectWebsite&&!documents)||selected.includes('website'))?['website']:[];
+ if(documents)sources.push('documents');
+ return sources;
+}
 function bindSellingPoints(container){
   for(const editor of container.querySelectorAll('[data-point-editor]')){
     const list=editor.querySelector('.point-rows'),storage=editor.querySelector('[data-points-storage]'),add=editor.querySelector('[data-add-point]');
@@ -288,16 +314,18 @@ function bindSellingPoints(container){
   for(const section of container.querySelectorAll('[data-selling-section]')){
     const scan=section.querySelector('[data-read-proof]'),suggest=section.querySelector('[data-suggest-points]');
     scan.onclick=()=>run(scan,async()=>{
-      const prospect=section.dataset.sellingSection==='prospect',website=normalizeWebsite(container.elements.website.value);
-      if(!website)throw Error('Najpierw wpisz adres strony firmy powyżej.');
+      const sources=proofPointSources(container);
+      if(!sources.length)throw Error('Wybierz dostępne źródło dowodów: stronę firmy lub dokumenty projektu.');
       if(!state.integrations.ai)throw Error('Podłącz OpenAI w Integracjach, aby odczytać proof points z AI.');
-      container.elements.website.value=website;suggest.disabled=true;
-      const status=section.querySelector('[data-points-status]');status.textContent='Czytam stronę i szukam dowodów…';
+      const website=sources.includes('website')?normalizeWebsite(container.elements.website.value):'';
+      suggest.disabled=true;
+      const status=section.querySelector('[data-points-status]');status.textContent='Czytam źródła i szukam dowodów…';
       try{
-        const result=await api('ai/proof-points',{website});
+        const result=await api('ai/proof-points',{website,sources,project_id:state.seller_project.id});
         if(!section.isConnected)return;
-        if(!result.proof_points){status.textContent='Nie znaleziono konkretnych dowodów w odczytanych stronach. Dotychczasowe punkty pozostają bez zmian.';return}
-        $('#modal-content').innerHTML=`<h2>Proof points ze strony</h2><p>To twierdzenia opublikowane przez firmę, a nie niezależna weryfikacja. Sprawdź cytaty i źródła przed zastosowaniem.</p><form id="proof-proposal-form"><label for="suggested-proof">Proof points</label><textarea id="suggested-proof" name="proof_points" rows="7" required>${esc(result.proof_points)}</textarea><div class="proof-sources">${result.sources.map(source=>`<p><a href="${esc(source.url)}" target="_blank" rel="noopener noreferrer">${esc(source.url)}</a></p>`).join('')}</div><p class="hint">Zastosowanie zastąpi obecną listę proof points.</p><button class="primary">Zastosuj proof points</button></form>`;
+        if(result.simulated){status.textContent='Odczyt dowodów przez AI jest wyłączony w symulacji.';return}
+        if(!result.proof_points){status.textContent='Nie znaleziono konkretnych dowodów w odczytanych źródłach.';return}
+        $('#modal-content').innerHTML=`<h2>Proof points ze źródeł</h2><p>Sprawdź cytaty i ich źródła przed zastosowaniem.</p>${result.website_unavailable?'<p class="hint">Strona była niedostępna. Odczytano dokumenty projektu.</p>':''}<form id="proof-proposal-form"><label for="suggested-proof">Proof points</label><textarea id="suggested-proof" name="proof_points" rows="7" required>${esc(result.proof_points)}</textarea><div class="proof-sources">${result.sources.map(source=>`<p>${source.url?sourceLink(source.url):`<span data-no-translate>${esc(source.document)}</span>`}</p>`).join('')}</div><p class="hint">Zastosowanie zastąpi obecną listę proof points.</p><button class="primary">Zastosuj proof points</button></form>`;
         $('#modal').showModal();status.textContent='Dowody gotowe do sprawdzenia.';
         $('#proof-proposal-form').onsubmit=event=>{event.preventDefault();run(event.submitter,async()=>{
           if(!section.isConnected){$('#modal').close();return}
@@ -341,7 +369,8 @@ function restoreSellingPoints(container){container.querySelectorAll('[data-point
 function syncWebsiteActions(form){
  if(!form?.elements.website)return;
  const hasWebsite=!!form.elements.website.value.trim();
- form.querySelectorAll('#scan-offer-website,[data-read-proof],[data-builder="discover"]').forEach(button=>button.hidden=!hasWebsite);
+ const scan=form.querySelector('[data-read-proof]');if(scan)scan.hidden=!proofPointSources(form).length;
+ form.querySelectorAll('[data-builder="discover"]').forEach(button=>button.hidden=!hasWebsite);
  if(form.id==='campaign-form')document.querySelectorAll('[data-builder="website-shortcut"],[data-builder="materials-shortcut"]').forEach(button=>button.hidden=!hasWebsite);
  const sample=form.querySelector('[data-generate-example]');if(sample)sample.hidden=hasWebsite;
 }
@@ -360,7 +389,7 @@ function bindWebsiteActions(form){
  };
  syncWebsiteActions(form);
 }
-function refineControls(field){return `<div class="refine-actions" data-refine-controls="${field}"><button type="button" class="secondary" data-refine="${field}">✧ Fine tune with AI</button>${field==='offer'?'<button type="button" class="secondary" id="scan-offer-website">↗ Skanuj stronę i opisz ofertę</button><p class="hint" id="offer-website-source" hidden></p>':''}<button type="button" class="link" data-refine-undo="${field}" hidden>Cofnij zmianę</button><p class="hint" data-refine-status="${field}" role="status"></p><div data-refine-proposal="${field}" hidden><textarea readonly rows="3" data-no-translate aria-label="Propozycja AI"></textarea><button type="button" class="secondary" data-refine-apply="${field}">Zastosuj propozycję</button></div></div>`}
+function refineControls(field){return `<div class="refine-actions" data-refine-controls="${field}"><button type="button" class="secondary" data-refine="${field}">✧ Fine tune with AI</button><button type="button" class="link" data-refine-undo="${field}" hidden>Cofnij zmianę</button><p class="hint" data-refine-status="${field}" role="status"></p><div data-refine-proposal="${field}" hidden><textarea readonly rows="3" data-no-translate aria-label="Propozycja AI"></textarea><button type="button" class="secondary" data-refine-apply="${field}">Zastosuj propozycję</button></div></div>`}
 function audienceSuggestionControls(){return `<div class="audience-suggestion" data-audience-suggestion><div class="actions"><button type="button" class="secondary" data-suggest-audience>✧ Zaproponuj filtr z AI</button><button type="button" class="link" data-audience-undo hidden>Cofnij filtr</button></div><p class="hint" role="status" data-audience-status></p><div data-audience-proposal hidden><label>Proponowany opis firm<textarea rows="4" maxlength="3000" data-audience-text data-no-translate></textarea></label><div class="actions"><button type="button" class="secondary" data-audience-apply>Zastosuj filtr</button><button type="button" class="link" data-audience-dismiss>Odrzuć propozycję</button></div></div></div>`}
 function bindAudienceSuggestion(){
  const root=$('[data-audience-suggestion]');if(!root||root.dataset.bound)return;root.dataset.bound='true';
@@ -392,44 +421,21 @@ function bindRefineControls(){
   bindAudienceSuggestion();
   for(const field of ['offer','audience']){
     const input=$('#prospect-'+field),button=$('[data-refine="'+field+'"]'),undo=$('[data-refine-undo="'+field+'"]'),status=$('[data-refine-status="'+field+'"]'),proposal=$('[data-refine-proposal="'+field+'"]');
-    let previous=null,currentSource=null,pendingSource=null,pendingScan=false;
-    const scan=field==='offer'?$('#scan-offer-website'):null;
-    const showSource=()=>{
-      if(!scan)return;
-      const source=$('#offer-website-source');source.replaceChildren();source.hidden=!currentSource;
-      if(currentSource){const label=document.createElement('span');label.textContent='Źródło: ';const link=document.createElement('a');link.href=currentSource;link.textContent=currentSource;link.target='_blank';link.rel='noopener noreferrer';source.append(label,link)}
-    };
-    const apply=(text,source=currentSource,scanned=false)=>{previous={text:input.value,source:currentSource};input.value=text;currentSource=source;showSource();proposal.hidden=true;undo.hidden=false;status.textContent=scanned?'Oferta uzupełniona ze strony. Sprawdź opis przed wyszukiwaniem.':'Tekst poprawiony przez AI. Sprawdź go przed wyszukiwaniem.';input.dispatchEvent(new Event('input',{bubbles:true}))};
-    undo.onclick=()=>{if(previous!==null){input.value=previous.text;currentSource=previous.source;showSource();previous=null;undo.hidden=true;status.textContent='Przywrócono poprzednią treść.';input.dispatchEvent(new Event('input',{bubbles:true}))}};
-    proposal.querySelector('button').onclick=()=>apply(proposal.querySelector('textarea').value,pendingSource,pendingScan);
+    let previous=null;
+    const apply=text=>{previous=input.value;input.value=text;proposal.hidden=true;undo.hidden=false;status.textContent='Tekst poprawiony przez AI. Sprawdź go przed wyszukiwaniem.';input.dispatchEvent(new Event('input',{bubbles:true}))};
+    undo.onclick=()=>{if(previous!==null){input.value=previous;previous=null;undo.hidden=true;status.textContent='Przywrócono poprzednią treść.';input.dispatchEvent(new Event('input',{bubbles:true}))}};
+    proposal.querySelector('button').onclick=()=>apply(proposal.querySelector('textarea').value);
     button.onclick=()=>run(button,async()=>{
       const original=input.value;
       if(!original.trim())throw Error('Najpierw wpisz tekst, który AI ma poprawić.');
       if(!state.integrations.ai)throw Error('Podłącz OpenAI w Integracjach, aby poprawić tekst przez AI.');
-      if(scan)scan.disabled=true;
       status.textContent='AI poprawia tekst…';
       try{
         const result=await api('ai/refine',{field,text:original,language:field==='offer'?projectMessageLanguage():state.preferences.ui_language});
         if(!input.isConnected)return;
         if(input.value===original)apply(result.text);
-        else{pendingSource=currentSource;pendingScan=false;proposal.querySelector('textarea').value=result.text;proposal.hidden=false;status.textContent='W międzyczasie zmieniono tekst. Możesz zastosować propozycję AI poniżej.'}
+        else{proposal.querySelector('textarea').value=result.text;proposal.hidden=false;status.textContent='W międzyczasie zmieniono tekst. Możesz zastosować propozycję AI poniżej.'}
       }catch(error){status.textContent='Nie udało się poprawić tekstu. Twoja treść pozostaje bez zmian.';throw error}
-      finally{if(scan)scan.disabled=false}
-    });
-    if(scan)scan.onclick=()=>run(scan,async()=>{
-      const url=normalizeWebsite($('#prospect-website').value),original=input.value;
-      if(!url)throw Error('Najpierw wpisz adres strony firmy powyżej.');
-      $('#prospect-website').value=url;
-      button.disabled=true;status.textContent='Skanuję stronę i odczytuję ofertę…';
-      try{
-        const result=await api('research',{url,language:projectMessageLanguage()});
-        if(!input.isConnected)return;
-        const source=new URL(result.source);
-        if(source.protocol!=='https:'||source.username||source.password||typeof result.offer!=='string'||!result.offer.trim())throw Error('Strona nie zwróciła poprawnego opisu oferty.');
-        if(input.value===original){apply(result.offer,source.href,true);if(!result.ai)status.textContent='Pobrano opis ze strony bez AI. Sprawdź i uzupełnij ofertę.'}
-        else{pendingSource=source.href;pendingScan=true;proposal.querySelector('textarea').value=result.offer;proposal.hidden=false;status.textContent='W międzyczasie zmieniono tekst. Propozycja ze strony czeka poniżej.'}
-      }catch(error){status.textContent='Nie udało się odczytać oferty ze strony. Twoja treść pozostaje bez zmian.';throw error}
-      finally{button.disabled=false}
     });
   }
 }

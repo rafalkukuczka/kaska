@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import ai_service
+import billable_activity
 import openai_usage
 
 
@@ -73,3 +74,21 @@ class OpenAIUsageTests(unittest.TestCase):
         report = openai_usage.report(2,100,300)
         self.assertEqual([(row['created'],row['duration_ms']) for row in report['requests']],[(201,150),(200,150)])
         self.assertEqual(openai_usage.report(1,100,300)['totals']['calls'],0)
+
+    def test_billable_indicator_survives_short_calls_and_releases_abandoned_outreach(self):
+        operation = {'operationId':'4a10d9c2-8b5f-4934-9007-c3ff02b09a68','active':True}
+        with patch.object(billable_activity,'_recent',{}), patch.object(billable_activity,'_outreach',{}), \
+                patch('billable_activity.time.monotonic',return_value=10) as clock:
+            with billable_activity.track(None):
+                self.assertEqual(billable_activity.providers(),[])
+            with billable_activity.track('Hunter'):
+                self.assertEqual(billable_activity.providers(),['Hunter'])
+            billable_activity.outreach(operation)
+            self.assertEqual(billable_activity.providers(),['Hunter','OpenAI'])
+            billable_activity.outreach({**operation,'active':False})
+            self.assertEqual(billable_activity.providers(),['Hunter'])
+            billable_activity.outreach(operation)
+            clock.return_value += billable_activity.NOTICE_SECONDS
+            self.assertEqual(billable_activity.providers(),['OpenAI'])
+            clock.return_value += billable_activity.OUTREACH_LEASE_SECONDS
+            self.assertEqual(billable_activity.providers(),[])

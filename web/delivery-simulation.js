@@ -55,7 +55,7 @@ function applyDeliverySimulation(snapshot){
  snapshot.campaigns=snapshot.campaigns.map(c=>({...c,status:runs[c.id]?.status||(c.status==='active'?'paused':c.status),delivery_simulated:!!runs[c.id]}));
  const messages=new Map(Object.values(runs).flatMap(run=>run.messages).map(message=>[message.id,message]));
  snapshot.messages=snapshot.messages.map(message=>messages.has(message.id)?{...message,...messages.get(message.id),delivery_simulated:true}:message);
- const replies=Object.values(runs).flatMap(run=>run.replies);
+ const replies=[...snapshot.replies.filter(reply=>!reply.delivery_simulated),...Object.values(runs).flatMap(run=>run.replies)];
  snapshot.replies=(replies.length?replies:demoInboxReplies(snapshot)).sort((a,b)=>b.received-a.received);
  return snapshot;
 }

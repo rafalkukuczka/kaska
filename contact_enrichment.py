@@ -5,6 +5,7 @@ import re
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
+import billable_activity
 
 
 class Apollo:
@@ -23,7 +24,8 @@ class Apollo:
             def redirect_request(self, *args, **kwargs):
                 return None
         try:
-            with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
+            provider = 'Apollo' if endpoint == 'people/match' else None
+            with billable_activity.track(provider), urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
                 raw = response.read(2_000_001)
             if len(raw) > 2_000_000:
                 raise ValueError('Odpowiedź Apollo jest zbyt duża.')

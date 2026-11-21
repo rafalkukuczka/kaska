@@ -5,12 +5,43 @@ from unittest.mock import patch
 import test_app
 import app
 import languages
+import offer_documents
+import project_scope
 import shared_project
 
 
 class SharedProjectTests(unittest.TestCase):
     setUp=test_app.SystemTests.setUp
     tearDown=test_app.SystemTests.tearDown
+
+    def test_clone_copies_configuration_and_documents_but_starts_without_activity(self):
+        source = shared_project.save(app.db,{'name':'Source','offer':'Original offer','audience':'Manufacturers',
+            'message_language':'de','search_languages':['en'],'offer_sources':['documents'],'signal_interests':['funding']})
+        original_docs = offer_documents.upload(app.db,{'project_id':source['id'],'name':'Offer.txt','content':'QWNtZQ=='})
+        other = shared_project.create(app.db,{'name':'Unrelated'})
+        clone = shared_project.create(app.db,{'name':'Copy','clone_from':source['id']})
+        self.assertNotIn(clone['id'],(source['id'],other['id']))
+        self.assertEqual(shared_project.get(app.db)['id'],clone['id'])
+        self.assertEqual(clone['revision'],0)
+        for field in ('offer','audience','message_language','search_languages','offer_sources','signal_interests'):
+            self.assertEqual(clone[field],source[field])
+        self.assertFalse(clone['share_contacts'])
+        with app.db() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM contacts WHERE contact_pool=?',
+                (project_scope.contact_pool(c,clone['id']),)).fetchone()[0],0)
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM campaigns WHERE project_id=?',(clone['id'],)).fetchone()[0],0)
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM prospect_runs WHERE project_id=?',(clone['id'],)).fetchone()[0],0)
+        cloned_doc, = offer_documents.documents(app.db,clone['id'])
+        self.assertEqual((cloned_doc['name'],cloned_doc['characters']),('Offer.txt',4))
+        offer_documents.remove(app.db,{'project_id':clone['id'],'id':cloned_doc['id']})
+        shared_project.save(app.db,{'offer':'Revised copy'})
+        shared_project.select(app.db,{'project_id':source['id']})
+        self.assertEqual(shared_project.get(app.db)['offer'],'Original offer')
+        self.assertEqual(offer_documents.documents(app.db,source['id']),original_docs['documents'])
+        for invalid in (True,'1',999999):
+            with self.subTest(invalid=invalid),self.assertRaises(ValueError):
+                shared_project.create(app.db,{'name':'Invalid copy','clone_from':invalid})
+        self.assertEqual(len(shared_project.projects(app.db)),3)
 
     def test_patch_persistence_explicit_clear_and_conflict(self):
         original=shared_project.get(app.db)

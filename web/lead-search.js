@@ -13,6 +13,10 @@ const signalCheckLabels = {
 const leadJobDetail = detail => detail?.startsWith('Extra data:') ? 'AI zwróciło wynik w nieprawidłowym formacie.' : detail;
 let leadNotificationSelection = null;
 let leadSearchPollActive = false;
+const leadUpdateKinds = {
+  company:['Firmy','Nowa firma'], signal:['Sygnały','Sygnał'],
+  qualification:['Kwalifikacje','Kwalifikacja'], contact:['Decydenci','Decydent'],
+};
 
 function leadSearchRead(id, notifications = false) {
   const params = new URLSearchParams();
@@ -25,24 +29,25 @@ function leadSearchRead(id, notifications = false) {
   });
 }
 
-function leadSearchNotification(row) {
+function leadSearchNotification(row, selected = false) {
   const parts = [[row.companies,'Firmy'],[row.signals,'Sygnały'],[row.qualifications,'Kwalifikacje'],[row.contacts,'Decydenci']]
     .filter(([count]) => count).map(([count,label]) => `<span>${label} ${count}</span>`);
-  return `<button type="button" class="lead-alert-item" data-lead-notification="${row.id}" data-project-id="${row.project_id}">
-    <strong data-no-translate>${esc(row.query)}</strong><small><span data-no-translate>${esc(row.project_name)}</span> · ${parts.join(' · ')}</small>
+  return `<button type="button" class="lead-alert-item" data-lead-notification="${row.id}" data-project-id="${row.project_id}" data-lead-unread ${selected?'aria-current="true"':''}>
+    <span class="lead-alert-title"><strong data-no-translate>${esc(row.query)}</strong><span class="badge"><span>Nowe</span> · ${row.count}</span></span>
+    <small><span data-no-translate>${esc(row.project_name)}</span> · ${parts.join(' · ')}</small>
   </button>`;
 }
 
 function leadSearchBell(data) {
   if (data.project_id !== state?.seller_project.id) return;
   const bell = $('#lead-notification-bell');
-  const count = data.notifications.length;
+  const count = data.notifications.reduce((total, row) => total + row.count, 0);
   const badge = $('#lead-notification-count');
   badge.textContent = count;
   badge.hidden = !count;
   bell.setAttribute('aria-label', (count ? count + ' · ' : '') + translateUiText('Powiadomienia Discover'));
   const content = $('#lead-notification-items');
-  const markup = data.notifications.map(leadSearchNotification).join('') || '<p class="hint">Brak nowych informacji.</p>';
+  const markup = data.notifications.map(row => leadSearchNotification(row)).join('') || '<p class="hint">Brak nowych informacji.</p>';
   if (content._markup !== markup) {
     content.innerHTML = markup;
     content._markup = markup;
@@ -86,6 +91,7 @@ function bindDashboardLeadSearch(root, project) {
   const input = $('#dashboard-audience');
   const companyLimit = form.elements.company_limit;
   const button = form.querySelector('button[type=submit]');
+  root._searchProgress = form.querySelector('[data-dashboard-search-progress]');
   const query = () => (input.value.trim() || sellerProject().audience || sellerProject().offer || '').trim().slice(0,1200);
   const sync = () => { button.disabled = Boolean(root._starting || query().length < 2); };
   root._run = leadSearchSelection.get(project.id);
@@ -115,6 +121,7 @@ function bindDashboardLeadSearch(root, project) {
     const limit = Number(companyLimit.value);
     if (root._starting || text.length < 2) return;
     root._starting = true;
+    renderDashboardSearchProgress(root, {label:'Uruchamiam wyszukiwanie…'});
     run(button, async () => {
       await flushSellerProject();
       if (!root.isConnected || state.seller_project.id !== project.id) return;
@@ -126,7 +133,11 @@ function bindDashboardLeadSearch(root, project) {
       leadSearchSelection.set(project.id,root._run);
       renderLeadSearchResults(root,data);
       leadSearchBell(data);
-    }).finally(() => { root._starting = false; sync(); });
+    }).finally(() => {
+      root._starting = false;
+      renderDashboardSearchProgress(root, root._lastSearchProgress);
+      sync();
+    });
   });
   $('#lead-run-select').addEventListener('change', event => {
     root._run = Number(event.target.value);
@@ -288,24 +299,22 @@ function recordLeadProjectSignal(root,company) {
 }
 
 async function researchLeadContacts(searchId, company, projectId) {
-  const name = company.querySelector('summary strong').textContent;
+  const name = company.querySelector('summary strong').textContent.slice(0,200);
   const domain = company.dataset.company;
-  if (monitoringSimulation) {
-    toast('Wyłącz symulację, aby zbadać rzeczywiste dane kontaktowe.');
-    return;
-  }
+  const epoch = simulationEpoch;
   modal(`<h2>Dane kontaktowe</h2><p data-no-translate>${esc(name)} · ${esc(domain)}</p>
     <div id="lead-contact-content"><p class="hint" role="status">Szukam kontaktów w firmie…</p></div>`);
   const panel = $('#lead-contact-content');
-  const current = () => panel.isConnected && $('#modal').open && state.seller_project.id === projectId;
+  const current = () => panel.isConnected && $('#modal').open && state.seller_project.id === projectId && simulationEpoch === epoch;
   try {
-    const data = await api('lead-search/contact-search',{search_id:searchId,domain});
+    const data = await api('lead-search/contact-search',{search_id:searchId,domain,company:name,project_id:projectId});
     if (!current()) return;
     if (!data.contacts.length) {
       panel.innerHTML = '<p class="hint">Brak kontaktów z udokumentowanym adresem służbowym dla tej firmy.</p>';
       return;
     }
     panel.innerHTML = `<form id="lead-contact-save-form">
+      ${data.simulated ? '<p class="notice">To przykładowe kontakty. Zapis trafi do kopii danych w symulacji.</p>' : ''}
       ${data.suggested_roles ? `<p class="hint"><span>Sugerowane stanowiska</span> · <span data-no-translate>${esc(data.suggested_roles)}</span></p>` : ''}
       <fieldset class="lead-contact-select"><legend>Wybierz kontakty do zapisania</legend>
       ${data.contacts.map(person => `<article class="lead-contact-choice">
@@ -329,7 +338,10 @@ async function researchLeadContacts(searchId, company, projectId) {
         const tags = contactTags(fields.get('tags'));
         if (!selected.length) throw new Error('Wybierz kontakty z wyników wyszukiwania.');
         if (!tags.length) throw new Error('Dodaj co najmniej jeden tag.');
-        const saved = await api('lead-search/contact-add',{id:data.id,project_id:projectId,confirm_company:true,selected,tags});
+        const item = {id:data.id,project_id:projectId,confirm_company:true,selected,tags};
+        const saved = data.simulated
+          ? await api('discover/contacts/add-simulation',{...item,company:name,contacts:data.contacts.filter(person=>selected.includes(person.id))})
+          : await api('lead-search/contact-add',item);
         if (current()) $('#modal').close();
         await refresh();
         toast(`${translateUiText('Dodano kontaktów')} ${saved.added} · ${translateUiText('Uzupełniono istniejących')} ${saved.existing}`);
@@ -337,6 +349,39 @@ async function researchLeadContacts(searchId, company, projectId) {
     });
   } catch (error) {
     if (current()) panel.innerHTML = `<p class="error" role="alert">${esc(error.message)}</p>`;
+  }
+}
+
+function dashboardSearchProgress(data, active) {
+  if (!data.search?.live || data.search.stopped || monitoringSimulation) return null;
+  if (active.some(job => job.kind === 'discover')) return {label:'Wyszukiwanie nowych firm'};
+  const remaining = new Set(active.filter(job => job.kind === 'research' || job.kind === 'evaluate').map(job => job.domain));
+  if (remaining.size) {
+    const total = data.companies.length;
+    const completed = data.companies.filter(company => company.status !== 'pending' && !remaining.has(company.domain)).length;
+    return {label:'Analiza firm', completed, total};
+  }
+  if (active.some(job => job.kind === 'signals')) {
+    const completed = data.jobs.filter(job => job.kind === 'signals' && ['done','failed'].includes(job.status)).length;
+    const pending = active.filter(job => job.kind === 'signals').length;
+    return {label:'Weryfikacja sygnałów projektu', completed, total:completed + pending};
+  }
+  return null;
+}
+
+function renderDashboardSearchProgress(root, progress) {
+  const panel = root._searchProgress;
+  panel.hidden = !progress;
+  if (!progress) return;
+  const label = panel.querySelector('p'), bar = panel.querySelector('progress');
+  const text = translateUiText(progress.label) + (progress.total ? ` · ${progress.completed} / ${progress.total}` : '');
+  if (label.textContent !== text) label.textContent = text;
+  if (progress.total) {
+    bar.max = progress.total;
+    bar.value = progress.completed;
+  } else {
+    bar.removeAttribute('value');
+    bar.removeAttribute('max');
   }
 }
 
@@ -350,6 +395,8 @@ function renderLeadSearchResults(root, data) {
   root.querySelector('.lead-results-layout').hidden = !run;
   const active = data.jobs.filter(job => ['pending','running'].includes(job.status));
   const failed = data.jobs.filter(job => job.status === 'failed');
+  root._lastSearchProgress = dashboardSearchProgress(data, active);
+  renderDashboardSearchProgress(root, root._lastSearchProgress);
   renderLeadAgentActivity(root, data, active, failed);
   if (!run) {
     progress.textContent = translateUiText('Wpisz, kogo szukasz w tym projekcie.');
@@ -405,10 +452,22 @@ function renderLeadSearchResults(root, data) {
     const node = leadSearchCompany(company, known.get(company.domain),root._ownSignalTypes.length>0,run.criteria.length);
     if (!node.isConnected) list.append(node);
   }
+  const reveal = root._reveal?.searchId===run.id ? root._reveal : null;
+  const target = reveal?.domain && [...list.children].find(node=>node.dataset.company===reveal.domain);
+  if (target) root.querySelector('#lead-company-status').value = 'all';
   filterLeadCompanies(root);
-  if (root._reveal) {
-    root._reveal = false;
-    root.scrollIntoView({block:'start'});
+  if (reveal) {
+    root._reveal = null;
+    list.querySelector('[data-lead-target]')?.removeAttribute('data-lead-target');
+    if (target) {
+      target.open = true;
+      target.setAttribute('data-lead-target','');
+      target.querySelector('summary').focus({preventScroll:true});
+      target.scrollIntoView({block:'start'});
+    } else {
+      root.scrollIntoView({block:'start'});
+      if (reveal.domain) toast(translateUiText('Nie znaleziono firmy w wynikach tego wyszukiwania.'));
+    }
   }
 }
 
@@ -453,7 +512,12 @@ function renderLeadDiscoverPage() {
         <label class="check lead-signal-updates"><input type="checkbox" data-lead-signal-updates aria-describedby="lead-signal-updates-hint" disabled><span>Aktualizuj sygnały w Discover</span></label>
         <p class="hint" id="lead-signal-updates-hint">Wyłącz, aby wstrzymać sprawdzanie sygnałów w tym projekcie i oszczędzać tokeny OpenAI. Włączenie wznawia oczekujące analizy.</p>
         <div id="lead-discover-groups"></div></div>
-      <div class="panel"><div class="panel-head"><h2>Aktualizacje</h2><button type="button" class="secondary" data-lead-read hidden>Oznacz jako przeczytane</button></div>
+      <div class="panel"><div class="panel-head"><h2>Aktualizacje</h2><button type="button" class="secondary" data-lead-read hidden>Oznacz wszystkie jako przeczytane</button></div>
+        <div class="lead-discover-filters" hidden>
+          <label><span>Widok aktualizacji</span><select data-lead-update-scope><option value="all">Wszystkie aktualizacje</option><option value="unread">Tylko nowe</option></select></label>
+          <label><span>Typ aktualizacji</span><select data-lead-update-kind><option value="all">Wszystkie typy</option>
+            ${Object.entries(leadUpdateKinds).map(([kind,[label]])=>`<option value="${kind}">${label}</option>`).join('')}</select></label>
+        </div>
         <div id="lead-discover-events"></div></div>
     </section><button type="button" class="link" data-view="discover">Otwórz katalog okazji</button>`;
   const root = $('#lead-discover-feed');
@@ -475,14 +539,26 @@ function renderLeadDiscoverPage() {
     }).finally(() => { root._savingSignalUpdates = false; });
   });
   root.querySelector('[data-lead-read]').addEventListener('click', event =>
-    run(event.currentTarget, async () => { await markLeadNotifications(root); await pollLeadSearch(); }));
+    run(event.currentTarget, () => markLeadNotifications(root)));
+  for (const [field,control] of [['scope','[data-lead-update-scope]'],['kind','[data-lead-update-kind]']]) {
+    const select = root.querySelector(control);
+    select.addEventListener('change', () => {
+      if (!leadNotificationSelection || !root._data) return;
+      leadNotificationSelection[field] = select.value;
+      renderLeadDiscoverEvents(root, root._data);
+      syncLanguages();
+    });
+  }
   void pollLeadSearch();
 }
 
-function markLeadNotifications(root) {
+async function markLeadNotifications(root) {
   const { search, events } = root._data || {};
   const newest = events?.find(event => event.unread);
-  if (search && newest) return api('lead-search/read',{id:search.id,through:newest.id});
+  const selection = leadNotificationSelection;
+  if (search?.id !== selection?.id || !newest) return;
+  await api('lead-search/read',{id:search.id,through:newest.id});
+  await loadLeadDiscoverSelection(root,selection);
 }
 
 function renderLeadDiscoverFeed(root, data) {
@@ -496,24 +572,52 @@ function renderLeadDiscoverFeed(root, data) {
   const notifications = data.notifications.filter(row => row.project_id === data.project_id);
   const active = new Set(notifications.map(row => row.id));
   const others = data.searches.filter(item => !active.has(item.id));
-  const groupMarkup = notifications.map(leadSearchNotification).join('') +
-    (others.length ? `<details><summary>Historia wyszukiwań</summary>${others.map(item => `<button type="button" class="lead-alert-item" data-lead-notification="${item.id}"><strong data-no-translate>${esc(item.query)}</strong></button>`).join('')}</details>` : '');
+  const selectedId = leadNotificationSelection?.id;
+  const groupMarkup = notifications.map(row => leadSearchNotification(row,row.id===selectedId)).join('') +
+    (others.length ? `<details ${others.some(row=>row.id===selectedId)?'open':''}><summary>Historia wyszukiwań</summary>${others.map(item => `<button type="button" class="lead-alert-item" data-lead-notification="${item.id}" ${item.id===selectedId?'aria-current="true"':''}><strong data-no-translate>${esc(item.query)}</strong></button>`).join('')}</details>` : '');
   if (groups._markup !== groupMarkup) {
     const opened = groups.querySelector('details')?.open;
     groups.innerHTML = groupMarkup || '<p class="hint">Brak nowych informacji.</p>';
     if (opened && groups.querySelector('details')) groups.querySelector('details').open = true;
     groups._markup = groupMarkup;
   }
+  renderLeadDiscoverEvents(root,data);
+}
+
+function renderLeadDiscoverEvents(root, data) {
   const events = root.querySelector('#lead-discover-events');
   const search = data.search;
-  root.querySelector('[data-lead-read]').hidden = !leadNotificationSelection || !data.events.some(item => item.unread);
-  const markup = search && leadNotificationSelection ? `<div class="line lead-discover-query"><strong data-no-translate>${esc(search.query)}</strong>
+  const selection = leadNotificationSelection;
+  const selected = search && search.id===selection?.id;
+  const {scope='all',kind='all'} = selection || {};
+  const visible = data.events.filter(item => (scope!=='unread'||item.unread) && (kind==='all'||item.kind===kind));
+  root.querySelector('.lead-discover-filters').hidden = !selected;
+  root.querySelector('[data-lead-update-scope]').value = scope;
+  root.querySelector('[data-lead-update-kind]').value = kind;
+  root.querySelector('[data-lead-read]').hidden = !selected || !data.events.some(item => item.unread);
+  const when = new Intl.DateTimeFormat(uiLanguage==='en'?'en-GB':'pl-PL',
+    {dateStyle:'medium',timeStyle:'short',timeZone:'Europe/Warsaw'});
+  const markup = selected ? `<div class="line lead-discover-query"><strong data-no-translate>${esc(search.query)}</strong>
     <button type="button" class="link" data-lead-open="${search.id}">Otwórz wyniki</button></div>
-    ${data.events.length ? `<ul class="lead-event-list">${data.events.map(item => `<li><strong data-no-translate>${esc(item.label)}</strong>
-      ${item.unread ? '<span class="badge">Nowe</span>' : ''}<small class="hint">${new Date(item.created*1000).toLocaleString()}</small></li>`).join('')}</ul>` :
-      '<p class="hint">Brak aktualizacji dla tego wyszukiwania.</p>'}` :
+    ${visible.length ? `<ul class="lead-event-list">${visible.map(item => {
+      const content = `<span class="lead-alert-title"><strong data-no-translate>${esc(item.label)}</strong>${item.unread?'<span class="badge">Nowe</span>':''}</span>
+        <small class="hint"><span>${esc(leadUpdateKinds[item.kind]?.[1]||'Aktualizacja')}</span>${item.domain?` · <span data-no-translate>${esc(item.domain)}</span>`:''}
+        · <time data-no-translate>${esc(when.format(item.created*1000))}</time></small>`;
+      return `<li ${item.unread?'class="lead-event-unread"':''}>${item.domain?
+        `<button type="button" class="lead-event-link" data-lead-open="${search.id}" data-lead-domain="${esc(item.domain)}">${content}<span class="lead-event-arrow" aria-hidden="true">↗</span></button>`:content}</li>`;
+    }).join('')}</ul>` :
+      `<p class="hint">${data.events.length?'Brak aktualizacji pasujących do filtra.':'Brak aktualizacji dla tego wyszukiwania.'}</p>`}` :
     '<p class="hint">Wybierz wyszukiwanie, aby przejrzeć jego aktualizacje.</p>';
   if (events._markup !== markup) { events.innerHTML = markup; events._markup = markup; }
+}
+
+async function loadLeadDiscoverSelection(root, selected) {
+  const generation = root._generation = (root._generation || 0) + 1;
+  const data = await leadSearchRead(selected.id);
+  if (!root.isConnected || root._generation!==generation || leadNotificationSelection!==selected || selected.project!==data.project_id) return;
+  leadSearchBell(data);
+  renderLeadDiscoverFeed(root,data);
+  syncLanguages();
 }
 
 async function pollLeadSearch() {
@@ -529,10 +633,10 @@ async function pollLeadSearch() {
   try {
     const data = await leadSearchRead(currentView === 'lead-discover' ? selection?.id : root?._run,
       !['dashboard','lead-discover'].includes(currentView));
-    if (state.seller_project.id !== project || data.project_id !== project) return;
+    if (state.seller_project.id !== project || data.project_id !== project || (root?.isConnected && generation!==root._generation)) return;
     leadSearchBell(data);
     if (root?.isConnected && currentView === view && generation === root._generation && selection === leadNotificationSelection) {
-      if (currentView === 'dashboard') renderLeadSearchResults(root,data);
+      if (currentView === 'dashboard' && !root._starting) renderLeadSearchResults(root,data);
       if (currentView === 'lead-discover') renderLeadDiscoverFeed(root,data);
     }
   } catch (error) {
@@ -546,22 +650,33 @@ async function pollLeadSearch() {
 }
 
 document.addEventListener('click', event => {
-  const notification = event.target.closest('[data-lead-notification]');
+  const fromBell = event.target.closest('[data-lead-notifications-open]');
+  const notification = event.target.closest('[data-lead-notification]') ||
+    (fromBell && $('#lead-notification-items [data-lead-notification]'));
   const open = event.target.closest('[data-lead-open]');
   if (open) {
-    leadSearchSelection.set(state.seller_project.id, Number(open.dataset.leadOpen));
+    const searchId = Number(open.dataset.leadOpen);
+    leadSearchSelection.set(state.seller_project.id, searchId);
     view = 'dashboard';
     render();
-    $('#dashboard-lead-results')._reveal = true;
+    const results = $('#dashboard-lead-results');
+    results._reveal = {searchId,domain:open.dataset.leadDomain};
+    if (results._run!==searchId) {
+      results._run = searchId;
+      results._generation = (results._generation || 0) + 1;
+    }
+    void pollLeadSearch();
   }
   if (!notification) {
+    if (fromBell) { $('#lead-bell-menu').open=false; view='lead-discover'; render(); }
     if (event.target.closest('[data-view="lead-discover"]') || !event.target.closest('#lead-bell-menu')) $('#lead-bell-menu').open = false;
     return;
   }
   $('#lead-bell-menu').open = false;
   void run(null, async () => {
     const selected = {id:Number(notification.dataset.leadNotification),
-      project:Number(notification.dataset.projectId) || state.seller_project.id};
+      project:Number(notification.dataset.projectId) || state.seller_project.id,
+      scope:notification.hasAttribute('data-lead-unread')?'unread':'all',kind:'all'};
     if (selected.project !== state.seller_project.id) {
       await chooseSellerProject('seller-projects/select',{project_id:selected.project});
       if (state.seller_project.id !== selected.project) return;
@@ -569,12 +684,7 @@ document.addEventListener('click', event => {
     leadNotificationSelection = selected;
     view = 'lead-discover';
     render();
-    const root = $('#lead-discover-feed');
-    const data = await leadSearchRead(selected.id);
-    if (!root.isConnected || leadNotificationSelection !== selected || selected.project !== data.project_id) return;
-    renderLeadDiscoverFeed(root,data);
-    await markLeadNotifications(root);
-    await pollLeadSearch();
+    await loadLeadDiscoverSelection($('#lead-discover-feed'),selected);
   });
 });
 

@@ -1,16 +1,19 @@
-const sellerFields=['name','website','offer','audience','pain_points','value_props','proof_points','message_language','search_languages','search_areas','signal_interests'];
+const sellerListFields=['search_languages','search_areas','signal_interests','offer_sources'];
+const sellerFields=['name','website','offer','audience','pain_points','value_props','proof_points','message_language',...sellerListFields];
 let sellerBase=null,sellerPending={},sellerSaving=null,sellerSaveTimer;
+let sellerBaseGeneration=null;
 let sellerSwitchBusy=false;
-const sellerDraftKey=id=>'kaska-seller-draft-'+id;
-function cacheSellerDraft(){try{const key=sellerDraftKey(sellerBase?.id);if(Object.keys(sellerPending).length)localStorage.setItem(key,JSON.stringify({revision:sellerBase?.revision,fields:sellerPending}));else localStorage.removeItem(key)}catch{}}
+const sellerDraftKey=(id,generation)=>'kaska-seller-draft-'+id+(generation?':'+generation:'');
+function cacheSellerDraft(){try{const key=sellerDraftKey(sellerBase?.id,sellerBaseGeneration);if(Object.keys(sellerPending).length)localStorage.setItem(key,JSON.stringify({revision:sellerBase?.revision,fields:sellerPending}));else localStorage.removeItem(key)}catch{}}
 function syncSellerProject(){
  const incoming=state.seller_project;if(!incoming)return;
  if(!sellerBase){try{const legacy=localStorage.getItem('campaign-builder-draft');if(legacy!==null){const key='campaign-builder-draft:'+incoming.id;if(localStorage.getItem(key)===null)localStorage.setItem(key,legacy);localStorage.removeItem('campaign-builder-draft')}}catch{}}
- const switched=sellerBase&&incoming.id!==sellerBase.id;
+ const generation=state.simulation_generation||null;
+ const switched=sellerBase&&(incoming.id!==sellerBase.id||generation!==sellerBaseGeneration);
  if(switched){cacheSellerDraft();sellerPending={};clearTimeout(sellerSaveTimer);$('#content')?.replaceChildren();}
  const first=!sellerBase||switched;
- if(first||incoming.revision>=sellerBase.revision)sellerBase=incoming;
- if(first){try{let cached=JSON.parse(localStorage.getItem(sellerDraftKey(incoming.id))||'null');if(!cached&&incoming.id===1)cached=JSON.parse(localStorage.getItem('kaska-seller-draft')||'null');if(cached?.revision===incoming.revision){for(const field of sellerFields)if(typeof cached.fields?.[field]==='string'||(['search_languages','search_areas','signal_interests'].includes(field)&&Array.isArray(cached.fields?.[field])))sellerPending[field]=cached.fields[field];if(Object.keys(sellerPending).length)sellerSaveTimer=setTimeout(()=>flushSellerProject().catch(e=>toast(e.message)),450)}}catch{}}
+ if(first||incoming.revision>=sellerBase.revision){sellerBase=incoming;sellerBaseGeneration=generation}
+ if(first){try{let cached=JSON.parse(localStorage.getItem(sellerDraftKey(incoming.id,generation))||'null');if(!cached&&!generation&&incoming.id===1)cached=JSON.parse(localStorage.getItem('kaska-seller-draft')||'null');if(cached?.revision===incoming.revision){for(const field of sellerFields)if(typeof cached.fields?.[field]==='string'||(sellerListFields.includes(field)&&Array.isArray(cached.fields?.[field])))sellerPending[field]=cached.fields[field];if(Object.keys(sellerPending).length)sellerSaveTimer=setTimeout(()=>flushSellerProject().catch(e=>toast(e.message)),450)}}catch{}}
 }
 function sellerProject(){syncSellerProject();return {...(sellerBase||{}),...sellerPending}}
 function projectMessageLanguage(project=sellerProject()){
@@ -32,7 +35,7 @@ function sellerSaveStatus(text){document.querySelectorAll('[data-seller-save-sta
 function updateSellerProject(form){
  if(sellerSwitchBusy||(form.dataset.sellerProjectId&&Number(form.dataset.sellerProjectId)!==state.seller_project?.id))return;
  const current=sellerProject();let changed=false;
- for(const field of sellerFields){const input=form.elements[field];if(!input)continue;const value=field==='signal_interests'?JSON.parse(input.value||'[]'):field==='search_languages'?readSearchLanguages(form):field==='search_areas'?readSearchAreas(form):input.value;if(JSON.stringify(value)!==JSON.stringify(current[field]??(['search_languages','search_areas','signal_interests'].includes(field)?[]:''))){sellerPending[field]=value;changed=true}}
+ for(const field of sellerFields){const input=form.elements[field];if(!input)continue;const value=(field==='signal_interests'||field==='offer_sources')?JSON.parse(input.value||'[]'):field==='search_languages'?readSearchLanguages(form):field==='search_areas'?readSearchAreas(form):input.value;if(JSON.stringify(value)!==JSON.stringify(current[field]??(sellerListFields.includes(field)?[]:''))){sellerPending[field]=value;changed=true}}
  if(!changed)return;
  cacheSellerDraft();
  sellerSaveStatus('Zapisywanie projektu…');clearTimeout(sellerSaveTimer);
@@ -59,7 +62,7 @@ function flushSellerProject(){
 function bindSharedProject(form){
  const project=sellerProject();
  form.dataset.sellerProjectId=String(project.id);
- for(const field of sellerFields)if(form.elements[field])form.elements[field].value=['search_languages','search_areas','signal_interests'].includes(field)?JSON.stringify(project[field]||[]):project[field]||'';
+ for(const field of sellerFields)if(form.elements[field])form.elements[field].value=sellerListFields.includes(field)?JSON.stringify(project[field]||[]):project[field]||'';
  const language=form.elements.message_language;
  if(language){
   const hint=form.querySelector('[data-project-inherited-language]');
@@ -95,11 +98,11 @@ function bindProjectInterests(form){
  panel.querySelectorAll('[data-project-interest]').forEach(input=>input.onchange=()=>{storage.value=JSON.stringify([...panel.querySelectorAll('[data-project-interest]:checked')].map(input=>input.value));count();storage.dispatchEvent(new Event('input',{bubbles:true}))});count();
 }
 function sharedProjectPanel(){
- return `<section id="discover-project"><form id="seller-project-form"><div class="campaign-tabs project-tabs" role="tablist" aria-label="${esc(translateUiText('Szczegóły projektu'))}">${[['project','Projekt'],['search','Szukaj'],['signals','Katalog sygnałów']].map(([tab,label])=>`<button type="button" id="project-tab-${tab}" role="tab" data-project-tab="${tab}" aria-controls="project-panel-${tab}" aria-selected="${tab==='project'}" tabindex="${tab==='project'?'0':'-1'}">${label}</button>`).join('')}</div><section class="panel project-tab-panel" id="project-panel-project" role="tabpanel" aria-labelledby="project-tab-project"><label for="seller-name">Nazwa projektu</label><input id="seller-name" name="name" required maxlength="100"><label for="project-message-language">Język wiadomości w projekcie</label><select id="project-message-language" name="message_language"><option value="">Z ustawień</option>${messageLanguageOptions(sellerProject().message_language)}</select><p class="hint" data-project-inherited-language hidden><span>Domyślny język wiadomości</span> · <strong data-no-translate>${esc(state.languages[state.preferences.message_language].label)}</strong></p><label for="prospect-website">Strona firmy, w imieniu której piszesz</label><input id="prospect-website" name="website" type="text" placeholder="firma.pl" maxlength="2000"><label for="prospect-offer">Oferta</label><textarea id="prospect-offer" name="offer" maxlength="10000" rows="4"></textarea>${refineControls('offer')}${sellingPointsSection('prospect')}</section><section class="panel project-tab-panel" id="project-panel-search" role="tabpanel" aria-labelledby="project-tab-search" hidden><label for="prospect-audience">Opis firm, których szukasz</label><textarea id="prospect-audience" name="audience" maxlength="3000" rows="3"></textarea><div class="audience-ai-tools">${refineControls('audience')}${audienceSuggestionControls()}</div>${searchMapControls()}${searchLanguagesPicker()}</section><section class="panel project-tab-panel" id="project-panel-signals" role="tabpanel" aria-labelledby="project-tab-signals" hidden>${projectInterestCatalog()}</section><button class="secondary">Zapisz projekt</button></form></section>`;
+ return `<section id="discover-project"><form id="seller-project-form"><div class="project-tab-toolbar"><div class="campaign-tabs project-tabs" role="tablist" aria-label="${esc(translateUiText('Szczegóły projektu'))}">${[['project','Projekt'],['offer','Oferta'],['search','Szukaj'],['signals','Katalog sygnałów']].map(([tab,label])=>`<button type="button" id="project-tab-${tab}" role="tab" data-project-tab="${tab}" aria-controls="project-panel-${tab}" aria-selected="${tab==='project'}" tabindex="${tab==='project'?'0':'-1'}">${label}</button>`).join('')}</div><button type="submit" class="primary">Zapisz projekt</button></div><section class="panel project-tab-panel" id="project-panel-project" role="tabpanel" aria-labelledby="project-tab-project"><label for="seller-name">Nazwa projektu</label><input id="seller-name" name="name" required maxlength="100"><label for="project-message-language">Język wiadomości w projekcie</label><select id="project-message-language" name="message_language"><option value="">Z ustawień</option>${messageLanguageOptions(sellerProject().message_language)}</select><p class="hint" data-project-inherited-language hidden><span>Domyślny język wiadomości</span> · <strong data-no-translate>${esc(state.languages[state.preferences.message_language].label)}</strong></p></section><section class="panel project-tab-panel" id="project-panel-offer" role="tabpanel" aria-labelledby="project-tab-offer" hidden>${projectOfferPanel()}</section><section class="panel project-tab-panel" id="project-panel-search" role="tabpanel" aria-labelledby="project-tab-search" hidden><label for="prospect-audience">Opis firm, których szukasz</label><textarea id="prospect-audience" name="audience" maxlength="3000" rows="3"></textarea><div class="audience-ai-tools">${refineControls('audience')}${audienceSuggestionControls()}</div>${searchMapControls()}${searchLanguagesPicker()}</section><section class="panel project-tab-panel" id="project-panel-signals" role="tabpanel" aria-labelledby="project-tab-signals" hidden>${projectInterestCatalog()}</section><button type="submit" class="secondary">Zapisz projekt</button></form></section>`;
 }
 const projectTabs=new Map();
 function selectProjectTab(tab){
- if(!['project','search','signals'].includes(tab)||!$('#seller-project-form'))return;
+ if(!['project','offer','search','signals'].includes(tab)||!$('#seller-project-form'))return;
  projectTabs.set(sellerProject().id,tab);
  for(const button of document.querySelectorAll('[data-project-tab]')){
   const selected=button.dataset.projectTab===tab;
@@ -115,10 +118,21 @@ document.addEventListener('keydown',event=>{
 });
 document.addEventListener('invalid',event=>{const panel=event.target.closest('#seller-project-form [role=tabpanel]');if(panel)selectProjectTab(panel.id.replace('project-panel-',''))},true);
 function bindDiscoverProject(){
- const form=$('#seller-project-form');bindSellingPoints(form);bindSharedProject(form);bindRefineControls();
- form.onsubmit=e=>{e.preventDefault();run(e.submitter,async()=>{updateSellerProject(form);await flushSellerProject();toast('Projekt zapisany.')})};
+ const form=$('#seller-project-form');bindSellingPoints(form);bindSharedProject(form);bindRefineControls();bindProjectOffer(form);
+ const saveButtons=[...form.querySelectorAll('button[type="submit"]')];
+ let saving=false;
+ form.onsubmit=event=>{
+  event.preventDefault();
+  if(saving)return;
+  saving=true;
+  saveButtons.forEach(button=>button.disabled=true);
+  void run(null,async()=>{
+   try{updateSellerProject(form);await flushSellerProject();toast('Projekt zapisany.')}
+   finally{saving=false;saveButtons.forEach(button=>button.disabled=false)}
+  });
+ };
 }
-function editSellerProject(){view='project';render();selectProjectTab('project');$('#prospect-offer').focus()}
+function editSellerProject(){view='project';render();selectProjectTab('offer');$('#prospect-offer').focus()}
 
 function renderProjectPicker(){
  const select=$('#active-project');if(!select||!state?.seller_project)return;
@@ -165,8 +179,43 @@ document.addEventListener('change',e=>{
  chooseSellerProject('seller-projects/select',{project_id:Number(e.target.value)}).catch(error=>{toast(error.message);renderProjectPicker()});
 });
 document.addEventListener('click',e=>{
- if(!e.target.closest('#new-seller-project'))return;
- modal(`<h2>Nowy projekt</h2><form id="new-seller-project-form"><label for="new-project-name">Nazwa projektu</label><input id="new-project-name" name="name" required maxlength="100" placeholder="np. Moja firma"><label class="check"><input type="checkbox" name="share_contacts"> <span>Współdziel kontakty</span></label><p class="hint">Zaznacz, aby korzystać ze wspólnej puli kontaktów. Bez zaznaczenia projekt ma własne kontakty. Kampanie zawsze należą do jednego projektu.</p><div class="actions"><button class="primary">Utwórz projekt</button><button type="button" class="secondary close">Anuluj</button></div></form>`);
- $('#new-project-name').focus();
- $('#new-seller-project-form').onsubmit=e=>{e.preventDefault();run(e.submitter,async()=>{await chooseSellerProject('seller-projects/create',{name:e.target.elements.name.value,share_contacts:e.target.elements.share_contacts.checked});$('#modal').close();editSellerProject();toast('Utworzono projekt.')})};
+ if(!e.target.closest('#new-seller-project')||!state?.seller_project)return;
+ const current=sellerProject();
+ const projects=state.seller_projects.map(project=>project.id===current.id?current:project);
+ modal(`<h2>Nowy projekt</h2><form id="new-seller-project-form">
+ <label for="new-project-mode">Jak utworzyć projekt?</label>
+ <select id="new-project-mode"><option value="blank">Pusty projekt</option><option value="clone">Sklonuj projekt</option></select>
+ <div data-project-clone-source hidden><label for="new-project-source">Projekt do sklonowania</label>
+ <select id="new-project-source">${projects.map(project=>`<option value="${project.id}" ${project.id===current.id?'selected':''} data-no-translate>${esc(project.name)}</option>`).join('')}</select>
+ <p class="hint">Skopiujemy ustawienia, ofertę i jej dokumenty. Kopia zacznie z pustą historią wyszukiwań i kampanii.</p></div>
+ <label for="new-project-name">Nazwa projektu</label><input id="new-project-name" name="name" required maxlength="100" placeholder="np. Moja firma">
+ <label class="check"><input type="checkbox" name="share_contacts"> <span>Współdziel kontakty</span></label>
+ <p class="hint">Zaznacz, aby korzystać ze wspólnej puli kontaktów. Bez zaznaczenia projekt ma własne kontakty. Kampanie zawsze należą do jednego projektu.</p>
+ <div class="actions"><button class="primary">Utwórz projekt</button><button type="button" class="secondary close">Anuluj</button></div></form>`);
+ const form=$('#new-seller-project-form'),name=form.elements.name;
+ const mode=$('#new-project-mode'),source=$('#new-project-source'),section=$('[data-project-clone-source]');
+ const submit=form.querySelector('button.primary');
+ let suggestedName='';
+ function updateMode(){
+  const cloning=mode.value==='clone';
+  const suggestion=cloning?(translateUiText('Kopia')+' '+source.selectedOptions[0].textContent).slice(0,name.maxLength):'';
+  if(!name.value.trim()||name.value===suggestedName)name.value=suggestion;
+  suggestedName=suggestion;
+  section.hidden=!cloning;
+  submit.textContent=translateUiText(cloning?'Sklonuj projekt':'Utwórz projekt');
+ }
+ mode.onchange=source.onchange=updateMode;
+ name.focus();
+ form.onsubmit=event=>{
+  event.preventDefault();
+  if(sellerSwitchBusy)return;
+  const cloning=mode.value==='clone';
+  const item={name:name.value,share_contacts:form.elements.share_contacts.checked};
+  if(cloning)item.clone_from=Number(source.value);
+  run(event.submitter,async()=>{
+   await chooseSellerProject('seller-projects/create',item);
+   $('#modal').close();editSellerProject();
+   toast(translateUiText(cloning?'Sklonowano projekt.':'Utworzono projekt.'));
+  });
+ };
 });

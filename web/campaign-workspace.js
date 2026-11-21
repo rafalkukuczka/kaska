@@ -28,9 +28,9 @@ function manualQueueActive(w){
  return Boolean(!w.manualQueueError&&w.manualRuns?.some(task=>['queued','running'].includes(task.status)));
 }
 function campaignWorkspaceStatus(c,w,summary,delivery){
- if(c.channel==='manual'&&manualQueueActive(w))return 'Kolejka rozszerzenia aktywna';
+ if(!monitoringSimulation&&c.channel==='manual'&&manualQueueActive(w))return 'Kolejka rozszerzenia aktywna';
  if(c.status==='active'){
-  if(c.channel==='manual'){
+  if(!monitoringSimulation&&c.channel==='manual'){
    if(w.manualQueueError)return 'Kolejka rozszerzenia niedostępna';
    if(!w.manualRuns)return 'Sprawdzam stan kolejki…';
    if(w.manualRuns.some(task=>['paused','needs_review'].includes(task.status)))return 'Zadania wstrzymane lub do sprawdzenia';
@@ -48,12 +48,12 @@ function campaignWorkspaceStatus(c,w,summary,delivery){
  return summary?.messages?'Wiadomości przygotowane':'Do przygotowania';
 }
 function campaignMainAction(c,w,summary){
- if(c.channel==='linkedin'){
+ if(!monitoringSimulation&&c.channel==='linkedin'){
   if(!summary)return '<span class="badge gray">Wczytuję kampanię…</span>';
   if(!summary.messages)return `<button type="button" class="primary" data-action="prepare" data-id="${c.id}">Przygotuj wiadomości LinkedIn</button>`;
   return '<span class="badge gray">Kolejka LinkedIn dostępna w rozszerzeniu PKEY</span>';
  }
- if(c.channel==='manual'){
+ if(!monitoringSimulation&&c.channel==='manual'){
   const start=`<button type="button" class="primary" data-manual-campaign-start="${c.id}">Uruchom kolejkę</button>`;
   const resumePaused=`<button type="button" class="secondary" data-manual-campaign-start="${c.id}" data-manual-start-mode="resume-paused">Uruchom tylko wstrzymane</button>`;
   if(c.status==='active'&&summary&&!(summary.counts.queued||0))return '<span class="badge gray">Brak oczekujących zadań</span>';
@@ -79,7 +79,7 @@ function campaignReprepareButton(id,style){
 }
 function confirmCampaignReprepare(id){
  const campaign=state.campaigns.find(c=>c.id===id);if(!campaign)return;
- const projectId=state.seller_project.id,active=campaign.status==='active',manual=campaign.channel==='manual';
+ const projectId=state.seller_project.id,active=campaign.status==='active',manual=!monitoringSimulation&&campaign.channel==='manual';
  modal(`<h2>Przygotować wiadomości ponownie?</h2>
   <p data-no-translate>${esc(campaign.name)}</p>
   <p>Nowe szkice zastąpią treść oczekujących wiadomości. Historia wysyłek zostanie zachowana.</p>
@@ -111,7 +111,7 @@ function confirmCampaignReprepare(id){
 function renderCampaignWorkspaceHeader(c,w,data){
  const root=$('#campaign-workspace-header');if(!root)return;
  const summary=data?.summary;
- const active=c.channel==='manual'?manualQueueActive(w):c.status==='active';
+ const active=!monitoringSimulation&&c.channel==='manual'?manualQueueActive(w):c.status==='active';
  root.innerHTML=`<div class="topline campaign-workspace-top"><div><p class="section-label">KAMPANIA</p><h1 data-no-translate>${esc(c.name)}</h1><p class="muted" data-no-translate>${esc(c.audience||campaignAudience(c))}</p></div><div class="actions campaign-workspace-actions">${campaignMainAction(c,w,summary)}<button type="button" class="secondary" data-action="edit-campaign" data-id="${c.id}">Edytuj kampanię</button><details class="campaign-more"><summary aria-label="${esc(translateUiText('Więcej działań'))}">⋯</summary><div>${summary?.messages?campaignReprepareButton(c.id,'link'):''}<button type="button" class="link danger" data-action="delete-campaign" data-id="${c.id}">Usuń kampanię</button></div></details></div></div><div class="campaign-summary" aria-label="${esc(translateUiText('Podsumowanie kampanii'))}">${[['Odbiorcy',summary?.recipients],['Kroki',summary?.steps],['Wiadomości',summary?.messages]].map(([label,count])=>`<div><strong data-campaign-summary="${label}">${count??'—'}</strong><span>${label}</span></div>`).join('')}<div class="campaign-state"><span class="campaign-state-dot ${active?'active':''}"></span><strong ${c.channel==='manual'?'data-manual-workspace-status':''}>${campaignWorkspaceStatus(c,w,summary,data?.delivery)}</strong>${monitoringSimulation?'<small>Symulacja</small>':''}</div></div>${renderCampaignDelivery(data)}${summary&&!summary.messages&&summary.recipients?'<p class="campaign-next-step">Kontakty są wybrane. Przygotuj wiadomości, aby sprawdzić treść i uruchomić kampanię.</p>':''}`;
 }
 function renderCampaignDelivery(data){
@@ -461,7 +461,7 @@ document.addEventListener('click',event=>{
 });
 function renderCampaignWorkspace(c){
  const w=campaignWorkspace(c.id),data=campaignWorkspaceData(w);
- const manual=c.channel==='manual';
+ const manual=!monitoringSimulation&&c.channel==='manual';
  if(manual&&$('#campaign-manual-queue')?.dataset.workspaceKey===w.key){
   const messages=campaignMessagePage(c.id);
   if(!messages.loading&&!messages.polling&&!messages.busy)void loadCampaignMessages(c.id,{silent:true});
@@ -530,7 +530,7 @@ async function changeCampaignRecipient(w,contactId,action){
    simulation.replies=simulation.replies.filter(reply=>reply.contact_id!==contactId);
    saveSimulationResults();
   }
-  if(state.campaigns.find(c=>c.id===w.id)?.channel==='manual'){
+  if(!monitoringSimulation&&state.campaigns.find(c=>c.id===w.id)?.channel==='manual'){
    void requestManualQueue('sync-removed',w.id).then(result=>renderManualQueueRuns(w.id,result.runs)).catch(()=>{});
   }
  }

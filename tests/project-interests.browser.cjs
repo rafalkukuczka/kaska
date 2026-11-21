@@ -18,9 +18,10 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.evaluate(()=>view),'dashboard');
   assert.equal(await page.evaluate(()=>Object.hasOwn(state,'signals')),false);
   await page.locator('#current-seller-project').click();
-  assert.equal(await page.locator('[data-project-tab]').count(),3);
+  assert.equal(await page.locator('[data-project-tab]').count(),4);
   assert.equal(await page.locator('#project-panel-project').isVisible(),true);
   assert.equal(await page.locator('#project-panel-search').isVisible(),false);
+  await page.locator('[data-project-tab=offer]').click();
   await page.locator('#prospect-offer').fill('Industrial engineering');
   await page.locator('[data-project-tab=search]').click();
   await page.locator('#prospect-audience').fill('Industrial manufacturers');

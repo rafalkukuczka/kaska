@@ -20,8 +20,10 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.evaluate(()=>state.contacts.length),0);
   assert.equal(await page.evaluate(()=>state.signals.monitoring.monitors.length),0);
   await page.locator('#current-seller-project').click();
+  await page.locator('[data-project-tab=offer]').click();
   await page.locator('#prospect-website').fill('seller.example');
   await page.locator('#prospect-offer').fill('My original offer');
+  await page.locator('[data-project-tab=search]').click();
   await page.locator('#prospect-audience').fill('Manufacturing companies in Europe');
 
   await page.evaluate(async()=>{updateSellerProject(document.querySelector('#seller-project-form'));await flushSellerProject()});

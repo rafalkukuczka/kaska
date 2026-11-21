@@ -26,7 +26,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   const tuneBounds=await page.locator('[data-refine=audience]').boundingBox(),suggestBounds=await page.locator('[data-suggest-audience]').boundingBox(),mapBounds=await page.locator('[data-show-search-map]').boundingBox();
   assert.ok(Math.abs(tuneBounds.y-suggestBounds.y)<2);
   assert.ok(mapBounds.y>suggestBounds.y+suggestBounds.height);
-  await page.locator('[data-project-tab=project]').click();
+  await page.locator('[data-project-tab=offer]').click();
   await page.locator('#prospect-offer').fill('Industrial automation');
   await page.locator('[data-point-editor=pain_points] .point-row input').first().fill('Manual reporting');
   await page.locator('[data-point-editor=value_props] .point-row input').first().fill('Less repetitive work');

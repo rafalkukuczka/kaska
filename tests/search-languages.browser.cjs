@@ -15,6 +15,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.goto('http://localhost:8793');
   await page.waitForFunction(()=>state?.seller_project);
   await page.locator('#current-seller-project').click();
+  await page.locator('[data-project-tab=offer]').click();
   await page.locator('#prospect-website').fill('alpha.example');
   await page.locator('#prospect-offer').fill('Logistics services');
   await page.locator('[data-project-tab=search]').click();

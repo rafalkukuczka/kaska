@@ -4,11 +4,12 @@ import time
 import languages
 import search_areas
 import opportunity_catalog
+from offer_documents import validate_sources
 
 FIELDS={'website':2000,'offer':10000,'audience':3000,'pain_points':10000,'value_props':10000,'proof_points':10000}
 
 
-def blank_project():return {**{key:'' for key in FIELDS},'message_language':'','search_languages':[],'search_areas':[],'signal_interests':[]}
+def blank_project():return {**{key:'' for key in FIELDS},'message_language':'','search_languages':[],'search_areas':[],'signal_interests':[],'offer_sources':['website']}
 
 
 def init_schema(c):
@@ -35,7 +36,7 @@ def get(db,project_id=None):
         if project_id is None:project_id=c.execute('SELECT project_id FROM seller_project_selection WHERE id=1').fetchone()[0]
         row=c.execute('SELECT * FROM seller_projects WHERE id=? AND deleted=0',(int(project_id),)).fetchone()
     if not row:raise ValueError('Nie znaleziono projektu.')
-    return {'message_language':'','search_languages':[],'search_areas':[],'signal_interests':[],**json.loads(row['data']),'id':row['id'],'name':row['name'],'revision':row['revision'],'updated':row['updated'],'share_contacts':bool(row['share_contacts'])}
+    return {**blank_project(),**json.loads(row['data']),'id':row['id'],'name':row['name'],'revision':row['revision'],'updated':row['updated'],'share_contacts':bool(row['share_contacts'])}
 
 
 def message_language(db,project_id):
@@ -56,10 +57,23 @@ def create(db,item):
     name=project_name(item.get('name'))
     share_contacts=item.get('share_contacts',False)
     if type(share_contacts) is not bool:raise ValueError('share_contacts must be a boolean')
+    source_id=item.get('clone_from')
+    if source_id is not None and (type(source_id) is not int or not 0 < source_id < 2**63):
+        raise ValueError('Wybierz projekt do sklonowania.')
     with db() as c:
         c.execute('PRAGMA busy_timeout=3000');c.execute('BEGIN IMMEDIATE')
+        data=json.dumps(blank_project())
+        if source_id is not None:
+            source=c.execute('SELECT data FROM seller_projects WHERE id=? AND deleted=0',(source_id,)).fetchone()
+            if not source:
+                raise ValueError('Nie znaleziono projektu do sklonowania.')
+            data=source['data']
         project_id=c.execute('INSERT INTO seller_projects(name,data,updated,share_contacts) VALUES(?,?,?,?)',
-                             (name,json.dumps(blank_project()),time.time(),int(share_contacts))).lastrowid
+                             (name,data,time.time(),int(share_contacts))).lastrowid
+        if source_id is not None:
+            c.execute("""INSERT INTO offer_documents(project_id,name,digest,text)
+                SELECT ?,name,digest,text FROM offer_documents WHERE project_id=? ORDER BY id""",
+                      (project_id,source_id))
         c.execute('UPDATE seller_project_selection SET project_id=? WHERE id=1',(project_id,))
     return get(db,project_id)
 
@@ -104,6 +118,7 @@ def save(db,item):
     if 'search_languages' in item:patch['search_languages']=languages.validate_search_languages(item['search_languages'])
     if 'search_areas' in item:patch['search_areas']=search_areas.validate(item['search_areas'])
     if 'signal_interests' in item:patch['signal_interests']=opportunity_catalog.validate(item['signal_interests'])
+    if 'offer_sources' in item:patch['offer_sources']=validate_sources(item['offer_sources'])
     if 'message_language' in item:
         value=item['message_language']
         if not isinstance(value,str):raise ValueError('Wybierz język wiadomości w projekcie.')
@@ -118,7 +133,7 @@ def save(db,item):
         project=json.loads(row['data']);project.update(patch);updated=time.time()
         name=name or row['name']
         c.execute('UPDATE seller_projects SET name=?,data=?,revision=revision+1,updated=? WHERE id=?',(name,json.dumps(project,ensure_ascii=False),updated,row['id']))
-    return {'message_language':'','search_languages':[],'search_areas':[],'signal_interests':[],**project,'id':row['id'],'name':name,'revision':row['revision']+1,'updated':updated,'share_contacts':bool(row['share_contacts'])}
+    return {**blank_project(),**project,'id':row['id'],'name':name,'revision':row['revision']+1,'updated':updated,'share_contacts':bool(row['share_contacts'])}
 
 
 def resolve(db,item):

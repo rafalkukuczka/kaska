@@ -1,7 +1,10 @@
 let reportsDays=7,reportsSnapshot=null,reportsKey='',reportsLoading=false,reportsError='',reportsUpdated=0,reportsRequest=0,reportsController=null;
 let reportsCostPage=1,reportsCostMetric='cost';
+const reportsChartTypeKey='kaska-openai-chart-type';
+let reportsChartType='area';
+try{if(localStorage.getItem(reportsChartTypeKey)==='bar')reportsChartType='bar'}catch{}
 function renderReports(){
- const key=state.seller_project.id+':'+reportsDays;
+ const key=state.seller_project.id+':'+reportsDays+':'+(state.simulation_generation||'');
  if(reportsKey!==key){reportsController?.abort();reportsRequest++;reportsKey=key;reportsSnapshot=null;reportsLoading=false;reportsError='';reportsUpdated=0;reportsCostPage=1}
  $('#content').innerHTML=renderTop('Raporty','Lejek kontaktu, aktywność i wyniki kampanii bieżącego projektu.')+projectContextLink()+`<section class="panel reports-toolbar"><label for="reports-days"><span>Okres raportów</span><select id="reports-days">${[7,30,90].map(days=>`<option value="${days}" ${days===reportsDays?'selected':''}>${days} ${esc(translateUiText('dni'))}</option>`).join('')}</select></label><button type="button" class="secondary" id="reports-refresh" ${reportsLoading?'disabled':''}>Odśwież raporty</button><span class="badge gray">Dane rzeczywiste</span><p class="hint">Raporty pomijają symulację. Zaangażowanie i odbicia wymagają osobnego pomiaru.</p></section><div id="reports-content"></div>`;
  $('#reports-days').onchange=event=>{reportsDays=Number(event.target.value);renderReports()};
@@ -29,10 +32,15 @@ function openAIReport(report){
   second:'2-digit',timeZone:'Europe/Warsaw'});
  return `<section class="panel reports-openai">
   <div class="panel-head"><h2>Koszty OpenAI</h2>
-    ${requests.length?`<label class="reports-ai-metric" for="reports-ai-metric"><span>Wykres</span><select id="reports-ai-metric">
+    ${requests.length?`<div class="reports-ai-chart-controls">
+    <label class="reports-ai-metric" for="reports-ai-metric"><span>Wykres</span><select id="reports-ai-metric">
       <option value="cost" ${reportsCostMetric==='cost'?'selected':''}>Koszt zapytania</option>
       <option value="duration" ${reportsCostMetric==='duration'?'selected':''}>Czas odpowiedzi</option>
-    </select></label>`:''}</div>
+    </select></label>
+    <label class="reports-ai-metric" for="reports-ai-chart-type"><span>Typ wykresu</span><select id="reports-ai-chart-type">
+      <option value="bar" ${reportsChartType==='bar'?'selected':''}>Słupkowy</option>
+      <option value="area" ${reportsChartType==='area'?'selected':''}>Liniowy z wypełnieniem</option>
+    </select></label></div>`:''}</div>
   ${totals.calls?`<div class="activity-legend reports-ai-totals">
     <span><span>Zapytania</span> <strong>${number(totals.calls)}</strong></span>
     <span><span>Tokeny</span> <strong>${number(totals.input_tokens+totals.output_tokens)}</strong></span>
@@ -56,9 +64,12 @@ function renderOpenAIReportChart(){
  const root=$('#reports-ai-chart'),rows=reportsSnapshot?.openai_usage?.requests;
  if(!root||!rows?.length)return;
  const isCost=reportsCostMetric==='cost';
+ const isBar=reportsChartType==='bar';
  const value=row=>isCost?(row.cost_usd===null?null:Number(row.cost_usd)):row.duration_ms===null?null:row.duration_ms/1000;
- const points=rows.filter(row=>value(row)!==null);
- if(!points.length){
+ const ordered=[...rows].reverse();
+ const values=ordered.map(value);
+ const measured=values.filter(amount=>amount!==null);
+ if(!measured.length){
   root.innerHTML=`<p class="hint">${isCost?'Brak wycenionych zapytań na tej stronie.':'Brak pomiarów czasu na tej stronie.'}</p>`;
   return;
  }
@@ -68,9 +79,11 @@ function renderOpenAIReportChart(){
  const width=Math.max(280,root.clientWidth||700),height=250,left=width<480?62:82,right=15,top=26,bottom=37;
  const plotWidth=width-left-right,plotHeight=height-top-bottom;
  const start=rows.at(-1).created,end=rows[0].created,span=end-start;
- const ceiling=Math.max(...points.map(value))||(isCost?0.00000001:0.01);
- const x=stamp=>left+(span?(stamp-start)/span:.5)*plotWidth;
- const y=amount=>top+plotHeight-amount/ceiling*plotHeight;
+ const ceiling=Math.max(...measured)||(isCost?0.00000001:0.01);
+ const baseline=top+plotHeight,slot=plotWidth/rows.length,barWidth=Math.min(28,slot*.76);
+ const timeX=stamp=>left+(span?(stamp-start)/span:.5)*plotWidth;
+ const barX=index=>left+(index+.5)*slot;
+ const y=amount=>baseline-amount/ceiling*plotHeight;
  const when=new Intl.DateTimeFormat(locale,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',
   ...(span<3600?{second:'2-digit'}:{}),timeZone:'Europe/Warsaw'});
  const grid=Array.from({length:5},(_,index)=>{
@@ -78,20 +91,48 @@ function renderOpenAIReportChart(){
   return `<line x1="${left}" x2="${width-right}" y1="${y(amount)}" y2="${y(amount)}" class="activity-grid"/>
     <text x="${left-8}" y="${y(amount)+4}" text-anchor="end">${esc(number.format(amount))}</text>`;
  }).join('');
- const ticks=(span?(width<530?[0,1]:[0,.5,1]):[.5]).map(fraction=>
-  `<text x="${left+fraction*plotWidth}" y="${height-9}" text-anchor="${fraction===0?'start':fraction===1?'end':'middle'}">${esc(when.format(new Date((start+span*fraction)*1000)))}</text>`).join('');
- const marks=points.map(row=>`<circle class="reports-ai-point" cx="${x(row.created)}" cy="${y(value(row))}" r="4"><title>${esc(
-  `${when.format(new Date(row.created*1000))} · ${openAIUsageLabel(row)} · ${cost(row.cost_usd)} · ${number.format(row.input_tokens+row.output_tokens)} ${translateUiText('tokenów')}${row.duration_ms===null?'':' · '+number.format(row.duration_ms/1000)+' s'}`
- )}</title></circle>`).join('');
- const line=[...points].reverse().map(row=>`${x(row.created)},${y(value(row))}`).join(' ');
+ const fractions=span?(width<530||(isBar&&rows.length<3)?[0,1]:[0,.5,1]):[.5];
+ const ticks=fractions.map(fraction=>{
+  const index=Math.round((rows.length-1)*fraction);
+  const stamp=isBar?ordered[index].created:start+span*fraction;
+  const position=isBar&&span?barX(index):timeX(stamp);
+  const anchor=fraction===0?'start':fraction===1?'end':'middle';
+  return `<text x="${position}" y="${height-9}" text-anchor="${anchor}">${esc(when.format(new Date(stamp*1000)))}</text>`;
+ }).join('');
+ const marks=ordered.map((row,index)=>{
+  const amount=values[index];if(amount===null)return '';
+  const title=`<title>${esc(`${when.format(new Date(row.created*1000))} · ${openAIUsageLabel(row)} · ${cost(row.cost_usd)} · ${number.format(row.input_tokens+row.output_tokens)} ${translateUiText('tokenów')}${row.duration_ms===null?'':' · '+number.format(row.duration_ms/1000)+' s'}`)}</title>`;
+  if(isBar){
+   const barHeight=Math.max(1,baseline-y(amount));
+   return `<rect class="reports-ai-bar" x="${barX(index)-barWidth/2}" y="${baseline-barHeight}" width="${barWidth}" height="${barHeight}">${title}</rect>`;
+  }
+  return `<circle class="reports-ai-point" cx="${timeX(row.created)}" cy="${y(amount)}" r="4">${title}</circle>`;
+ }).join('');
+ const series=[];
+ if(!isBar){
+  let segment=[];
+  for(let index=0;index<values.length;index++){
+   if(values[index]===null){if(segment.length)series.push(segment);segment=[];continue}
+   segment.push([timeX(ordered[index].created),y(values[index])]);
+  }
+  if(segment.length)series.push(segment);
+ }
+ const lines=series.filter(segment=>segment.length>1).map(segment=>{
+  const line=segment.join(' ');
+  return `<polygon class="reports-ai-area" points="${segment[0][0]},${baseline} ${line} ${segment.at(-1)[0]},${baseline}"/>
+    <polyline class="reports-ai-line" points="${line}"/>`;
+ }).join('');
  root.innerHTML=`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(axis)}">
   <text x="${left}" y="13">${esc(axis)}</text>${grid}${ticks}
-  <polyline class="reports-ai-line" points="${line}"/>${marks}</svg>`;
+  ${lines}${marks}</svg>${isBar?`<p class="hint reports-ai-order">${esc(translateUiText('Zapytania w kolejności wykonania'))}</p>`:''}`;
 }
 
 document.addEventListener('change',event=>{
- if(event.target.id!=='reports-ai-metric')return;
- reportsCostMetric=event.target.value;
+ if(event.target.id==='reports-ai-metric')reportsCostMetric=event.target.value;
+ else if(event.target.id==='reports-ai-chart-type'){
+  reportsChartType=event.target.value;
+  try{localStorage.setItem(reportsChartTypeKey,reportsChartType)}catch{}
+ }else return;
  renderOpenAIReportChart();
  syncLanguages();
 });

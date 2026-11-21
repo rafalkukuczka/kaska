@@ -20,6 +20,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.goto('http://localhost:8795');await page.waitForFunction(()=>state?.seller_project);
   await page.locator('#current-seller-project').click();
   // Dashboard now renders the worldwide preview even without selected areas.
+  await page.locator('[data-project-tab=offer]').click();
   await page.locator('#prospect-website').fill('alpha.example');
   await page.locator('#prospect-offer').fill('Logistics services');
   await page.locator('[data-project-tab=search]').click();

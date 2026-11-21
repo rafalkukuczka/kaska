@@ -73,7 +73,10 @@ class DiscoverContacts:
             if any(not isinstance(value,str) or len(value)>250 for value in fields.values()):raise ValueError('Nieprawidłowy kontakt.')
             email=fields['email'].strip().lower()
             if not re.fullmatch(r'[^\s@<>]+@(?:[a-z0-9-]+\.)+example',email) or not fields['name'].strip():raise ValueError('Kontakty z symulacji muszą używać fikcyjnej domeny .example.')
-            validated.append({**fields,'email':email})
+            attributes = person.get('attributes')
+            department = attributes.get('department') if isinstance(attributes,dict) else None
+            research = contact_attributes({'provider':'Symulacja','department':department}, [], email.rsplit('@',1)[1])
+            validated.append({**fields,'email':email,'research':research})
         with self.db() as c:
             c.execute('BEGIN IMMEDIATE')
             if not c.execute('SELECT 1 FROM seller_projects WHERE id=? AND deleted=0',(project['id'],)).fetchone():raise ValueError('Projekt został usunięty.')
@@ -81,13 +84,18 @@ class DiscoverContacts:
             for person in {p['email']:p for p in validated}.values():
                 tags=self.person_tags(c,item,person['email']);group='; '.join(tags)
                 if not group:raise ValueError('Dodaj co najmniej jeden tag każdemu zapisywanemu kontaktowi.')
-                row=c.execute('SELECT id,simulated FROM contacts WHERE email=? AND contact_pool=?',(person['email'],project_scope.contact_pool(c,project['id']))).fetchone()
+                pool=project_scope.contact_pool(c,project['id'])
+                row=c.execute('SELECT id,simulated,research_data FROM contacts WHERE email=? AND contact_pool=?',(person['email'],pool)).fetchone()
                 if row:
                     existing+=1
-                    if row['simulated']:contact_tags.set_tags(c,row['id'],tags,merge='tags' in item or 'tags_by_contact' in item,project_id=project['id'])
+                    if row['simulated']:
+                        contact_tags.set_tags(c,row['id'],tags,merge='tags' in item or 'tags_by_contact' in item,project_id=project['id'])
+                        research=merge_attributes(json.loads(row['research_data']),person['research'])
+                        c.execute('UPDATE contacts SET research_data=? WHERE id=?',(json.dumps(research,ensure_ascii=False),row['id']))
                     continue
                 self.add_contact(c,{**person,'project_id':project['id'],'company':company,'tags':tags,'notes':'Dane symulacyjne. Projekt: '+project['name']+'. Wykluczone z rzeczywistej wysyłki.'})
-                c.execute('UPDATE contacts SET simulated=1 WHERE email=? AND contact_pool=?',(person['email'],project_scope.contact_pool(c,project['id'])));added+=1
+                c.execute('UPDATE contacts SET simulated=1,research_data=? WHERE email=? AND contact_pool=?',
+                          (json.dumps(person['research'],ensure_ascii=False),person['email'],pool));added+=1
         return {'added':added,'existing':existing,'target_group':group,'simulated':True,'persisted':True}
 
     def search(self,item,*,researched_company=None):
