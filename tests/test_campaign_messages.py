@@ -3,11 +3,28 @@ from unittest.mock import patch
 import campaign_messages
 import app
 import test_app
+import shared_project
 
 
 class MessageTests(unittest.TestCase):
     setUp=test_app.SystemTests.setUp
     tearDown=test_app.SystemTests.tearDown
+
+    def test_contact_history_keeps_deleted_queues_and_respects_project_scope(self):
+        other=shared_project.create(app.db,{'name':'Other project','share_contacts':True})
+        with app.db() as c:
+            c.execute("UPDATE campaigns SET status='deleted' WHERE id=1")
+            c.execute("INSERT INTO campaigns(id,name,offer,audience,created,project_id) VALUES(2,'Other queue','Offer','ICP',0,?)",(other['id'],))
+            c.execute("""INSERT INTO messages(campaign_id,contact_id,position,subject,body,status,due,sent_at,deleted)
+                         VALUES(1,1,0,'Sent message','Private body','sent',10,20,1),
+                               (1,1,1,'Cancelled','Private body','cancelled',30,NULL,0),
+                               (2,1,0,'Other message','Private body','queued',40,NULL,0)""")
+            first,=campaign_messages.contact_history(c,1,1)
+            self.assertEqual((first['id'],first['name'],first['channel'],first['status'],first['sent']),(1,'Test','email','deleted',1))
+            self.assertEqual([(m['subject'],m['sent_at'],m['deleted']) for m in first['messages']],
+                             [('Sent message',20,1),('Cancelled',None,0)])
+            self.assertNotIn('body',first['messages'][0])
+            self.assertEqual([queue['name'] for queue in campaign_messages.contact_history(c,1,other['id'])],['Other queue'])
 
     def test_pagination_includes_messages_beyond_workspace_limit_and_clamps(self):
         with app.db() as c:

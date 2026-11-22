@@ -112,6 +112,7 @@ function dashboardLeadResults() {
         <label class="lead-status-filter" for="lead-company-status"><span>Status firmy</span>
           <select id="lead-company-status"><option value="all">Wszystkie statusy</option>
             ${Object.entries(leadCompanyStatuses).map(([status,label])=>`<option value="${status}">${label}</option>`).join('')}
+            <option value="no-contacts">Bez kontaktów</option>
           </select>
         </label>
         <small class="hint" data-lead-status-count role="status" hidden></small>
@@ -273,14 +274,19 @@ function filterLeadCompanies(root) {
   const companies = [...root.querySelectorAll('#lead-company-results > [data-company]')];
   let visible = 0;
   for (const company of companies) {
-    company.hidden = status !== 'all' && company.dataset.status !== status;
+    const matches = status === 'no-contacts' ? !company.classList.contains('has-saved-contact') :
+      status === 'all' || company.dataset.status === status;
+    company.hidden = !matches;
     if (!company.hidden) visible++;
   }
   const count = root.querySelector('[data-lead-status-count]');
   const text = `${translateUiText('Widoczne firmy')} ${visible} / ${companies.length}`;
   if (count.textContent !== text) count.textContent = text;
   count.hidden = status === 'all' || !companies.length;
-  root.querySelector('[data-lead-status-empty]').hidden = !companies.length || visible > 0;
+  const empty = root.querySelector('[data-lead-status-empty]');
+  const emptyText = translateUiText(status === 'no-contacts' ? 'Brak firm bez kontaktów.' : 'Brak firm o wybranym statusie.');
+  if (empty.textContent !== emptyText) empty.textContent = emptyText;
+  empty.hidden = !companies.length || visible > 0;
 }
 
 function leadSearchCompany(company, node, hasOwnSignals, criterionCount, hasContacts) {

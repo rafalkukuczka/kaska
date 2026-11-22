@@ -16,10 +16,62 @@ function renderReportsContent(){
  const root=$('#reports-content');if(!root||view!=='reports')return;
  if(!reportsSnapshot){root.innerHTML=reportsError?`<p class="notice" role="alert">${esc(translateUiText(reportsError))}</p>`:'<p class="hint" role="status">Wczytywanie raportów…</p>';return}
  const data=reportsSnapshot,number=value=>new Intl.NumberFormat(uiLanguage==='en'?'en-GB':'pl-PL').format(value);
- root.innerHTML=`${reportsError?`<p class="notice" role="alert">${esc(translateUiText(reportsError))}</p>`:''}<p class="hint reports-updated"><span>Stan na:</span> <time data-no-translate datetime="${new Date(data.end*1000).toISOString()}">${esc(date(data.end))}</time></p>${dashboardFlowPanel(data.flow)}${dashboardActivityPanel(true)}<section class="panel reports-campaigns"><div class="panel-head"><h2>Porównanie kampanii</h2><span class="badge gray">${data.campaigns.length}</span></div><p class="hint">Wysyłki i odbiorcy z wybranego okresu. Kolejka i wysyłki do sprawdzenia pokazują stan bieżący. Historia obejmuje również usunięte kampanie.</p><div class="table-wrap"><table><thead><tr><th>Kampania</th><th>Status</th><th>Wysłane wiadomości</th><th>Skontaktowani odbiorcy</th><th>W kolejce</th><th>Wysyłki do sprawdzenia</th></tr></thead><tbody>${data.campaigns.map(c=>`<tr data-report-campaign="${c.id}"><td data-no-translate>${esc(c.name)}</td><td>${c.status==='deleted'?'<span class="badge gray">Usunięta</span>':badge(c.status)}</td><td>${number(c.sent)}</td><td>${number(c.contacted)}</td><td>${number(c.queued)}</td><td>${number(c.uncertain)}</td></tr>`).join('')||'<tr><td colspan="6"><span class="badge gray">Brak kampanii w tym projekcie.</span></td></tr>'}</tbody></table></div><p class="hint">Odpowiedzi raportujemy dla projektu. Błąd SMTP nie oznacza potwierdzonego odbicia.</p></section>`;
+ root.innerHTML=`${reportsError?`<p class="notice" role="alert">${esc(translateUiText(reportsError))}</p>`:''}<p class="hint reports-updated"><span>Stan na:</span> <time data-no-translate datetime="${new Date(data.end*1000).toISOString()}">${esc(date(data.end))}</time></p>${dashboardFlowPanel(data.flow)}${dashboardActivityPanel(true)}<section class="panel reports-campaigns"><div class="panel-head"><h2>Porównanie kampanii</h2><span class="badge gray">${data.campaigns.length}</span></div><p class="hint">Wysyłki i odbiorcy z wybranego okresu. Kolejka i wysyłki do sprawdzenia pokazują stan bieżący. Historia obejmuje również usunięte kampanie.</p><div class="table-wrap"><table><thead><tr><th>Kampania</th><th>Status</th><th>Wysłane wiadomości</th><th>Skontaktowani odbiorcy</th><th>W kolejce</th><th>Wysyłki do sprawdzenia</th></tr></thead><tbody>${data.campaigns.map(c=>`<tr data-report-campaign="${c.id}"><td data-no-translate>${c.status==='deleted'?esc(c.name):`<a class="link report-campaign-link" href="${campaignHash(c.id)}">${esc(c.name)}</a>`}</td><td>${c.status==='deleted'?'<span class="badge gray">Usunięta</span>':badge(c.status)}</td><td>${number(c.sent)}</td><td>${number(c.contacted)}</td><td>${number(c.queued)}</td><td>${number(c.uncertain)}</td></tr>`).join('')||'<tr><td colspan="6"><span class="badge gray">Brak kampanii w tym projekcie.</span></td></tr>'}</tbody></table></div><p class="hint">Odpowiedzi raportujemy dla projektu. Błąd SMTP nie oznacza potwierdzonego odbicia.</p></section>`;
  renderDashboardActivity();
  root.querySelector('.reports-campaigns').insertAdjacentHTML('beforebegin',openAIReport(data.openai_usage));
+ renderLogErrorReport();
  renderOpenAIReportChart();
+}
+
+function renderLogErrorReport(){
+ const report=reportsSnapshot,activity=$('#reports-content .dashboard-activity');
+ if(!activity||!report?.log_errors)return;
+ const existing=$('.reports-errors');
+ const expanded=existing?.querySelector('details')?.open;
+ const markup=logErrorReport(report,Math.max(270,activity.clientWidth-44),expanded);
+ if(existing)existing.outerHTML=markup;
+ else activity.insertAdjacentHTML('afterend',markup);
+}
+
+function logErrorReport(report,width,expanded){
+ const start=Date.parse(activityDayKey(report.start)+'T12:00:00Z');
+ const end=Date.parse(activityDayKey(report.end)+'T12:00:00Z');
+ const rowCount=Math.round((end-start)/86400000)+1;
+ const days=Array.from({length:rowCount},(_,index)=>new Date(start+index*86400000).toISOString().slice(0,10));
+ const counts=new Map(days.map(day=>[day,0]));
+ for(const [timestamp,count] of report.log_errors){
+  const day=activityDayKey(timestamp);
+  if(counts.has(day))counts.set(day,counts.get(day)+count);
+ }
+ const total=[...counts.values()].reduce((sum,count)=>sum+count,0);
+ const number=new Intl.NumberFormat(uiLanguage==='en'?'en-GB':'pl-PL');
+ const dateLabel=new Intl.DateTimeFormat(uiLanguage==='en'?'en-GB':'pl-PL',{day:'numeric',month:'short',timeZone:'UTC'});
+ const label=day=>dateLabel.format(new Date(day+'T12:00:00Z'));
+ const left=42,right=width-20,top=12,bottom=146,step=Math.max(1,Math.ceil(Math.max(...counts.values())/4));
+ const y=count=>bottom-count/(step*4)*(bottom-top);
+ const slot=(right-left)/days.length,barWidth=Math.min(32,slot*.72);
+ const x=index=>left+slot*(index+.5);
+ const grid=Array.from({length:5},(_,index)=>{
+  const value=index*step,height=y(value);
+  return `<line class="activity-grid" x1="${left}" x2="${right}" y1="${height}" y2="${height}"/>
+   <text x="${left-8}" y="${height+4}" text-anchor="end">${number.format(value)}</text>`;
+ }).join('');
+ const bars=days.map((day,index)=>{
+  const count=counts.get(day);
+  return count?`<rect class="reports-error-bar" x="${x(index)-barWidth/2}" y="${y(count)}" width="${barWidth}" height="${bottom-y(count)}">
+   <title>${esc(label(day))} · ${number.format(count)}</title></rect>`:'';
+ }).join('');
+ const ticks=[...new Set([0,Math.round((days.length-1)/3),Math.round((days.length-1)*2/3),days.length-1])]
+  .map(index=>`<text x="${x(index)}" y="170" text-anchor="${index===0?'start':index===days.length-1?'end':'middle'}">${esc(label(days[index]))}</text>`).join('');
+ return `<section class="panel reports-errors" aria-labelledby="reports-errors-title">
+  <div class="panel-head"><div><h2 id="reports-errors-title">Błędy z dziennika</h2>
+   <p class="hint">Wpisy z całej aplikacji według dnia · czas polski</p></div>
+   <p class="activity-legend"><span>Łącznie</span> <strong data-log-error-total>${number.format(total)}</strong></p></div>
+  ${total?`<svg viewBox="0 0 ${width} 178" role="img" aria-label="${esc(translateUiText('Dzienna liczba błędów'))}">${grid}${bars}${ticks}</svg>
+   <details class="activity-data" ${expanded?'open':''}><summary>Dane wykresu</summary><div class="table-wrap"><table><thead><tr><th>Data</th><th>Błędy</th></tr></thead>
+   <tbody>${days.map(day=>`<tr><td data-no-translate>${esc(label(day))}</td><td>${number.format(counts.get(day))}</td></tr>`).join('')}</tbody></table></div></details>`:
+   '<p class="hint">Brak błędów w tym okresie.</p>'}
+ </section>`;
 }
 
 function openAIReport(report){
@@ -145,7 +197,11 @@ document.addEventListener('click',event=>{
 let openAIChartResize;
 window.addEventListener('resize',()=>{
  cancelAnimationFrame(openAIChartResize);
- if(view==='reports')openAIChartResize=requestAnimationFrame(renderOpenAIReportChart);
+ if(view==='reports'&&state)openAIChartResize=requestAnimationFrame(()=>{
+  renderOpenAIReportChart();
+  renderLogErrorReport();
+  syncLanguages();
+ });
 });
 async function loadReports(){
  if(reportsLoading)return;

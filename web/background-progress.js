@@ -5,6 +5,7 @@ const backgroundLabels={
  'discover/opportunities/start':'Wyszukiwanie okazji','discover/opportunities/cancel':'Zatrzymywanie wyszukiwania okazji',
  'ai/translate-search-brief':'Tłumaczenie opisu wyszukiwania',
  'campaign/edit-data':'Wczytywanie kampanii','campaign/update':'Zapisywanie zmian kampanii',
+ 'campaign/restart':'Przygotowanie ponownego uruchomienia',
  'campaign/messages/delete':'Usuwanie wiadomości',
  'contacts/tags/bulk':'Przypisywanie tagów do kontaktów',
  'contacts/parse':'Rozdzielanie danych kontaktu',

@@ -1,5 +1,8 @@
 import unittest
+from datetime import datetime
+from pathlib import Path
 import app
+import diagnostics
 import reports
 import shared_project
 import test_app
@@ -8,6 +11,18 @@ import test_app
 class ReportTests(unittest.TestCase):
     setUp=test_app.SystemTests.setUp
     tearDown=test_app.SystemTests.tearDown
+
+    def test_error_report_counts_rotated_logs_and_failed_runs_without_recent_limit(self):
+        now=1800000000
+        directory=Path(self.temp.name)
+        stamp=datetime.fromtimestamp(now-300).strftime('%Y-%m-%d %H:%M:%S')
+        (directory/'katie.log.1').write_text((f'{stamp},000 ERROR worker Fixture error\n'*205)
+                                             +f'{stamp},000 INFO worker Healthy\n',encoding='utf-8')
+        with app.db() as c:
+            c.execute("INSERT INTO opportunity_searches(project_id,signature,request,status,total,created,updated) VALUES(1,'fixture','{}','partial',1,?,?)",(now-300,now-300))
+            self.assertEqual(diagnostics.error_report(directory,c,now-86400,now),
+                             [((now-300)//3600*3600,206)])
+            self.assertEqual(diagnostics.error_report(directory,c,now-200,now),[])
 
     def test_complete_history_ranges_current_queue_and_project_isolation(self):
         now=1800000000

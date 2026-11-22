@@ -32,6 +32,7 @@
 .reports-toolbar p{flex-basis:100%;margin:0}
 .reports-updated{margin:12px 0}
 .reports-campaigns{margin-top:24px}
+.report-campaign-link{padding:0;font-size:inherit;text-decoration:underline;text-underline-offset:2px}
 .reports-campaigns td:not(:first-child){font-variant-numeric:tabular-nums}
 .dashboard-flow h2{font-size:16px;margin:0 0 6px}
 .dashboard-flow .panel-head{align-items:center;gap:12px;flex-wrap:wrap}
@@ -411,6 +412,7 @@ body{color:var(--ink)}
 aside{padding:24px 16px;overflow-y:auto;overscroll-behavior:contain}
 .brand{font-size:32px;font-weight:700;letter-spacing:-1.8px}
 .brand span{color:var(--primary)}
+#kaska-release-version{color:var(--muted);font-size:11px;margin-top:2px}
 .project-picker{margin-top:16px}
 .project-picker label{color:var(--muted);font-size:11px}
 .project-picker select{border-radius:7px;color:var(--ink);background:#fcfcfe}
@@ -524,7 +526,24 @@ td strong{font-weight:600}
 
 .builder-form .step .step-preview-button{margin-top:12px;padding:7px 12px;font-size:11px} [data-step-preview]>select{margin-bottom:10px}[data-step-preview-message] .mail-preview p{overflow-wrap:anywhere}
 
-#admin-languages>summary{cursor:pointer}
+#admin-languages>summary,.admin-logs>summary{cursor:pointer}
+.admin-log-toolbar{display:flex;align-items:end;flex-wrap:wrap;gap:12px;margin-top:16px}
+.admin-log-toolbar label{margin:0}
+.admin-log-toolbar select{display:block;margin-top:5px}
+.admin-log-jobs{display:grid;gap:10px;padding-left:22px}
+.admin-log-jobs p{margin:4px 0}
+.phone-script-field{border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:12px}
+.phone-script-field label{display:block;margin:0}
+[data-phone-entry-condition]{margin:12px 0}
+[data-phone-step-condition]{margin-top:12px}
+[data-stage="2"][data-sequence-view="tree"]>[data-phone-entry-condition]{display:none}
+[data-stage="2"][data-sequence-view="tree"]>[data-phone-add-script]{display:none}
+#phone-campaign details{margin:10px 0}
+.phone-whatsapp-link{display:inline-flex;align-items:center;gap:6px}
+.phone-whatsapp-icon{flex:none;color:var(--action-text)}
+#phone-campaign .table-wrap .message{min-width:min(230px,45vw);overflow-wrap:anywhere}
+.admin-logs td:first-child,.admin-logs td:nth-child(2){white-space:nowrap}
+.admin-logs td:last-child{width:100%;overflow-wrap:anywhere;white-space:pre-wrap}
 
 .dashboard-search-context{display:flex;align-items:baseline;justify-content:center;gap:4px;flex-wrap:wrap;margin-bottom:4px}.dashboard-search-context .link{font-size:inherit;padding:0 4px}.dashboard-search-context strong{font-weight:500;overflow-wrap:anywhere}
 .dashboard-welcome .welcome-search-label{position:static;display:block;width:auto;height:auto;overflow:visible;clip-path:none;text-align:left;font-size:12px;margin-bottom:8px}
@@ -965,6 +984,11 @@ td strong{font-weight:600}
 .reports-ai-bar { fill: var(--primary); fill-opacity: .78; }
 .reports-ai-bar:hover { fill-opacity: 1; }
 .reports-ai-order { margin: 0 0 10px; text-align: center; }
+.reports-errors .panel-head { flex-wrap: wrap; }
+.reports-errors svg { display: block; width: 100%; }
+.reports-errors svg text { fill: var(--muted); font-size: 13px; }
+.reports-error-bar { fill: #b44730; }
+.reports-error-bar:hover { fill: #842e20; }
 .lead-discover-query { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; }
 .lead-discover-filters { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 12px; }
 .lead-discover-filters label { margin: 0; }

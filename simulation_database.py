@@ -68,7 +68,7 @@ class SimulationDatabase:
                     target.execute('PRAGMA journal_mode=DELETE')
                     with target:
                         self._store_mode(target, True, generation)
-                        target.execute("UPDATE campaigns SET status='paused' WHERE status='active'")
+                        target.execute("UPDATE campaigns SET status='paused' WHERE status='active' AND channel!='phone'")
                         target.execute("UPDATE messages SET status='uncertain' WHERE status='sending'")
                         target.execute("UPDATE prospect_runs SET status='interrupted',stage='' WHERE status IN ('searching','verifying','drafting','cancelling')")
                         target.execute("UPDATE opportunity_searches SET status='interrupted',stage='' WHERE status IN ('running','cancelling')")

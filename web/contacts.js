@@ -59,6 +59,7 @@ function renderAdministration(){
  const rows=state.tag_catalog||[];
  $('#content').innerHTML=renderTop('Administracja','Zarządzaj ustawieniami wspólnymi dla wszystkich projektów.')+`<details class="panel" id="admin-tags" ${adminTagsOpen?'open':''}><summary><strong>Edycja tagów</strong> <span class="badge gray">${rows.length}</span></summary><p class="hint">Dodawaj tagi do wyboru w kontaktach i kampaniach. Zmiana nazwy aktualizuje wszystkie przypisania.</p><form id="admin-add-tag" class="actions"><label for="admin-new-tag">Nowy tag</label><input id="admin-new-tag" name="name" maxlength="100" required><button class="primary" type="submit">+ Dodaj tag</button></form><div class="table-wrap"><table class="admin-tags-table"><thead><tr><th>Tag</th><th>Kontakty</th><th>Kampanie</th><th>Działanie</th></tr></thead><tbody>${rows.map(row=>`<tr><td><input data-admin-tag-name="${row.id}" value="${esc(row.name)}" maxlength="100" aria-label="${esc(translateUiText('Nazwa tagu'))}" data-no-translate></td><td>${row.contacts}</td><td>${row.campaigns}</td><td><div class="actions"><button type="button" class="secondary" data-admin-tag-save="${row.id}">Zapisz</button><button type="button" class="link danger" data-admin-tag-delete="${row.id}">Usuń tag</button></div></td></tr>`).join('')||'<tr><td colspan="4">Brak tagów. Dodaj pierwszy tag.</td></tr>'}</tbody></table></div></details>`;
  renderLanguageSettings();
+ renderAdminLogs();
  const panel=$('#admin-tags');panel.ontoggle=()=>{if(panel.isConnected)adminTagsOpen=panel.open};
  $('#admin-add-tag').onsubmit=event=>{event.preventDefault();run(event.submitter,async()=>{await api('admin/tags',{action:'create',name:event.target.elements.name.value});await refresh();toast(translateUiText('Tag dodany.'))})};
  document.querySelectorAll('[data-admin-tag-save]').forEach(button=>button.onclick=()=>run(button,async()=>{const result=await api('admin/tags',{action:'rename',id:Number(button.dataset.adminTagSave),name:$(`[data-admin-tag-name="${button.dataset.adminTagSave}"]`).value});applyTagAdministrationChange(result);await refresh();toast(translateUiText('Tag zmieniony.'))}));
@@ -68,6 +69,84 @@ function renderAdministration(){
   $('[data-admin-tag-confirm]').onclick=event=>run(event.currentTarget,async()=>{const result=await api('admin/tags',{action:'delete',id:tag.id});applyTagAdministrationChange(result);$('#modal').close();await refresh();toast(translateUiText('Tag usunięty.'))});
  });
 }
+let adminLogsOpen=true,adminLogLevel='all';
+const adminActivityStatuses={
+ running:'W trakcie…',cancelling:'Przerywanie…',ready:'Do przeglądu',completed:'Zakończono',
+ partial:'Ukończono częściowo',error:'Błąd',cancelled:'Zatrzymano',interrupted:'Przerwano',stale:'Przerwano',
+};
+function renderAdminLogs(){
+ $('#content .topline').insertAdjacentHTML('afterend',`<details class="panel admin-logs" id="admin-logs" ${adminLogsOpen?'open':''}>
+  <summary><strong>Dziennik działań Kaśki</strong></summary>
+  <h3>Co Kaśka robi teraz</h3>
+  <div data-admin-log-jobs></div>
+  <h3>Historia działań</h3>
+  <div class="admin-log-toolbar"><label>Poziom logów <select id="admin-log-level">
+   <option value="all">Wszystkie wpisy</option><option value="info">Zdarzenia</option><option value="error">Błędy</option>
+  </select></label><button type="button" class="secondary" id="admin-log-refresh">Odśwież logi</button></div>
+  <p class="hint">Ostatnie 200 wpisów z wybranej kategorii. Błędy techniczne obejmują całą aplikację.</p>
+  <p class="hint" data-admin-log-status role="status"></p><div class="table-wrap" data-admin-log-entries></div>
+ </details>`);
+ const panel=$('#admin-logs'), level=$('#admin-log-level'), button=$('#admin-log-refresh');
+ const status=panel.querySelector('[data-admin-log-status]'), root=panel.querySelector('[data-admin-log-entries]');
+ const jobsRoot=panel.querySelector('[data-admin-log-jobs]');
+ level.value=adminLogLevel;
+ const timestamp=new Intl.DateTimeFormat(uiLanguage==='en'?'en-GB':'pl-PL',{
+  dateStyle:'short',timeStyle:'medium',timeZone:'Europe/Warsaw'
+ });
+ const renderMarkup=(element,markup)=>{
+  if(element._markup===markup)return;
+  element.innerHTML=markup;
+  element._markup=markup;
+ };
+ let request;
+ async function load(){
+  request?.abort();
+  const controller=new AbortController();
+  request=controller;
+  if(root._markup===undefined)status.textContent=translateUiText('Wczytywanie logów…');
+  try{
+   const response=await fetch('/api/admin/logs',{
+    method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrf},
+    body:JSON.stringify({level:level.value}),signal:controller.signal
+   });
+   if(!response.ok)throw Error();
+   const {entries,jobs}=await response.json();
+   if(!panel.isConnected||controller.signal.aborted)return;
+   const jobsMarkup=jobs.map(job=>{
+    const label=job.label||(job.kind==='opportunities'?'Wyszukiwanie okazji':
+     ({searching:'Szukanie klientów',verifying:'Weryfikacja emaili',drafting:'Tworzenie szkiców'}[job.status]||'Prospecting'));
+    const counted=job.total>0, completed=counted?Math.min(job.total,job.completed||0):0;
+    return `<li><strong>${esc(translateUiText(label))}</strong>
+      ${job.project_name?`<span data-no-translate> · ${esc(job.project_name)}</span>`:''}
+      <span class="badge gray">${esc(translateUiText(adminActivityStatuses[job.status]||'W trakcie…'))}</span>
+      ${job.stage?`<p class="hint">${esc(translateUiText(job.stage))}</p>`:''}
+      ${counted?`<progress aria-label="${esc(translateUiText(label))}" value="${completed}" max="${job.total}"></progress> <span>${completed} / ${job.total}</span>`:''}</li>`;
+   }).join('');
+   renderMarkup(jobsRoot,jobsMarkup?`<ul class="admin-log-jobs">${jobsMarkup}</ul>`:
+    `<p class="hint">${esc(translateUiText('Brak aktywnych operacji.'))}</p>`);
+   status.textContent=entries.length?'':translateUiText('Brak wpisów w tej kategorii.');
+   renderMarkup(root,entries.length?`<table><thead><tr><th>Data i godzina</th><th>Poziom</th><th>Komunikat</th></tr></thead><tbody>
+    ${entries.map(row=>`<tr><td data-no-translate>${esc(timestamp.format(row.created*1000))}</td><td><span class="badge ${row.level==='error'?'warn':'gray'}">${row.level==='error'?'Błąd':'Zdarzenie'}</span></td>
+     <td><span data-no-translate>${esc(row.detail)}</span>${row.status?` <span class="badge gray">${esc(translateUiText(adminActivityStatuses[row.status]||row.status))}</span>`:''}
+     ${row.project_name?`<small data-no-translate>${esc(row.project_name)}</small>`:''}</td></tr>`).join('')}
+   </tbody></table>`:'');
+   syncLanguages();
+  }catch{
+   if(panel.isConnected&&!controller.signal.aborted)status.textContent=translateUiText('Nie udało się wczytać logów.');
+  }finally{if(request===controller)request=null}
+ }
+ panel.pollActivity=()=>{if(!request&&!document.hidden)void load()};
+ panel.ontoggle=()=>{
+  if(!panel.isConnected||adminLogsOpen===panel.open)return;
+  adminLogsOpen=panel.open;
+  if(panel.open)void load();
+  else request?.abort();
+ };
+ level.onchange=()=>{adminLogLevel=level.value;void load()};
+ button.onclick=load;
+ if(panel.open)void load();
+}
+setInterval(()=>$('#admin-logs[open]')?.pollActivity(),3000);
 function syncContactTagControl(root,values){
  const storage=root.querySelector('[name=tags]'),selected=contactTags(values??storage.value);
  storage.value=selected.join('; ');
@@ -284,10 +363,71 @@ window.addEventListener('message',event=>{
 });
 
 document.addEventListener('click',event=>{
+ const details=event.target.closest('[data-action=contact-details]');
+ if(details){
+  const contact=state.contacts.find(row=>row.id===Number(details.dataset.id));
+  if(contact)void showContactDetails(contact);
+  return;
+ }
  const button=event.target.closest('[data-action=contact-edit]');if(!button)return;
  const id=Number(button.dataset.id),contact=state.contacts.find(row=>row.id===id);
  if(contact)showContactEditForm(contact);
 });
+
+function openContactFromRoute(){
+ if(!state||view!=='contacts'||pendingContactId===null)return;
+ const contact=state.contacts.find(row=>row.id===pendingContactId);
+ pendingContactId=null;
+ if(contact)void showContactDetails(contact);
+ else{
+  history.replaceState(null,'','#contacts');
+  toast(translateUiText('Nie znaleziono kontaktu w tym projekcie.'));
+ }
+}
+
+$('#modal').addEventListener('close',()=>{
+ if(!$('#modal').open&&view==='contacts'&&contactIdFromHash(location.hash))history.replaceState(null,'','#contacts');
+});
+
+async function showContactDetails(contact){
+ modal(`<h2>Szczegóły kontaktu</h2><p data-no-translate><strong>${esc(contact.name)}</strong> · ${esc(contact.email)}</p>
+ ${contactResearchDetails(contact.research_data,true,contact.id)}
+ <h3>Historia wysyłki</h3><div id="contact-send-history"><p class="hint" role="status">Wczytywanie historii…</p></div>`);
+ const content=$('#contact-send-history');
+ syncLanguages();
+ try{
+  let queues=[];
+  if(contact.id>0){
+   const response=await fetch('/api/contact/history?'+new URLSearchParams({id:contact.id}));
+   if(!response.ok)throw Error();
+   ({queues}=await response.json());
+  }
+  if(!content.isConnected||!$('#modal').open)return;
+  const formatter=new Intl.DateTimeFormat(uiLanguage==='en'?'en-GB':'pl-PL',{
+   dateStyle:'short',timeStyle:'short',timeZone:'Europe/Warsaw',
+  });
+  const time=value=>value==null?'—':esc(formatter.format(value*1000));
+  const channels={email:'E-mail',linkedin:'LinkedIn',manual:'Manual interaction'};
+  content.innerHTML=queues.map((queue,index)=>`<details class="signal-card" ${index===0?'open':''}>
+   <summary><strong data-no-translate>${queue.status==='deleted'?esc(queue.name):
+    `<a class="link" data-contact-campaign-link href="${campaignHash(queue.id)}">${esc(queue.name)}</a>`}</strong> · ${esc(channels[queue.channel]||queue.channel)}
+   · <span>Wysłane wiadomości</span> ${queue.sent} / ${queue.messages.length}
+   ${queue.status==='deleted'?'<span class="badge gray">Usunięta kampania</span>':''}</summary>
+   <div class="table-wrap"><table><thead><tr><th>Krok</th><th>Temat</th><th>Status</th><th>Planowana wysyłka</th><th>Data wysłania</th></tr></thead>
+   <tbody>${queue.messages.map(message=>`<tr><td>${message.position+1}</td>
+    <td><span data-no-translate>${esc(message.subject)}</span>${message.error?`<small data-no-translate>${esc(message.error)}</small>`:''}</td>
+    <td>${badge(message.status)}${message.deleted?'<small>Usunięto z kolejki</small>':''}</td>
+    <td data-no-translate>${time(message.due)}</td><td data-no-translate>${time(message.sent_at)}</td></tr>`).join('')}</tbody></table></div>
+  </details>`).join('')||'<p class="hint">Brak wiadomości do tego kontaktu.</p>';
+  content.onclick=event=>{
+   const link=event.target.closest('[data-contact-campaign-link]');
+   if(link&&event.button===0&&!event.ctrlKey&&!event.metaKey&&!event.shiftKey&&!event.altKey)$('#modal').close();
+  };
+  syncLanguages();
+ }catch{
+  if(content.isConnected)content.textContent=translateUiText('Nie udało się wczytać historii wysyłki.');
+ }
+}
 function showContactEditForm(contact,text=''){
  const {id}=contact,epoch=simulationEpoch,project_id=state.seller_project.id;
  modal(`<h2>Edytuj kontakt</h2><form id="contact-edit-form">
@@ -405,9 +545,11 @@ function renderContacts(q){
   <td><span data-no-translate>${contactTags(c).map(tag=>`<span class="badge gray">${esc(tag)}</span>`).join(' ')||esc(translateUiText('Bez tagów'))}</span><br>
    <button class="link" data-action="contact-group" data-id="${c.id}">Edytuj tagi</button></td>
   <td>${badge(c.status)}</td>
-  <td>${c.id>0?`<button class="link" data-action="contact-edit" data-id="${c.id}">Edytuj kontakt</button>`:''}
-   <button class="link" data-action="contact-status" data-id="${c.id}" data-status="paused">Wstrzymaj</button>
-   <button class="link" data-action="contact-status" data-id="${c.id}" data-status="unsubscribed">Rezygnacja</button></td></tr>`;
+  <td><button class="link" data-action="contact-details" data-id="${c.id}">Szczegóły kontaktu</button>
+   ${c.id>0?`<button class="link" data-action="contact-edit" data-id="${c.id}">Edytuj kontakt</button>`:''}
+   ${c.status==='blocked'? `<button class="link" data-action="contact-status" data-id="${c.id}" data-status="unblock">Odblokuj</button>` :
+    c.status==='unsubscribed'?'':`<button class="link" data-action="contact-status" data-id="${c.id}" data-status="paused">Wstrzymaj</button>
+    <button class="link" data-action="contact-status" data-id="${c.id}" data-status="blocked">Blokuj</button>`}</td></tr>`;
  }).join('')||'<tr><td colspan="'+(contactBulkMode?6:5)+'">'+translateUiText('Brak kontaktów. Dodaj osobę lub zaimportuj plik CSV.')+'</td></tr>';
  syncContactBulkControls();
 }

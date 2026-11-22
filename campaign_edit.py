@@ -107,7 +107,32 @@ def _read(c,campaign_id):
             'has_queued_messages':_has_queued_messages(c,campaign_id)}
 
 
-def clone(db, item):
+def restart_messages(c, campaign, eligible, steps, messages):
+    if campaign['channel'] == 'manual' or not messages:
+        return []
+    if any(row['status'] in ('queued','sending','uncertain') for row in messages):
+        return []
+    if c.execute('SELECT 1 FROM discovery_handoffs WHERE campaign_id=?', (campaign['id'],)).fetchone():
+        return []
+    contacts = {row['id']: row for row in eligible}
+    delays = {row['position']: row['delay_days'] for row in steps}
+    next_step = {}
+    prepared = []
+    for row in sorted(messages, key=lambda row: row['position']):
+        person = contacts.get(row['contact_id'])
+        position = row['position']
+        if not person or position != next_step.get(person['id'], 0) or position not in delays:
+            continue
+        if row['status'] == 'cancelled' and row['error']:
+            continue
+        if not sequence_conditions.matches(campaign['conditions'], person, position, position-1):
+            continue
+        prepared.append((person['id'], position, row['subject'], row['body'], delays[position]))
+        next_step[person['id']] = position + 1
+    return prepared
+
+
+def clone(db, item, *, restart=False):
     campaign_id = int(item['id'])
     fields = ('offer','audience','project_id','website','audience_mode','contact_ids','material_mode','material_ids',
               'language','cta','cta_url','pain_points','value_props','proof_points','conditions','target_group',
@@ -119,11 +144,19 @@ def clone(db, item):
         project_scope.require_campaign(c,campaign_id,project_id)
         if item.get('project_id',project_id)!=project_id:
             raise ValueError('Zmieniono projekt. Otwórz kampanię ponownie.')
-        source = c.execute('SELECT name FROM campaigns WHERE id=?',(campaign_id,)).fetchone()
+        source = c.execute('SELECT * FROM campaigns WHERE id=?',(campaign_id,)).fetchone()
+        prepared = []
+        if restart:
+            steps = c.execute('SELECT position,delay_days FROM steps WHERE campaign_id=?', (campaign_id,)).fetchall()
+            messages = c.execute('SELECT * FROM messages WHERE campaign_id=? AND deleted=0', (campaign_id,)).fetchall()
+            prepared = restart_messages(c, source, recipients(c, source), steps, messages)
+            if not prepared:
+                raise ValueError('Brak przygotowanych wiadomości do ponownego uruchomienia.')
         requested_name = item.get('name')
         if requested_name is not None and (not isinstance(requested_name,str) or not requested_name.strip() or len(requested_name.strip())>200):
             raise ValueError('Podaj nazwę kampanii o długości do 200 znaków.')
-        base = requested_name.strip() if requested_name is not None else 'Kopia ' + source['name']
+        base = requested_name.strip() if requested_name is not None else (
+            ('Ponownie: ' + source['name'])[:200] if restart else 'Kopia ' + source['name'])
         names = {row[0].casefold() for row in c.execute("SELECT name FROM campaigns WHERE project_id=? AND status!='deleted'",(project_id,))}
         name, sequence = base, 2
         while name.casefold() in names:
@@ -132,14 +165,24 @@ def clone(db, item):
         now = time.time()
         copy_id = c.execute(f"""INSERT INTO campaigns(name,status,created,{columns})
             SELECT ?,'draft',?,{columns} FROM campaigns WHERE id=?""",(name,now,campaign_id)).lastrowid
-        c.execute("""INSERT INTO steps(campaign_id,position,delay_days,subject,body)
-            SELECT ?,position,delay_days,subject,body FROM steps WHERE campaign_id=? ORDER BY position""",(copy_id,campaign_id))
-        c.execute("""INSERT INTO campaign_recipient_overrides(campaign_id,contact_id,included)
-            SELECT ?,contact_id,included FROM campaign_recipient_overrides WHERE campaign_id=?""",(copy_id,campaign_id))
+        c.execute("""INSERT INTO steps(campaign_id,position,delay_days,subject,body,phone_time_variant)
+            SELECT ?,position,delay_days,subject,body,phone_time_variant FROM steps WHERE campaign_id=? ORDER BY position""",(copy_id,campaign_id))
+        if restart:
+            contacts = sorted({row[0] for row in prepared})
+            c.execute("UPDATE campaigns SET audience_mode='selected',contact_ids=? WHERE id=?",
+                      (json.dumps(contacts),copy_id))
+        else:
+            c.execute("""INSERT INTO campaign_recipient_overrides(campaign_id,contact_id,included)
+                SELECT ?,contact_id,included FROM campaign_recipient_overrides WHERE campaign_id=?""",(copy_id,campaign_id))
         c.execute("""INSERT INTO campaign_offer_documents(project_id,scope,name,digest,text,original)
             SELECT project_id,?,name,digest,text,original FROM campaign_offer_documents WHERE project_id=? AND scope=? ORDER BY id""",
             (f'campaign:{copy_id}',project_id,f'campaign:{campaign_id}'))
-        c.execute('INSERT INTO events(created,detail) VALUES(?,?)',(now,'Sklonowano kampanię: '+name))
+        if restart:
+            c.executemany("""INSERT INTO messages(campaign_id,contact_id,position,subject,body,due)
+                VALUES(?,?,?,?,?,?)""", ((copy_id, contact_id, position, subject, body, now+delay*86400)
+                                         for contact_id, position, subject, body, delay in prepared))
+        detail = ('Przygotowano ponowne uruchomienie kampanii: ' if restart else 'Sklonowano kampanię: ') + name
+        c.execute('INSERT INTO events(created,detail) VALUES(?,?)',(now,detail))
         return _read(c,copy_id)
 
 
@@ -156,6 +199,8 @@ def save(db,library,mail_lock,ai_copy,item):
     with mail_lock,db() as c:
         c.execute('BEGIN IMMEDIATE');project_scope.require_campaign(c,item['id'])
         current=dict(c.execute('SELECT * FROM campaigns WHERE id=?',(item['id'],)).fetchone())
+        if current['channel'] == 'phone':
+            raise ValueError('Skrypty kampanii telefonicznej ustawisz w sekwencji rozmów.')
         if item.get('project_id',current['project_id'])!=current['project_id']:raise ValueError('Zmieniono projekt. Otwórz kampanię ponownie.')
         if type(item.get('revision'))!=int or item['revision']!=current['revision']:raise ValueError('Kampania została zmieniona w innym oknie. Otwórz edycję ponownie.')
         for contact_id in item.get('contact_ids',[]):project_scope.require_contact(c,contact_id,current['project_id'])

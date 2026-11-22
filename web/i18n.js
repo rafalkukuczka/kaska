@@ -2,6 +2,59 @@
 let uiLanguage='pl';
 try{uiLanguage=localStorage.getItem('kaska-ui-language')==='en'?'en':'pl'}catch{}
 const uiEnglish={
+ 'Zapisz i otwórz WhatsApp':'Save and open WhatsApp',
+ 'Numer kontaktu się zmienił. Otwórz kontakt ponownie.':'The contact’s phone number changed. Reopen the contact.',
+ 'Pora dnia':'Time of day','Godziny według czasu warszawskiego':'Times in Warsaw time',
+ 'Skrypt w wybranych godzinach':'Script during these hours','Skrypt poza wybranymi godzinami':'Script outside these hours',
+ 'Dzień dobry.':'Good morning.','Dobry wieczór.':'Good evening.',
+ 'Sprawdź godziny i tekst drugiej gałęzi warunku pory dnia.':'Check the hours and the text for the other time-of-day branch.',
+ 'Nie udało się policzyć odbiorców.':'Could not count recipients.',
+ 'Dodaj skrypt':'Add script','Warunki kroku':'Step conditions',
+ 'Zapisz albo zamknij edytowany warunek.':'Save or close the condition you are editing.',
+ 'Połączenia':'Calls','Kontakty pasujące do wybranych odbiorców i warunków wejścia.':'Contacts matching the selected audience and entry conditions.',
+ 'Sprawdź odbiorców i otwórz rozmowę w WhatsApp.':'Review recipients and open a WhatsApp chat.',
+ 'Numer w formacie międzynarodowym':'Phone number in international format',
+ 'Uzupełnij numer o kod kraju, zaczynając od +.':'Add the country code, starting with +.',
+ 'Otwórz WhatsApp':'Open WhatsApp',
+ 'Krok 1 z 3':'Step 1 of 3','Krok 2 z 3':'Step 2 of 3','Krok 3 z 3':'Step 3 of 3',
+ 'Typ':'Type','Telefoniczna':'Phone',
+ 'Wybierz kontakty do kampanii telefonicznej.':'Choose contacts for the phone campaign.',
+ 'Przygotuj skrypt każdego kroku rozmowy.':'Write a script for each call step.',
+ 'Uzupełnij skrypt każdego kroku rozmowy.':'Enter a script for each call step.',
+ 'Skrypt dopracowany przez AI. Przeczytaj go przed rozmową.':'AI refined the script. Review it before the call.',
+ 'Poczekaj, aż AI dopracuje skrypt.':'Wait for AI to finish refining the script.',
+ 'Wszystkie warunki muszą być spełnione. Tak: przejdź do skryptu rozmowy. Nie: pomiń odbiorcę.':'All conditions must match. Yes continues to the call script. No skips the recipient.',
+ 'Warunek musi wskazywać krok w sekwencji.':'The condition must refer to a step in the sequence.',
+ 'Kampania telefoniczna':'Phone campaign','Edytuj kampanię telefoniczną':'Edit phone campaign',
+ 'Do kolejki trafią tylko aktywne kontakty z numerem telefonu.':'The queue includes active contacts with a phone number.',
+ 'Sekwencja rozmów':'Call sequence','Skrypt rozmowy':'Call script','Dodaj krok rozmowy':'Add call step',
+ 'Kolejka rozmów':'Call queue','Wczytywanie kolejki rozmów…':'Loading the call queue…',
+ 'Wynik rozmowy':'Call outcome','Rozmowa odbyta':'Call answered','Nie odebrano':'No answer',
+ 'Po rozmowie zapisz wynik. Gdy kontakt nie odbierze, kolejka przejdzie dalej, jeśli warunki kolejnego kroku są spełnione.':'Record the outcome after the call. If there is no answer, the queue advances when the next step’s conditions are met.',
+ 'Brak kontaktów do obdzwonienia.':'No contacts to call.','Historia rozmów':'Call history','Brak zapisanych rozmów.':'No calls recorded.',
+ 'Sekwencję można zmienić przed zapisaniem pierwszego wyniku rozmowy.':'The sequence can be edited before the first call outcome is recorded.',
+ 'Kolejka jest wstrzymana. Sprawdź odbiorców w edycji kampanii i zapisz zmiany.':'The queue is paused. Review the recipients in campaign settings and save your changes.',
+ 'Blokuj':'Block','Odblokuj':'Unblock','Zablokowany':'Blocked',
+ 'Kontakt zablokowany.':'Contact blocked.','Kontakt odblokowany.':'Contact unblocked.',
+ 'Szczegóły kontaktu':'Contact details','Historia wysyłki':'Sending history','Wczytywanie historii…':'Loading history…',
+ 'Planowana wysyłka':'Scheduled send time','Data wysłania':'Sent at','Usunięto z kolejki':'Removed from queue',
+ 'Usunięta kampania':'Deleted campaign','Brak wiadomości do tego kontaktu.':'No messages for this contact.',
+ 'Nie udało się wczytać historii wysyłki.':'Could not load sending history.','Otwórz w Kontaktach':'Open in Contacts',
+ 'Błędy z dziennika':'Logged errors','Wpisy z całej aplikacji według dnia · czas polski':'Entries across the app by day · Warsaw time',
+ 'Dzienna liczba błędów':'Daily error count','Brak błędów w tym okresie.':'No errors in this period.',
+ 'Uruchom ponownie':'Run again','Uruchomić kampanię ponownie?':'Run the campaign again?',
+ 'Przygotuj ponowne uruchomienie':'Prepare another run','Przygotowanie ponownego uruchomienia':'Preparing another run',
+ 'Powstanie nowa kolejka z przygotowanymi wiadomościami dla nadal aktywnych odbiorców. Historia poprzedniej wysyłki pozostanie w dotychczasowej kampanii.':'A new queue will use the prepared messages for recipients who are still active. Sending history stays in the original campaign.',
+ 'Brak przygotowanych wiadomości do ponownego uruchomienia.':'No prepared messages are available to run again.',
+ 'Logi':'Logs','Poziom logów':'Log level','Wszystkie wpisy':'All entries','Błędy':'Errors',
+ 'Odśwież logi':'Refresh logs','Data i godzina':'Date and time','Poziom':'Level','Komunikat':'Message','Zdarzenie':'Event','Błąd':'Error',
+ 'Wczytywanie logów…':'Loading logs…','Brak wpisów w tej kategorii.':'No entries in this category.',
+ 'Nie udało się wczytać logów.':'Could not load logs.',
+ 'Dziennik działań Kaśki':'Kaśka activity log','Co Kaśka robi teraz':'What Kaśka is doing now','Historia działań':'Activity history',
+ 'Brak aktywnych operacji.':'No active operations.','Zakończono':'Completed','Ukończono częściowo':'Partially completed',
+ 'Analiza stron firm':'Analyzing company websites','Kwalifikacja firm':'Qualifying companies',
+ 'Sprawdzanie sygnałów sprzedażowych':'Checking sales signals','Wysyłanie wiadomości e-mail':'Sending email',
+ 'Ostatnie 200 wpisów z wybranej kategorii. Błędy techniczne obejmują całą aplikację.':'The latest 200 entries in the selected category. Technical errors cover the whole application.',
  '✧ Odczytaj dowody ze źródeł':'✧ Read proof points from sources',
  'Wybierz dostępne źródło dowodów: stronę firmy lub dokumenty projektu.':'Choose an available evidence source: the company website or project documents.',
  'Czytam źródła i szukam dowodów…':'Reading the sources and looking for proof…',
@@ -63,6 +116,7 @@ const uiEnglish={
  'Status firmy':'Company status', 'Zakwalifikowana':'Qualified', 'W analizie':'Under review',
  'Potwierdzone kryteria':'Confirmed criteria', 'Dowody dopasowania do kryteriów':'Evidence of matching criteria',
  'Widoczne firmy':'Visible companies', 'Brak firm o wybranym statusie.':'No companies with the selected status.',
+ 'Bez kontaktów':'Without contacts', 'Brak firm bez kontaktów.':'No companies without contacts.',
  'Przerwij':'Stop', 'Przerywanie…':'Stopping…', 'Przerwij wszystkie':'Stop all', 'Wyszukiwanie przerwane':'Search stopped', 'Analiza przerwana':'Analysis stopped',
  'Zatrzymuje aktywne wyszukiwania':'Stops active searches',
  'Dodaj kontakt ręcznie':'Add contact manually', 'Dodaj ręcznie':'Add manually',
@@ -983,7 +1037,8 @@ document.addEventListener('DOMContentLoaded',()=>applyUiLanguage(uiLanguage));
 window.addEventListener('hashchange',()=>{
   const next=viewFromHash(location.hash);
   if(next){
-    view=next;selectedCampaign=null;render();
+    view=next;selectedCampaign=campaignIdFromHash(location.hash);pendingContactId=contactIdFromHash(location.hash);
+    render();openContactFromRoute();
   }
 });
 

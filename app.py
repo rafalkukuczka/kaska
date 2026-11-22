@@ -55,6 +55,8 @@ import project_scope
 import dashboard_activity
 import reports
 import diagnostics
+import phone_campaigns
+import release_version
 import website_research
 from ai_workflows import AIWorkflows
 
@@ -68,6 +70,7 @@ DATA.mkdir(parents=True, exist_ok=True)
 headless_browser = manual_headless.HeadlessBrowser(ROOT, DATA)
 DB = DATA / 'katie.sqlite3'
 PORT = int(os.getenv('APP_PORT', '8787'))
+APP_VERSION = release_version.read(ROOT)
 diagnostics.configure(DATA)
 log_error = diagnostics.log_error
 CSRF = secrets.token_urlsafe(32)
@@ -78,6 +81,17 @@ SIGNING_KEY = KEY_FILE.read_bytes()
 MAIL_LOCK = threading.Lock()
 CONFIG_LOCK = threading.Lock()
 STOP_WORKERS = threading.Event()
+ACTIVITY_REQUESTS = {
+    'ai/manual-agent': 'Decyzja agenta AI',
+    'extension/manual-agent': 'Decyzja agenta AI',
+    'ai/manual-interaction': 'Przygotowywanie scenariusza',
+    'discover/contacts/search': 'Wyszukiwanie kontaktów firmy',
+    'lead-search/contact-search': 'Wyszukiwanie kontaktów firmy',
+    'offer/generate': 'Przygotowywanie oferty',
+    'research': 'Odczyt strony i oferty',
+    'discovery-pilot/search': 'Wyszukiwanie firm w Discover',
+    'discovery-pilot/qualify': 'Kwalifikacja firmy',
+}
 
 
 @contextmanager
@@ -104,6 +118,11 @@ def db():
 def workspace_csrf():
     generation = simulation_database.scope.get()
     return hmac.new(CSRF.encode(), generation.encode(), 'sha256').hexdigest() if generation else CSRF
+
+
+def init_contact_blocking(connection):
+    if 'status_before_block' not in {row[1] for row in connection.execute('PRAGMA table_info(contacts)')}:
+        connection.execute('ALTER TABLE contacts ADD COLUMN status_before_block TEXT')
 
 
 def init():
@@ -133,7 +152,9 @@ def init():
             c.execute("ALTER TABLE campaigns ADD COLUMN channel TEXT NOT NULL DEFAULT 'email'")
         campaign_workspace.init_schema(c)
         project_scope.migrate(c)
+        init_contact_blocking(c)
         offer_documents.init_schema(c)
+        phone_campaigns.init_schema(c)
         discovery_pilot.init_schema(c)
         lead_search.init_schema(c)
         feature_retirement.retire_monitoring(c)
@@ -147,6 +168,8 @@ def init():
     if simulation_database.path.is_file():
         with connect_database(simulation_database.path) as copy:
             offer_documents.init_schema(copy)
+            phone_campaigns.init_schema(copy)
+            init_contact_blocking(copy)
 
 
 def event(detail):
@@ -370,6 +393,21 @@ def campaign_preparation_jobs():
         return [job.copy() for generation, job in campaign_preparations.values() if generation == scope]
 
 
+def background_jobs(connection):
+    jobs = [dict(row) for row in connection.execute("""SELECT 'prospect-'||r.id AS id,'prospecting' AS kind,
+        r.status,r.stage,p.name AS project_name,
+        CASE WHEN r.status IN ('drafting','cancelling') THEN r.draft_completed END AS completed,
+        CASE WHEN r.status IN ('drafting','cancelling') THEN r.draft_total END AS total,1 AS cancellable
+        FROM prospect_runs r JOIN seller_projects p ON p.id=r.project_id
+        WHERE p.deleted=0 AND r.status IN ('searching','verifying','drafting','cancelling') ORDER BY r.id DESC""")]
+    jobs.extend(dict(row) for row in connection.execute("""SELECT 'opportunity-'||r.id AS id,'opportunities' AS kind,
+        r.status,r.stage,p.name AS project_name,r.completed,r.total,1 AS cancellable
+        FROM opportunity_searches r JOIN seller_projects p ON p.id=r.project_id
+        WHERE p.deleted=0 AND r.status IN ('running','cancelling') ORDER BY r.id DESC"""))
+    jobs.extend(campaign_preparation_jobs())
+    return jobs
+
+
 def cancel_campaign_preparation(job_id):
     with campaign_preparations_lock:
         entry = campaign_preparations.get(job_id)
@@ -390,6 +428,8 @@ def prepare(campaign_id):
             LEFT JOIN seller_projects s ON s.id=p.project_id WHERE p.id=?""", (campaign_id,)).fetchone()
         if not campaign or campaign['status'] not in ('draft','paused'):
             raise ValueError('Przed przygotowaniem wiadomości wstrzymaj kampanię.')
+        if campaign['channel'] == 'phone':
+            raise ValueError('Skrypty kampanii telefonicznej ustawisz w sekwencji rozmów.')
         contacts = campaign_edit.recipients(c,campaign)
         existing={(row['contact_id'],row['position']):dict(row) for row in c.execute('SELECT * FROM messages WHERE campaign_id=?',(campaign_id,))}
         restorable={key for key,row in existing.items() if row['status']=='cancelled' and row['deleted']
@@ -512,7 +552,8 @@ def send_one():
                 mail.add_attachment(attachment['original'], maintype=maintype, subtype=subtype, filename=attachment['name'])
             security = os.getenv('SMTP_SECURITY', 'starttls')
             cls = smtplib.SMTP_SSL if security == 'ssl' else smtplib.SMTP
-            with cls(os.environ['SMTP_HOST'], int(os.getenv('SMTP_PORT', '587')), timeout=30) as smtp:
+            with diagnostics.working('Wysyłanie wiadomości e-mail'), cls(
+                    os.environ['SMTP_HOST'], int(os.getenv('SMTP_PORT', '587')), timeout=30) as smtp:
                 if security == 'starttls':
                     smtp.starttls(context=ssl.create_default_context())
                 if os.getenv('SMTP_USER'):
@@ -531,7 +572,8 @@ def send_one():
 def sync_replies():
     if not os.getenv('IMAP_HOST'):
         raise ValueError('Uzupełnij konfigurację IMAP w .env')
-    with imaplib.IMAP4_SSL(os.environ['IMAP_HOST'], int(os.getenv('IMAP_PORT', '993')), timeout=30) as mailbox:
+    with diagnostics.working('Odczyt odpowiedzi'), imaplib.IMAP4_SSL(
+            os.environ['IMAP_HOST'], int(os.getenv('IMAP_PORT', '993')), timeout=30) as mailbox:
         mailbox.login(os.getenv('IMAP_USER', os.getenv('SMTP_USER', '')), os.getenv('IMAP_PASSWORD', os.getenv('SMTP_PASSWORD', '')))
         mailbox.select('INBOX', readonly=True)
         kind, data = mailbox.uid('search', None, 'ALL')
@@ -561,7 +603,10 @@ def sync_replies():
                 part = message.get_body(preferencelist=('plain',))
                 body = part.get_content()[:20000] if part else '[Wiadomość bez wersji tekstowej]'
                 c.execute('INSERT OR IGNORE INTO replies(contact_id,subject,body,received,uid,project_id,campaign_id) VALUES(?,?,?,?,?,?,?)', (contact['id'], str(message.get('Subject', '')), body, time.time(), identity,matched['project_id'],matched['campaign_id']))
-                c.execute("UPDATE contacts SET status='replied' WHERE id=? AND status!='unsubscribed'", (contact['id'],))
+                c.execute("""UPDATE contacts SET
+                    status_before_block=CASE WHEN status='blocked' THEN 'replied' END,
+                    status=CASE WHEN status='blocked' THEN 'blocked' ELSE 'replied' END
+                    WHERE id=? AND status!='unsubscribed'""", (contact['id'],))
                 c.execute("UPDATE messages SET status='cancelled' WHERE contact_id=? AND status='queued'", (contact['id'],))
     event('Zsynchronizowano odpowiedzi z poczty')
 
@@ -590,12 +635,30 @@ def worker():
     reply.join()
 
 
+def change_contact_status(connection, contact_id, status):
+    if status not in ('active', 'paused', 'replied', 'unsubscribed', 'blocked', 'unblock'):
+        raise ValueError('Nieprawidłowy status')
+    project_scope.require_contact(connection, contact_id)
+    current = connection.execute('SELECT status,status_before_block FROM contacts WHERE id=?', (contact_id,)).fetchone()
+    previous = None
+    if status == 'unblock':
+        if current['status'] != 'blocked':
+            raise ValueError('Ten kontakt nie jest zablokowany.')
+        status = current['status_before_block'] or 'active'
+    elif status == 'blocked' and current['status'] != 'unsubscribed':
+        previous = current['status_before_block'] if current['status'] == 'blocked' else current['status']
+    elif current['status'] in ('blocked', 'unsubscribed') and status != 'unsubscribed':
+        raise ValueError('Nie można zmienić statusu tego kontaktu.')
+    connection.execute('UPDATE contacts SET status=?,status_before_block=? WHERE id=?', (status, previous, contact_id))
+    if status != 'active':
+        connection.execute("UPDATE messages SET status='cancelled' WHERE contact_id=? AND status='queued'", (contact_id,))
+
+
 def contact_phone(value):
     if not isinstance(value, str):
         raise ValueError('Podaj poprawny numer telefonu.')
     number = ' '.join(value.split())
-    if number and (len(number) > 45 or not re.fullmatch(r'\+?[0-9 ()./\-]+', number)
-                   or not 7 <= len(re.sub(r'[^0-9]', '', number)) <= 15):
+    if number and not phone_campaigns.dial_number(number):
         raise ValueError('Numer telefonu musi zawierać od 7 do 15 cyfr.')
     return number
 
@@ -652,9 +715,13 @@ def parse_contact(item, simulated=False):
 
 def update_contact_phone(c, item):
     contact_id = int(item['id'])
+    if 'project_id' in item and item['project_id'] != project_scope.active(c):
+        raise ValueError('Aktywny projekt się zmienił. Otwórz formularz ponownie.')
     project_scope.require_contact(c, contact_id)
     phone = contact_phone(item['phone'])
     previous = json.loads(c.execute('SELECT research_data FROM contacts WHERE id=?', (contact_id,)).fetchone()[0])
+    if 'expected_phone' in item and item['expected_phone'] != previous.get('work_phone', ''):
+        raise ValueError('Numer kontaktu się zmienił. Otwórz kontakt ponownie.')
     if phone:
         previous['work_phone'] = phone
     else:
@@ -757,6 +824,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def respond(self, payload, status=200, content_type='application/json; charset=utf-8', filename=None):
         raw = payload if isinstance(payload, bytes) else json.dumps(payload, ensure_ascii=False).encode() if content_type.startswith('application/json') else payload.encode()
+        self.response_status = status
         self.send_response(status)
         self.send_header('Content-Type', content_type)
         if filename is not None:
@@ -781,6 +849,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.get(path)
 
     def get(self, path):
+        if path.path == '/api/phone-campaign':
+            try:
+                campaign_id = int(parse_qs(path.query).get('id', ['0'])[0])
+                with db() as connection:
+                    connection.execute('BEGIN')
+                    result = phone_campaigns.read(connection, campaign_id)
+                return self.respond(result)
+            except (ValueError, OverflowError):
+                return self.respond({'error': 'Nie znaleziono kampanii telefonicznej w tym projekcie.'}, 400)
         if path.path == '/api/contacts/research-status':
             with db() as c:
                 project_id = project_scope.active(c)
@@ -834,6 +911,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(result)
             except ValueError as error:
                 return self.respond({'error': str(error)}, 400)
+        if path.path == '/api/contact/history':
+            contact_id = parse_qs(path.query).get('id', ['0'])[0]
+            try:
+                with db() as c:
+                    c.execute('BEGIN')
+                    queues = campaign_messages.contact_history(c, int(contact_id), project_scope.active(c))
+                return self.respond({'queues': queues})
+            except (ValueError, OverflowError):
+                return self.respond({'error': 'Nie znaleziono kontaktu w tym projekcie.'}, 400)
         if path.path == '/api/campaign/workspace':
             params=parse_qs(path.query)
             try:return self.respond(campaign_workspace.read(db,params.get('campaign_id',['0'])[0],params.get('page',['1'])[0],params.get('page_size',['25'])[0]))
@@ -925,20 +1011,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 query=parse_qs(path.query)
                 with db() as c:result=reports.read(c,query.get('days',['7'])[0],cost_page=query.get('cost_page',['1'])[0])
+                with connect_database(DB) as c:
+                    result['log_errors'] = diagnostics.error_report(DATA, c, result['start'], result['end'])
                 return self.respond(result)
             except (ValueError,TypeError):return self.respond({'error':'Invalid report period'},400)
         if path.path == '/api/background':
             with db() as c:
-                jobs=[dict(r) for r in c.execute("""SELECT 'prospect-'||r.id AS id,'prospecting' AS kind,r.status,r.stage,p.name AS project_name,
-                  CASE WHEN r.status IN ('drafting','cancelling') THEN r.draft_completed END AS completed,
-                  CASE WHEN r.status IN ('drafting','cancelling') THEN r.draft_total END AS total, 1 AS cancellable
-                  FROM prospect_runs r JOIN seller_projects p ON p.id=r.project_id
-                  WHERE p.deleted=0 AND r.status IN ('searching','verifying','drafting','cancelling') ORDER BY r.id DESC""")]
-                jobs.extend(dict(r) for r in c.execute("""SELECT 'opportunity-'||r.id AS id,'opportunities' AS kind,
-                  r.status,r.stage,p.name AS project_name,r.completed,r.total,1 AS cancellable
-                  FROM opportunity_searches r JOIN seller_projects p ON p.id=r.project_id
-                  WHERE p.deleted=0 AND r.status IN ('running','cancelling') ORDER BY r.id DESC"""))
-            jobs.extend(campaign_preparation_jobs())
+                jobs = background_jobs(c)
             return self.respond({'jobs':jobs})
         if path.path == '/api/state':
             with db() as c:
@@ -964,6 +1043,7 @@ class Handler(BaseHTTPRequestHandler):
             result['discovery_opportunities'] = opportunity_finder.state(result['seller_project']['id'])
             result['library'] = library.state()
             result['prospecting'] = prospector.state(result['seller_project']['id'])
+            result['release_version'] = APP_VERSION
             result['preferences'] = languages.preferences(db)
             result['languages'] = languages.LANGUAGES
             result['data_simulation'] = languages.data_simulation(db)
@@ -996,6 +1076,7 @@ class Handler(BaseHTTPRequestHandler):
             '/theme.css': ('theme.css', 'text/css'),
             '/style.css': ('style.css', 'text/css'),
             '/campaign-workspace.js': ('campaign-workspace.js', 'text/javascript'),
+            '/phone-campaigns.js': ('phone-campaigns.js', 'text/javascript'),
             '/reports.js': ('reports.js', 'text/javascript'),
             '/dashboard-chart.js': ('dashboard-chart.js', 'text/javascript'),
             '/project-migration.js': ('project-migration.js', 'text/javascript'),
@@ -1033,7 +1114,7 @@ class Handler(BaseHTTPRequestHandler):
             if not hmac.compare_digest(sign(contact_id), values.get('token', [''])[0]):
                 return self.respond({'error': 'Nieprawidłowy link'}, 403)
             with MAIL_LOCK, db() as c:
-                c.execute("UPDATE contacts SET status='unsubscribed' WHERE id=?", (contact_id,))
+                c.execute("UPDATE contacts SET status='unsubscribed',status_before_block=NULL WHERE id=?", (contact_id,))
                 c.execute("UPDATE messages SET status='cancelled' WHERE contact_id=? AND status='queued'", (contact_id,))
             return self.respond('Zrezygnowano z dalszych wiadomości.', content_type='text/plain; charset=utf-8')
         usage_request = self.path in ('/api/openai-usage/outreach','/api/openai-usage/outreach/activity')
@@ -1046,15 +1127,48 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond({'error': 'Odśwież stronę aplikacji'}, 403)
         with db() as c:
             project_id=project_scope.active(c)
-        action = urlparse(self.path).path.removeprefix('/api/')
-        if action == 'ai/manual-agent' and self.headers.get('X-Katie-Client') == 'outreach-extension':
-            action = 'extension/manual-agent'
-        with openai_usage.operation(action,project_id=None if simulation_database.scope.get() else project_id):
-            return self.post_api(size)
+            action = urlparse(self.path).path.removeprefix('/api/')
+            if action == 'ai/manual-agent' and self.headers.get('X-Katie-Client') == 'outreach-extension':
+                action = 'extension/manual-agent'
+            label = ACTIVITY_REQUESTS.get(action)
+            project = c.execute('SELECT name FROM seller_projects WHERE id=?', (project_id,)).fetchone() if label else None
+        scope = simulation_database.scope.get()
+        activity = diagnostics.working(label, scope, project['name'] if project else None) if label else nullcontext()
+        with activity, openai_usage.operation(action,project_id=None if scope else project_id):
+            self.post_api(size)
+            if label and 200 <= self.response_status < 300:
+                try:
+                    event(f'{label} · zakończono')
+                except sqlite3.Error as error:
+                    log_error('Nie udało się zapisać zdarzenia w dzienniku', error)
 
     def post_api(self, size):
         try:
             item = json.loads(self.rfile.read(size))
+            if self.path == '/api/phone-campaign/recipients':
+                if not isinstance(item, dict):
+                    raise ValueError('Podaj dane kampanii telefonicznej.')
+                with db() as connection:
+                    connection.execute('BEGIN')
+                    result = phone_campaigns.preview_recipients(connection, item)
+                return self.respond(result)
+            if self.path in ('/api/phone-campaign/save','/api/phone-campaign/record'):
+                if not isinstance(item, dict):
+                    raise ValueError('Podaj dane kampanii telefonicznej.')
+                with db() as connection:
+                    connection.execute('BEGIN IMMEDIATE')
+                    if self.path == '/api/phone-campaign/save':
+                        result = phone_campaigns.save(connection, item)
+                    else:
+                        result = phone_campaigns.record(connection, item)
+                return self.respond(result)
+            if self.path == '/api/admin/logs':
+                if not isinstance(item, dict):
+                    raise ValueError('Wybierz poprawny poziom logów.')
+                with db() as c:
+                    jobs = background_jobs(c) + diagnostics.active(c, simulation_database.scope.get())
+                    entries = diagnostics.recent(DATA, c, item.get('level', 'all'))
+                return self.respond({'jobs': jobs, 'entries': entries})
             if self.path == '/api/background/cancel':
                 job_id = item['id']
                 if isinstance(job_id, str):
@@ -1276,12 +1390,9 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == '/api/contacts/tags/bulk':
                 return self.respond(contact_tags.bulk_assign(db,item))
             elif self.path == '/api/contact/status':
-                if item['status'] not in ('active', 'paused', 'replied', 'unsubscribed'):
-                    raise ValueError('Nieprawidłowy status')
                 with MAIL_LOCK, db() as c:
-                    c.execute('UPDATE contacts SET status=? WHERE id=?', (item['status'], item['id']))
-                    if item['status'] != 'active':
-                        c.execute("UPDATE messages SET status='cancelled' WHERE contact_id=? AND status='queued'", (item['id'],))
+                    c.execute('BEGIN IMMEDIATE')
+                    change_contact_status(c, item['id'], item['status'])
             elif self.path == '/api/campaigns':
                 conditions = sequence_conditions.validate(item.get('conditions', []))
                 if not item.get('name', '').strip() or not item.get('offer', '').strip():
@@ -1321,6 +1432,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(campaign_edit.read(db,int(item['id'])))
             elif self.path == '/api/campaign/clone':
                 return self.respond(campaign_edit.clone(db,item))
+            elif self.path == '/api/campaign/restart':
+                return self.respond(campaign_edit.clone(db,item,restart=True))
             elif self.path == '/api/campaign/update':
                 return self.respond(campaign_edit.save(db,library,MAIL_LOCK,ai_copy,item))
             elif self.path == '/api/campaign/prepare':
@@ -1338,6 +1451,8 @@ class Handler(BaseHTTPRequestHandler):
                     campaign = c.execute("SELECT * FROM campaigns WHERE id=? AND status!='deleted'", (item['id'],)).fetchone()
                     if not campaign:
                         raise ValueError('Nie znaleziono kampanii')
+                    if campaign['channel'] == 'phone':
+                        raise ValueError('Odbiorców kampanii telefonicznej ustawisz w jej edycji.')
                     if item['status'] == 'active':
                         if 'fingerprint' in item and campaign_workspace.read(db,campaign['id'])['fingerprint']!=item['fingerprint']:
                             raise ValueError('Wiadomości lub odbiorcy zmienili się. Otwórz podsumowanie wysyłki ponownie.')

@@ -5,7 +5,8 @@ const leadWorkspaceRoutes = {
  prospecting: 'prospecting/kontakty',
  discover: 'prospecting/okazje',
 };
-let state, view=viewFromHash(location.hash)||'dashboard', selectedCampaign=null;
+let state, view=viewFromHash(location.hash)||'dashboard', selectedCampaign=campaignIdFromHash(location.hash);
+let pendingContactId=contactIdFromHash(location.hash);
 const $=s=>document.querySelector(s);
 function normalizeWebsite(value){
   let address=String(value||'').trim();
@@ -22,8 +23,8 @@ document.addEventListener('input',e=>{if(e.target.matches(websiteFields))e.targe
 document.addEventListener('focusout',e=>{if(e.target.matches(websiteFields)){try{e.target.value=normalizeWebsite(e.target.value);e.target.setCustomValidity('')}catch(error){e.target.setCustomValidity(translateUiText(error.message))}}});
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const progressPercent=(completed,total)=>total>0?Math.floor(Math.min(1,Math.max(0,completed/total))*100)+'%':'';
-const labels={draft:'Szkic',active:'Aktywna',paused:'Wstrzymana',sent:'Wysłano',queued:'W kolejce',cancelled:'Zatrzymano',uncertain:'Sprawdź wysyłkę',replied:'Odpowiedział',unsubscribed:'Rezygnacja',sending:'Wysyłanie'};
-const badge=s=>`<span class="badge ${['paused','draft','cancelled'].includes(s)?'gray':s==='uncertain'?'warn':''}">${esc(labels[s]||s)}</span>`;
+const labels={draft:'Szkic',active:'Aktywna',paused:'Wstrzymana',sent:'Wysłano',queued:'W kolejce',cancelled:'Zatrzymano',uncertain:'Sprawdź wysyłkę',replied:'Odpowiedział',unsubscribed:'Rezygnacja',blocked:'Zablokowany',sending:'Wysyłanie'};
+const badge=s=>`<span class="badge ${['paused','draft','cancelled'].includes(s)?'gray':['uncertain','blocked'].includes(s)?'warn':''}">${esc(labels[s]||s)}</span>`;
 const date=v=>new Date(v*1000).toLocaleString(uiLanguage==='en'?'en-GB':'pl-PL',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
 const empty=(title,text)=>`<div class="empty"><strong>${title}</strong>${text}</div>`;
 function toast(text){$('#toast').textContent=text;$('#toast').style.display='block';clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').style.display='none',6500)}
@@ -43,13 +44,31 @@ async function refresh(){
   campaignWorkspaces.clear();campaignMessagePages.clear();leadSearchSelection.clear();discoverContactPanels.clear();
   leadNotificationSelection=null;
   prospectSelected.clear();prospectRunId=null;prospectDraftPending=null;contactBulkSelected.clear();
+  if(view==='builder'&&$('#phone-campaign-form')){view='campaigns';selectedCampaign=null}
   if(view!=='builder')$('#content').replaceChildren();
  }
- state=snapshot;syncSellerProject();finishProspectDraft();render();syncLanguages();openPendingContactIntake();
+ state=snapshot;
+ const version=$('#kaska-release-version');
+ version.textContent=state.release_version||'';
+ version.hidden=!state.release_version;
+ syncSellerProject();finishProspectDraft();render();syncLanguages();openPendingContactIntake();
+ openContactFromRoute();
 }
 function modal(content){$('#modal-content').innerHTML=content;if($('#campaign-form')){$('#campaign-form').insertAdjacentHTML('afterbegin',`<label>Strona firmy (dowolna firma dla tej kampanii)</label><div class="actions"><input id="company-url" placeholder="https://twoja-firma.pl" aria-label="Strona firmy"><button type="button" class="secondary" data-action="research">Pobierz opis firmy</button></div><p id="research-status" class="hint">Opiszesz ofertę ręcznie albo pobierzesz kontekst z publicznej strony firmy. Sprawdź wynik przed zapisem.</p>`)}$('#modal').showModal()}
-function campaignRows(){return state.campaigns.map(c=>{const messages=state.messages.filter(m=>m.campaign_id===c.id);const sent=messages.filter(m=>m.status==='sent').length;return `<tr><td><strong>${esc(c.name)}</strong><small>${esc(c.audience||campaignAudience(c))}</small></td><td>${badge(c.status)}</td><td>${sent} / ${messages.length}</td><td><button class="link" data-action="campaign" data-id="${c.id}">Otwórz →</button> <button class="link" data-action="edit-campaign" data-id="${c.id}">Edytuj</button> <button class="link danger" data-action="delete-campaign" data-id="${c.id}">Usuń kampanię</button></td></tr>`}).join('')}
-function campaignTable(){return state.campaigns.length?`<div class="table-wrap"><table><thead><tr><th>Kampania</th><th>Status</th><th>Wysłano</th><th></th></tr></thead><tbody>${campaignRows()}</tbody></table></div>`:empty('Twoja pierwsza kampania zaczyna się tutaj','Dodaj kontakty, opisz ofertę i przygotuj wiadomości.')}
+function campaignRows(){
+ const types={email:'E-mail',linkedin:'LinkedIn',manual:'Manual interaction',phone:'Telefoniczna'};
+ return state.campaigns.map(campaign=>{
+  const messages=state.messages.filter(message=>message.campaign_id===campaign.id);
+  const sent=messages.filter(message=>message.status==='sent').length;
+  return `<tr><td><strong>${esc(campaign.name)}</strong><small>${esc(campaign.audience||campaignAudience(campaign))}</small></td>
+   <td>${esc(translateUiText(types[campaign.channel]||types.email))}</td><td>${badge(campaign.status)}</td>
+   <td>${campaign.channel==='phone'?'—':sent+' / '+messages.length}</td><td>
+   <button class="link" data-action="campaign" data-id="${campaign.id}">Otwórz →</button>
+   <button class="link" data-action="edit-campaign" data-id="${campaign.id}">Edytuj</button>
+   <button class="link danger" data-action="delete-campaign" data-id="${campaign.id}">Usuń kampanię</button></td></tr>`;
+ }).join('');
+}
+function campaignTable(){return state.campaigns.length?`<div class="table-wrap"><table><thead><tr><th>Kampania</th><th>Typ</th><th>Status</th><th>Wysłano</th><th></th></tr></thead><tbody>${campaignRows()}</tbody></table></div>`:empty('Twoja pierwsza kampania zaczyna się tutaj','Dodaj kontakty, opisz ofertę i przygotuj wiadomości.')}
 function replyMailLinks(reply,contact){
  const email=String(reply.email||contact?.email||'').trim();
  const valid=value=>/^[^\s@<>;,?&:#]+@[^\s@<>;,?&:#]+\.[^\s@<>;,?&:#]+$/.test(value);
@@ -186,7 +205,7 @@ function bindProspectingSearch(){
   }
  };
 }
-function render(){renderSimulationControl();renderBackgroundProgress();if(state)renderProjectPicker();if(!state||view==='builder')return;history.replaceState(null,'','#'+(leadWorkspaceRoutes[view]||view));document.querySelectorAll('aside [data-view]').forEach(b=>b.classList.toggle('selected',b.dataset.view===(['prospecting','discover'].includes(view)?'dashboard':view)));$('#breadcrumb').textContent='Przestrzeń robocza / '+({dashboard:'Dashboard',reports:'Raporty',administration:'Administracja',project:'Projekt',companies:'Firmy',contacts:'Kontakty',campaigns:'Kampanie',inbox:'Odpowiedzi',settings:'Integracje',signals:'Sygnały sprzedażowe'}[view]);const el=$('#content');if(view==='lead-discover'){$('#breadcrumb').textContent='Przestrze\u0144 robocza / Discover';renderLeadDiscoverPage();return}if(leadWorkspaceRoutes[view]){renderLeadWorkspace();return}if(view==='companies'){void renderCompanies();return}if(view==='library'){renderLibrary();return}if(view==='project'){renderSellerProject();return}if(view==='reports'){renderReports();return}
+function render(){renderSimulationControl();renderBackgroundProgress();if(state)renderProjectPicker();if(!state||view==='builder')return;history.replaceState(null,'',view==='campaigns'&&selectedCampaign?campaignHash(selectedCampaign):view==='contacts'&&contactIdFromHash(location.hash)?location.hash:'#'+(leadWorkspaceRoutes[view]||view));document.querySelectorAll('aside [data-view]').forEach(b=>b.classList.toggle('selected',b.dataset.view===(['prospecting','discover'].includes(view)?'dashboard':view)));$('#breadcrumb').textContent='Przestrzeń robocza / '+({dashboard:'Dashboard',reports:'Raporty',administration:'Administracja',project:'Projekt',companies:'Firmy',contacts:'Kontakty',campaigns:'Kampanie',inbox:'Odpowiedzi',settings:'Integracje',signals:'Sygnały sprzedażowe'}[view]);const el=$('#content');if(view==='lead-discover'){$('#breadcrumb').textContent='Przestrze\u0144 robocza / Discover';renderLeadDiscoverPage();return}if(leadWorkspaceRoutes[view]){renderLeadWorkspace();return}if(view==='companies'){void renderCompanies();return}if(view==='library'){renderLibrary();return}if(view==='project'){renderSellerProject();return}if(view==='reports'){renderReports();return}
 if(view==='dashboard'){renderDashboard();return}
 if(view==='contacts'){renderContactsView()}
 if(view==='campaigns'){if(selectedCampaign){renderCampaign();return}el.innerHTML=renderTop('Kampanie','Od pierwszego kontaktu do następnej rozmowy.',`<button class="primary" data-action="new-campaign">+ Nowa kampania</button>`)+`<section class="panel">${campaignTable()}</section>`}
@@ -217,7 +236,7 @@ function renderDashboard(){
  stats.insertAdjacentHTML('afterend',dashboardActivityPanel());
  renderDashboardActivity();
 }
-function renderCampaign(){const campaign=state.campaigns.find(c=>c.id===selectedCampaign);if(!campaign){selectedCampaign=null;render();return}renderCampaignWorkspace(campaign)}
+function renderCampaign(){const campaign=state.campaigns.find(c=>c.id===selectedCampaign);if(!campaign){selectedCampaign=null;render();return}if(campaign.channel==='phone')renderPhoneCampaign(campaign);else renderCampaignWorkspace(campaign)}
 function newCampaign(){openCampaignBuilder()}
 function confirmCampaignDelete(id){
   const campaign=state.campaigns.find(c=>c.id===id);if(!campaign)return;
@@ -243,7 +262,7 @@ function confirmCampaignDelete(id){
 }
 function addStep(){const n=document.querySelectorAll('.step').length;if(n>=6)return toast('Maksymalnie 6 kroków');const lang=$('#build-language')?.value||projectMessageLanguage(),spec=state.languages[lang];$('#steps').insertAdjacentHTML('beforeend',`<div class="step"><h3>Krok ${n+1}</h3><label>Dzień wysyłki</label><input name="delay" type="number" min="0" max="365" value="${n*3}" required><label>Temat</label><input name="subject" value="${esc(n?spec.follow_subject:spec.subject)}" required><label>Treść</label><textarea name="body" required>${esc(n?spec.follow_body:spec.body)}</textarea></div>`)}
 async function run(button,fn){if(button)button.disabled=true;try{await fn()}catch(e){toast(e.message)}finally{if(button)button.disabled=false}}
-document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.classList.contains('close'))return $('#modal').close();if(b.dataset.view){view=b.dataset.view;selectedCampaign=null;render();return}const a=b.dataset.action,id=Number(b.dataset.id);if(!a)return;run(b,async()=>{if(a==='new-contact'){showManualContactForm()}if(a==='import'){modal(`<h2>Import kontaktów</h2><p>CSV z nagłówkami: <code>name,email,company,role,notes,tags</code>. Wymagana jest kolumna email; duplikaty są pomijane. Maksymalnie 2 MB.</p>${contactTagsControl()}<label>Plik CSV</label><input id="csv-file" type="file" accept=".csv,text/csv"><p class="hint">Obsługiwany separator: przecinek lub średnik. W razie błędnego adresu cały import jest wycofywany.</p><button class="primary" data-action="upload-csv">Importuj kontakty</button>`)}if(a==='upload-csv'){const file=$('#csv-file').files[0];if(!file)throw Error('Wybierz plik CSV');await api('import',{csv:await file.text(),tags:$('#contact-tags').value});$('#modal').close();await refresh();toast('Import zakończony')}if(a==='delete-campaign')confirmCampaignDelete(id);if(a==='new-campaign')showNewCampaignDialog();if(a==='edit-campaign')await editCampaign(id);if(a==='add-step')addStep();if(a==='campaign'){selectedCampaign=id;view='campaigns';render()}if(a==='back'){selectedCampaign=null;render()}if(a==='prepare'){toast('Przygotowuję wiadomości. Przy użyciu AI może to potrwać kilka minut.');await api('campaign/prepare',{id});await refresh();toast('Wiadomości gotowe do sprawdzenia')}if(a==='campaign-status'){if(b.dataset.status==='active'&&!monitoringSimulation){await showCampaignPreflight(id);return}await api('campaign/status',{id,status:b.dataset.status});await refresh();toast(b.dataset.status==='active'?'Kampania uruchomiona':'Kampania wstrzymana')}if(a==='contact-group')contactGroupForm(id);if(a==='contact-status'){await api('contact/status',{id,status:b.dataset.status});await refresh();toast('Zatrzymano dalsze wiadomości do kontaktu')}if(a==='sync'){await api('sync',{});await refresh();toast('Poczta zsynchronizowana')}if(a==='message'){const m=findCampaignMessage(id);if(!m)throw Error('Nie znaleziono wiadomości.');const editable=m.status==='queued'&&state.campaigns.find(c=>c.id===m.campaign_id)?.status!=='active';modal(`<h2>Wiadomość · krok ${m.position+1}</h2><form id="message-form"><label>Temat</label><input name="subject" value="${esc(m.subject)}" ${editable?'':'readonly'}><label>Treść</label><textarea name="body" rows="12" ${editable?'':'readonly'}>${esc(m.body)}</textarea>${editable?'<button class="primary">Zapisz zmiany</button>':'<p class="hint">Aby edytować oczekującą wiadomość, wstrzymaj kampanię.</p>'}</form>`);$('#message-form').onsubmit=async e=>{e.preventDefault();await run(e.submitter,async()=>{await api('message',{id,...Object.fromEntries(new FormData(e.target))});$('#modal').close();await refresh();toast('Zapisano wiadomość')})}}})});
+document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.classList.contains('close'))return $('#modal').close();if(b.dataset.view){view=b.dataset.view;selectedCampaign=null;render();return}const a=b.dataset.action,id=Number(b.dataset.id);if(!a)return;run(b,async()=>{if(a==='new-contact'){showManualContactForm()}if(a==='import'){modal(`<h2>Import kontaktów</h2><p>CSV z nagłówkami: <code>name,email,company,role,notes,tags</code>. Wymagana jest kolumna email; duplikaty są pomijane. Maksymalnie 2 MB.</p>${contactTagsControl()}<label>Plik CSV</label><input id="csv-file" type="file" accept=".csv,text/csv"><p class="hint">Obsługiwany separator: przecinek lub średnik. W razie błędnego adresu cały import jest wycofywany.</p><button class="primary" data-action="upload-csv">Importuj kontakty</button>`)}if(a==='upload-csv'){const file=$('#csv-file').files[0];if(!file)throw Error('Wybierz plik CSV');await api('import',{csv:await file.text(),tags:$('#contact-tags').value});$('#modal').close();await refresh();toast('Import zakończony')}if(a==='delete-campaign')confirmCampaignDelete(id);if(a==='new-campaign')showNewCampaignDialog();if(a==='edit-campaign')await editCampaign(id);if(a==='add-step')addStep();if(a==='campaign'){selectedCampaign=id;view='campaigns';render()}if(a==='back'){selectedCampaign=null;render()}if(a==='prepare'){toast('Przygotowuję wiadomości. Przy użyciu AI może to potrwać kilka minut.');await api('campaign/prepare',{id});await refresh();toast('Wiadomości gotowe do sprawdzenia')}if(a==='campaign-status'){if(b.dataset.status==='active'&&!monitoringSimulation){await showCampaignPreflight(id);return}await api('campaign/status',{id,status:b.dataset.status});await refresh();toast(b.dataset.status==='active'?'Kampania uruchomiona':'Kampania wstrzymana')}if(a==='contact-group')contactGroupForm(id);if(a==='contact-status'){await api('contact/status',{id,status:b.dataset.status});await refresh();toast(translateUiText({blocked:'Kontakt zablokowany.',unblock:'Kontakt odblokowany.'}[b.dataset.status]||'Zatrzymano dalsze wiadomości do kontaktu'))}if(a==='sync'){await api('sync',{});await refresh();toast('Poczta zsynchronizowana')}if(a==='message'){const m=findCampaignMessage(id);if(!m)throw Error('Nie znaleziono wiadomości.');const editable=m.status==='queued'&&state.campaigns.find(c=>c.id===m.campaign_id)?.status!=='active';modal(`<h2>Wiadomość · krok ${m.position+1}</h2><form id="message-form"><label>Temat</label><input name="subject" value="${esc(m.subject)}" ${editable?'':'readonly'}><label>Treść</label><textarea name="body" rows="12" ${editable?'':'readonly'}>${esc(m.body)}</textarea>${editable?'<button class="primary">Zapisz zmiany</button>':'<p class="hint">Aby edytować oczekującą wiadomość, wstrzymaj kampanię.</p>'}</form>`);$('#message-form').onsubmit=async e=>{e.preventDefault();await run(e.submitter,async()=>{await api('message',{id,...Object.fromEntries(new FormData(e.target))});$('#modal').close();await refresh();toast('Zapisano wiadomość')})}}})});
 document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const a=b.dataset.action;if(a==='research')run(b,async()=>{const url=$('#company-url').value;if(!url)throw Error('Podaj adres strony firmy');$('#research-status').textContent='Pobieram kontekst firmy…';const result=await api('research',{url});$('#campaign-form [name=offer]').value=result.offer;$('#campaign-form [name=audience]').value=result.audience;$('#research-status').textContent=`Źródło: ${result.source}. ${result.ai?'Opis i grupa klientów zaproponowane przez AI — sprawdź je.':'Pobrano opis ze strony. Uzupełnij ofertę i grupę klientów; AI nie jest podłączone.'}`});if(a==='connect-gmail'){modal(`<h2>Podłącz Gmail / Google Workspace</h2><p>Sprawdzimy logowanie do wysyłki i odczytu odpowiedzi. Nie wyślemy wiadomości testowej.</p><form id="gmail-form"><label>Adres email</label><input name="email" type="email" autocomplete="username" required placeholder="ty@twoja-firma.pl"><label>Hasło aplikacji Google</label><input name="password" type="password" autocomplete="new-password" required placeholder="16 liter hasła aplikacji"><p class="hint">Użyj hasła aplikacji, nie zwykłego hasła do konta Google. <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">Utwórz hasło aplikacji ↗</a>. Dostępność zależy od ustawień konta i administratora Workspace. <a href="https://support.google.com/a/answer/176600" target="_blank" rel="noopener">Instrukcja Google</a>.</p><p class="hint">Dane zostaną zapisane w lokalnym pliku .env, pomijanym przez Git. Dostęp do pliku powinien mieć tylko właściciel tego komputera.</p><button class="primary">Sprawdź i podłącz</button></form>`);$('#gmail-form').onsubmit=async e=>{e.preventDefault();await run(e.submitter,async()=>{await api('integrations/gmail',Object.fromEntries(new FormData(e.target)));e.target.reset();$('#modal').close();$('#modal-content').innerHTML='';await refresh();toast('Gmail podłączony. Logowanie SMTP i IMAP działa.')})}}});
 function renderSettings(){
   const i=state.integrations;
@@ -429,8 +448,8 @@ function bindRefineControls(){
   bindTextRefinement($('#prospect-offer'),projectMessageLanguage);
   bindTextRefinement($('#prospect-audience'),()=>state.preferences.ui_language);
 }
-function bindTextRefinement(input,language,successMessage='Tekst poprawiony przez AI. Sprawdź go przed wyszukiwaniem.'){
-  const field=input.name,root=input.form.querySelector('[data-refine-controls="'+field+'"]');
+function bindTextRefinement(input,language,successMessage='Tekst poprawiony przez AI. Sprawdź go przed wyszukiwaniem.',container=input.form){
+  const field=input.dataset.refineField||input.name,root=container.querySelector('[data-refine-controls="'+field+'"]');
   const button=root.querySelector('[data-refine]'),undo=root.querySelector('[data-refine-undo]'),
     status=root.querySelector('[data-refine-status]'),proposal=root.querySelector('[data-refine-proposal]');
   let previous=null;
@@ -446,7 +465,7 @@ function bindTextRefinement(input,language,successMessage='Tekst poprawiony prze
     proposal.hidden=true;
     status.textContent='AI poprawia tekst…';
     try{
-      const result=await api('ai/refine',{field,text:original,language:language()});
+      const result=await api('ai/refine',{field,text:original,language:language?.()});
       if(!current())return;
       if(input.value===original)apply(result.text);
       else{proposal.querySelector('textarea').value=result.text;proposal.hidden=false;status.textContent='W międzyczasie zmieniono tekst. Możesz zastosować propozycję AI poniżej.'}
@@ -472,7 +491,18 @@ setInterval(()=>{if(view==='prospecting'&&state?.prospecting?.runs.some(r=>['sea
 
 document.addEventListener('DOMContentLoaded',()=>refresh().catch(e=>toast(e.message)));setInterval(()=>{if(!$('#modal').open&&!document.activeElement?.closest('#dashboard-search-form')&&!['settings','administration','project'].includes(view))refresh().catch(()=>{})},15000);
 
+function campaignHash(id){return `#campaigns/${id}`}
+function contactIdFromHash(hash){
+ const id=Number(/^#contacts\/([1-9][0-9]*)$/.exec(hash)?.[1]);
+ return Number.isSafeInteger(id)?id:null;
+}
+function campaignIdFromHash(hash){
+ const id=Number(/^#campaigns\/([1-9][0-9]*)$/.exec(hash)?.[1]);
+ return Number.isSafeInteger(id)?id:null;
+}
 function viewFromHash(hash) {
+ if(campaignIdFromHash(hash))return 'campaigns';
+ if(contactIdFromHash(hash))return 'contacts';
  const route = hash.slice(1);
  if (['prospecting','lead-search','discovery-pilot','prospecting/discovery-b2b'].includes(route))return 'dashboard';
  return Object.keys(leadWorkspaceRoutes).find(view => leadWorkspaceRoutes[view] === route) ||

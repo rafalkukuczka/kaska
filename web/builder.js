@@ -13,7 +13,18 @@ function showBuilderEditing(){
  if(!$('.campaign-edit-notice'))$('#campaign-form').insertAdjacentHTML('afterbegin','<p class="notice campaign-edit-notice">Zapis zmian wstrzyma aktywną kampanię. Wysłane kroki pozostają zablokowane. Zmienione oczekujące wiadomości zostaną odświeżone według szablonów. Po zmianie szkicu przygotuj wiadomości ponownie.</p>');
 }
 
-async function editCampaign(id){const data=await api('campaign/edit-data',{id});if(data.campaign.project_id!==state.seller_project.id)return;openCampaignBuilder(data)}
+async function editCampaign(id){
+ const campaign=state.campaigns.find(row=>row.id===id);
+ if(campaign?.channel==='phone'){
+  const epoch=simulationEpoch;
+  const data=await fetchPhoneCampaign(id);
+  if(campaign.project_id===state.seller_project.id&&epoch===simulationEpoch){
+   showPhoneCampaignForm({name:campaign.name,campaign,scripts:data.scripts,variants:data.time_variants,edit:true,locked:data.calls.length>0});
+  }
+  return;
+ }
+ const data=await api('campaign/edit-data',{id});if(data.campaign.project_id!==state.seller_project.id)return;openCampaignBuilder(data);
+}
 async function cloneCampaign(id,name){
  const projectId=state.seller_project.id,epoch=simulationEpoch;
  const data=await api('campaign/clone',{id,project_id:projectId,name});
@@ -27,7 +38,7 @@ function showNewCampaignDialog(){
  const campaigns=state.campaigns.filter(campaign=>campaign.project_id===projectId);
  modal(`<h2>Nowa kampania</h2><form id="new-campaign-form">
  <label for="new-campaign-mode">Jak utworzyć kampanię?</label>
- <select id="new-campaign-mode"><option value="blank">Nowa kampania</option><option value="clone" ${campaigns.length?'':'disabled'}>Sklonuj kampanię</option></select>
+ <select id="new-campaign-mode"><option value="blank">Nowa kampania</option><option value="clone" ${campaigns.length?'':'disabled'}>Sklonuj kampanię</option><option value="phone">Kampania telefoniczna</option></select>
  <div data-campaign-clone-source hidden>
   <label for="new-campaign-source">Kampania do sklonowania</label>
   <select id="new-campaign-source">${campaigns.map(campaign=>`<option value="${campaign.id}" data-no-translate>${esc(campaign.name)}</option>`).join('')}</select>
@@ -50,7 +61,21 @@ function showNewCampaignDialog(){
   event.preventDefault();
   if(state.seller_project.id!==projectId||simulationEpoch!==epoch){toast('Projekt się zmienił. Otwórz dialog ponownie.');return}
   const enteredName=name.value.trim();
+  if(mode.value==='phone'){
+   showPhoneCampaignForm({name:enteredName});
+   return;
+  }
   if(mode.value==='clone'){
+   const campaign=campaigns.find(row=>row.id===Number(source.value));
+   if(campaign?.channel==='phone'){
+    void run(event.submitter,async()=>{
+     const data=await fetchPhoneCampaign(campaign.id);
+     if(form.isConnected&&projectId===state.seller_project.id&&epoch===simulationEpoch){
+      showPhoneCampaignForm({name:enteredName,campaign,scripts:data.scripts,variants:data.time_variants});
+     }
+    });
+    return;
+   }
    void run(event.submitter,()=>cloneCampaign(Number(source.value),enteredName));
    return;
   }

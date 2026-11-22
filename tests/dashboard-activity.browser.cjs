@@ -82,6 +82,14 @@ with sqlite3.connect(sys.argv[1]) as c:
   assert.equal(navigation[navigation.indexOf('library')+1],'reports');
   await page.locator('nav [data-view=reports]').click();
   await page.locator(`[data-report-campaign="${fixture.first}"]`).waitFor();
+  const campaignLink=page.locator(`[data-report-campaign="${fixture.first}"]`).getByRole('link',{name:'Activity campaign'});
+  assert.equal(await campaignLink.getAttribute('href'),`#campaigns/${fixture.first}`);
+  await campaignLink.click();
+  await page.locator('#campaign-workspace-header').getByRole('heading',{name:'Activity campaign'}).waitFor();
+  await page.reload();
+  await page.locator('#campaign-workspace-header').getByRole('heading',{name:'Activity campaign'}).waitFor();
+  await page.goBack();
+  await campaignLink.waitFor();
   assert.equal(await page.locator('nav [data-view=reports] svg').count(),1);
   assert.equal(await page.locator('[data-report-campaign]').count(),1);
   assert.equal((await page.locator(`[data-report-campaign="${fixture.first}"] td`).nth(2).innerText()).replace(/\D/g,''),'2051');

@@ -15,6 +15,24 @@ import app
 
 
 class SystemTests(unittest.TestCase):
+    def test_blocking_cancels_queue_and_unblocking_restores_previous_status(self):
+        app.prepare(1)
+        with app.db() as c:
+            app.change_contact_status(c,1,'blocked')
+            app.change_contact_status(c,1,'blocked')
+            self.assertEqual(c.execute('SELECT status FROM contacts WHERE id=1').fetchone()[0],'blocked')
+            self.assertEqual({row[0] for row in c.execute('SELECT status FROM messages')},{'cancelled'})
+            with self.assertRaises(ValueError):app.change_contact_status(c,1,'active')
+            app.change_contact_status(c,1,'unblock')
+            self.assertEqual(c.execute('SELECT status FROM contacts WHERE id=1').fetchone()[0],'active')
+            self.assertEqual({row[0] for row in c.execute('SELECT status FROM messages')},{'cancelled'})
+            app.change_contact_status(c,1,'paused')
+            app.change_contact_status(c,1,'blocked')
+            app.change_contact_status(c,1,'unblock')
+            self.assertEqual(c.execute('SELECT status FROM contacts WHERE id=1').fetchone()[0],'paused')
+            app.change_contact_status(c,1,'unsubscribed')
+            with self.assertRaises(ValueError):app.change_contact_status(c,1,'unblock')
+
     def test_reply_sync_cannot_block_outbound_worker(self):
         app.STOP_WORKERS.clear()
         with patch('app.threading.Thread') as thread,patch('app.send_one') as send,patch('app.STOP_WORKERS.wait',side_effect=StopIteration):

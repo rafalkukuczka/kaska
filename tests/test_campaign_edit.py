@@ -18,6 +18,27 @@ class CampaignEditTests(unittest.TestCase):
 
     def save(self,item):return campaign_edit.save(app.db,app.library,app.MAIL_LOCK,app.ai_copy,item)
 
+    def test_restart_reuses_prepared_messages_and_preserves_previous_delivery(self):
+        with app.db() as c:
+            app.add_contact(c,{'name':'Second','email':'second@example.com'})
+        app.prepare(1)
+        with self.assertRaisesRegex(ValueError,'Brak przygotowanych wiadomości'):
+            campaign_edit.clone(app.db,{'id':1},restart=True)
+        with app.db() as c:
+            c.execute("UPDATE campaigns SET status='paused' WHERE id=1")
+            c.execute("UPDATE messages SET status='sent',sent_at=123 WHERE campaign_id=1")
+            app.change_contact_status(c,2,'blocked')
+        self.assertEqual(app.campaign_workspace.read(app.db,1)['summary']['restartable'],2)
+        campaign=campaign_edit.clone(app.db,{'id':1},restart=True)['campaign']
+        self.assertEqual((campaign['name'],campaign['status'],json.loads(campaign['contact_ids'])),
+                         ('Ponownie: Test','draft',[1]))
+        with app.db() as c:
+            old=c.execute('SELECT position,subject,body,status,sent_at FROM messages WHERE campaign_id=1 AND contact_id=1 ORDER BY position').fetchall()
+            new=c.execute('SELECT position,subject,body,status,sent_at FROM messages WHERE campaign_id=? ORDER BY position',(campaign['id'],)).fetchall()
+            self.assertEqual([tuple(row)[:3] for row in old],[tuple(row)[:3] for row in new])
+            self.assertEqual({tuple(row)[3:] for row in old},{('sent',123)})
+            self.assertEqual({tuple(row)[3:] for row in new},{('queued',None)})
+
     def test_clone_keeps_configuration_and_starts_without_delivery_history(self):
         app.prepare(1)
         with app.db() as c:

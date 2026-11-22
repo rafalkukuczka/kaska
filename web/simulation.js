@@ -149,7 +149,18 @@ async function simulationApi(path,data={}){
    const tags=contactTags(data.tags??data.target_group??'');
    if(tags.length>30||tags.some(tag=>tag.length>100||/[\u0000-\u001f\u007f]/.test(tag)))throw Error('Nieprawidłowe tagi.');
    contact.tags=tags;contact.target_group=tags.join('; ');
-  }else{if(!['active','paused','unsubscribed'].includes(data.status))throw Error('Nieprawidłowy status');contact.status=data.status}
+  }else{
+   if(data.status==='unblock'&&contact.status==='blocked'){
+    contact.status=contact.status_before_block||'active';
+    delete contact.status_before_block;
+   }else if(data.status==='blocked'&&contact.status!=='unsubscribed'){
+    if(contact.status!=='blocked')contact.status_before_block=contact.status;
+    contact.status='blocked';
+   }else if(data.status==='unsubscribed'||(['active','paused','replied'].includes(data.status)&&!['blocked','unsubscribed'].includes(contact.status))){
+    contact.status=data.status;
+    delete contact.status_before_block;
+   }else throw Error('Nieprawidłowy status');
+  }
   result={ok:true,simulated:true};
  }else if(path==='prospecting/search'){
   const id=simulationResultId();

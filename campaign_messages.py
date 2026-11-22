@@ -1,12 +1,32 @@
 """Paged campaign messages and reversible removal from the working list."""
 import math
 import delivery_status
+import project_scope
 
 
 def init_schema(c):
     if 'deleted' not in {row[1] for row in c.execute('PRAGMA table_info(messages)')}:
         c.execute('ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0')
     c.execute('CREATE INDEX IF NOT EXISTS campaign_message_pages ON messages(campaign_id,deleted,id)')
+    c.execute('CREATE INDEX IF NOT EXISTS contact_message_history ON messages(contact_id,campaign_id,position)')
+
+
+def contact_history(connection, contact_id, project_id):
+    project_scope.require_contact(connection, contact_id, project_id)
+    queues = {}
+    for row in connection.execute("""SELECT p.id AS campaign_id,p.name,p.channel,
+        p.status AS campaign_status,m.position,m.subject,m.status,m.due,m.sent_at,m.error,m.deleted
+        FROM messages m JOIN campaigns p ON p.id=m.campaign_id
+        WHERE m.contact_id=? AND p.project_id=?
+        ORDER BY p.created DESC,p.id DESC,m.position,m.id""", (contact_id, project_id)):
+        queue = queues.setdefault(row['campaign_id'], {
+            'id': row['campaign_id'], 'name': row['name'], 'channel': row['channel'], 'status': row['campaign_status'],
+            'sent': 0, 'messages': [],
+        })
+        queue['sent'] += row['status'] == 'sent'
+        queue['messages'].append({key: row[key] for key in
+                                  ('position', 'subject', 'status', 'due', 'sent_at', 'error', 'deleted')})
+    return list(queues.values())
 
 
 def page(db,campaign_id,page_number=1,page_size=25):

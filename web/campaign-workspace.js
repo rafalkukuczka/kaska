@@ -51,6 +51,7 @@ function campaignMainAction(c,w,summary){
  if(!monitoringSimulation&&c.channel==='linkedin'){
   if(!summary)return '<span class="badge gray">Wczytuję kampanię…</span>';
   if(!summary.messages)return `<button type="button" class="primary" data-action="prepare" data-id="${c.id}">Przygotuj wiadomości LinkedIn</button>`;
+  if(summary.restartable)return campaignRestartButton(c.id);
   if(!summary.counts.queued)return '<span class="badge gray">Brak wiadomości do wysłania</span>';
   return `<button type="button" class="primary" data-linkedin-campaign-start="${c.id}">${c.status==='active'?'Otwórz kolejkę LinkedIn':'Uruchom kolejkę'}</button>`;
  }
@@ -65,15 +66,38 @@ function campaignMainAction(c,w,summary){
   if(c.status!=='paused'&&!campaignHasReview(w))return '<button type="button" class="primary" data-campaign-review>Sprawdź zadania</button>';
   return start+(c.status==='paused'?resumePaused:'');
  }
- const pending=[...backgroundRequests.values()].some(request=>['campaign/prepare','campaign/status','campaign/update'].includes(request.path));
+ const pending=[...backgroundRequests.values()].some(request=>['campaign/prepare','campaign/status','campaign/update','campaign/restart'].includes(request.path));
  const disabled=pending||(c.status!=='active'&&(!summary||w.loading||!!w.error||w.data.revision!==c.revision));
  const button=(label,attrs)=>`<button type="button" class="primary" ${attrs} ${disabled?'disabled':''}>${label}</button>`;
+ if(summary?.restartable)return campaignRestartButton(c.id,disabled);
  if(c.status==='active')return button(monitoringSimulation?'Wstrzymaj symulację':'Wstrzymaj wysyłkę',`data-action="campaign-status" data-id="${c.id}" data-status="paused"`);
  if(!summary)return button('Wczytuję kampanię…','');
  if(!summary.messages)return button('Przygotuj wiadomości',`data-action="prepare" data-id="${c.id}"`);
  if(!(summary.counts.queued||summary.counts.sending))return '<span class="badge gray">Brak wiadomości do wysłania</span>';
  if(c.status!=='paused'&&!campaignHasReview(w))return button('Sprawdź wiadomości','data-campaign-review');
  return button(monitoringSimulation?'Symuluj wysyłkę':c.status==='paused'?'Wznów wysyłkę':'Uruchom wysyłkę',`data-action="campaign-status" data-id="${c.id}" data-status="active"`);
+}
+function campaignRestartButton(id,disabled=false){
+ return `<button type="button" class="primary" data-campaign-restart="${id}" ${disabled?'disabled':''}>Uruchom ponownie</button>`;
+}
+function confirmCampaignRestart(id){
+ const campaign=state.campaigns.find(row=>row.id===id);
+ if(!campaign)return;
+ const projectId=state.seller_project.id,epoch=simulationEpoch;
+ modal(`<h2>Uruchomić kampanię ponownie?</h2><p data-no-translate>${esc(campaign.name)}</p>
+  <p>Powstanie nowa kolejka z przygotowanymi wiadomościami dla nadal aktywnych odbiorców. Historia poprzedniej wysyłki pozostanie w dotychczasowej kampanii.</p>
+  <div class="actions"><button type="button" class="primary" data-confirm-campaign-restart>Przygotuj ponowne uruchomienie</button>
+   <button type="button" class="secondary close">Anuluj</button></div>`);
+ const confirm=$('[data-confirm-campaign-restart]');
+ confirm.onclick=()=>run(confirm,async()=>{
+  const data=await api('campaign/restart',{id,project_id:projectId});
+  if(!confirm.isConnected||projectId!==state.seller_project.id||epoch!==simulationEpoch)return;
+  $('#modal').close();
+  selectedCampaign=data.campaign.id;
+  await refresh();
+  if(view==='campaigns'&&selectedCampaign===data.campaign.id)await showCampaignPreflight(data.campaign.id);
+ });
+ syncLanguages();
 }
 function campaignReprepareButton(id,style){
  return `<button type="button" class="${style}" data-campaign-reprepare="${id}">Przygotuj wiadomości ponownie</button>`;
@@ -502,6 +526,8 @@ setInterval(()=>{
 },500);
 
 document.addEventListener('click',event=>{
+ const restart=event.target.closest('[data-campaign-restart]');
+ if(restart){confirmCampaignRestart(Number(restart.dataset.campaignRestart));return}
  const classic=event.target.closest('[data-linkedin-campaign-start]');
  if(classic){void run(classic,()=>showCampaignPreflight(Number(classic.dataset.linkedinCampaignStart)));return}
  const reprepare=event.target.closest('[data-campaign-reprepare]');

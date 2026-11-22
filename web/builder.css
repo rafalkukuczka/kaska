@@ -21,3 +21,8 @@
 .manual-scenario-form .manual-scenario-save{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 6px;padding-top:12px;border-top:1px solid #eee7f6}
 .manual-js-preview{max-height:360px;overflow:auto;padding:12px;border-radius:7px;background:#221d30;color:#f5edff;font:11px/1.6 ui-monospace,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 #manual-send-simulation{margin-top:18px;overflow-wrap:anywhere}
+.builder-layout.phone-builder-layout{grid-template-columns:minmax(180px,220px) minmax(0,1fr)}
+.phone-builder-top{position:sticky;top:0;z-index:12;flex-wrap:wrap;gap:10px 16px;padding:12px 0;background:var(--page)}
+.phone-builder-top [hidden]{display:none}
+.phone-builder-top [data-phone-form-error]{flex-basis:100%;margin:0}
+@media(max-width:800px){.builder-layout.phone-builder-layout{grid-template-columns:1fr}}

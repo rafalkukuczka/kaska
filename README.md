@@ -169,7 +169,7 @@ Przy tworzeniu kampanii w kroku **Odbiorcy** wybierz **Z grupy docelowej** i wsk
 
 ### Ręczna kolejka LinkedIn
 
-W ustawieniach kampanii wybierz kanał **LinkedIn**. Po przygotowaniu wiadomości otwórz kartę **Kolejka Katie** w panelu rozszerzenia PKEY Outreach (serwer Katie działa pod `http://localhost:8787`). Skopiuj wiadomość, wyślij ją ręcznie w LinkedIn, a po powrocie do rozszerzenia oznacz ją jako wysłaną. Kolejne kroki pojawiają się po upływie ustawionego odstępu od oznaczonej wysyłki. Ten kanał nie używa SMTP ani automatycznej wysyłki.
+W ustawieniach kampanii wybierz kanał **LinkedIn**. Po przygotowaniu wiadomości otwórz kartę **Kolejka LinkedIn** w panelu rozszerzenia PKEY Outreach (serwer Katie działa pod `http://localhost:8787`). Skopiuj wiadomość, wyślij ją ręcznie w LinkedIn, a po powrocie do rozszerzenia oznacz ją jako wysłaną. Kolejne kroki pojawiają się po upływie ustawionego odstępu od oznaczonej wysyłki. Ten kanał nie używa SMTP ani automatycznej wysyłki.
 
 Gotowe: CRUD w zakresie dodawania i wstrzymywania kontaktów, import CSV, sekwencje, edycja spersonalizowanych szkiców, opcjonalne OpenAI API, kolejka SMTP, limity, IMAP i zatrzymanie po odpowiedzi, rezygnacje, dziennik zdarzeń oraz trwała baza.
 

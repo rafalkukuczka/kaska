@@ -68,6 +68,7 @@ function showCompany(company){
   <p><strong>Sygnały aktualnej potrzeby</strong> · ${company.recent_signals} z ostatnich 30 dni</p>
   <h3>Kontakty i oceny z Leadów</h3>${company.contacts.map(person=>`<details class="signal-card"><summary><strong data-no-translate>${esc(person.name)}</strong> · ${person.saved?'W kontaktach':'Kandydat'}${person.qualification?' · '+assessments[person.qualification]:''}</summary>
   <p data-no-translate>${esc(person.email)} · ${esc(person.role)}</p>
+  ${person.contact_id?`<p><a class="link" href="#contacts/${esc(person.contact_id)}">Otwórz w Kontaktach</a></p>`:''}
   ${person.created?`<p class="hint">${esc(new Date(person.created*1000).toLocaleDateString(uiLanguage==='en'?'en-GB':'pl-PL'))}</p>`:''}
   ${person.fit_reason?`<p data-no-translate>${esc(person.fit_reason)}</p>`:''}
   ${person.missing_data?`<p data-no-translate>${esc(person.missing_data)}</p>`:''}

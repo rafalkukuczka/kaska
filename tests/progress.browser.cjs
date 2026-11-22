@@ -5,6 +5,10 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
 (async()=>{
  fs.mkdirSync('test-results',{recursive:true});
  const data=fs.mkdtempSync(path.resolve('test-results/progress-'));
+ const logTime=new Date(Date.now()-60000);
+ const pad=value=>String(value).padStart(2,'0');
+ const timestamp=`${logTime.getFullYear()}-${pad(logTime.getMonth()+1)}-${pad(logTime.getDate())} ${pad(logTime.getHours())}:${pad(logTime.getMinutes())}:${pad(logTime.getSeconds())},000`;
+ fs.writeFileSync(path.join(data,'katie.log.1'),`${timestamp} ERROR worker Fixture error\n`);
  const server=spawn('python',['tests/browser_server.py'],{env:{...process.env,APP_PORT:'8792',APP_DATA_DIR:data,SMTP_HOST:'',SMTP_FROM:'',IMAP_HOST:'',OPENAI_API_KEY:'',HUNTER_API_KEY:'browser-fixture-only'},stdio:'pipe'});
  let browser;
  try{
@@ -19,6 +23,16 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('#background-progress').waitFor();
   await page.locator('#background-progress').getByText('2 / 6 · 33%',{exact:true}).waitFor();
   assert.equal(await page.locator('#background-progress progress').getAttribute('value'),'2');
+  let adminJobs=jobs;
+  await page.route('**/api/admin/logs',route=>route.fulfill({json:{
+   jobs:adminJobs,entries:[{created:Date.now()/1000,level:'info',detail:'Przygotowano wiadomości'}],
+  }}));
+  await page.locator('nav [data-view=administration]').click();
+  const activity=page.locator('#admin-logs');
+  await activity.getByText('2 / 6',{exact:true}).waitFor();
+  await activity.getByText('Przygotowano wiadomości',{exact:true}).waitFor();
+  adminJobs=[];
+  await activity.getByText('Brak aktywnych operacji.',{exact:true}).waitFor();
   await page.locator('nav [data-view=contacts]').click();
   await page.locator('[data-action=new-contact]').click();
   await page.locator('#contact-form [name=name]').fill('Keep this draft');
@@ -72,6 +86,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   jobs=[];releasePreparation();
   await page.evaluate(async()=>window.progressTestRequest);
   await page.waitForFunction(()=>!document.querySelector('#background-progress'));
+  await page.unroute('**/api/campaign/prepare');
   // Opening the Discover bell acknowledges one batch without losing the newest updates.
   await page.waitForFunction(()=>state?.seller_project);
   const bellProject=await page.evaluate(()=>state.seller_project.id);
@@ -240,6 +255,9 @@ with sqlite3.connect(sys.argv[1]) as db:
    saved.push(route.request().postDataJSON());
    return route.fulfill({json:{added:1,existing:0}});
   });
+  await page.locator('#lead-company-status').selectOption('no-contacts');
+  assert.equal(await firstTile.isVisible(),false);
+  assert.equal(await secondTile.isVisible(),true);
   await page.locator('#lead-company-status').selectOption('qualified');
   assert.equal(await secondTile.isVisible(),false);
   const menu=page.locator('[data-lead-contact-bulk]');
@@ -345,6 +363,47 @@ with sqlite3.connect(sys.argv[1]) as db:
   const contactSource=savedPerson.getByRole('link',{name:'https://second.example/',exact:true});
   await contactSource.waitFor();
   assert.equal(await contactSource.getAttribute('data-contact-source'),String(await page.evaluate(()=>state.contacts.find(x=>x.name==='Second Contact').id)));
+  await savedPerson.getByRole('link',{name:'Otwórz w Kontaktach',exact:true}).click();
+  await page.locator('#modal').getByRole('heading',{name:'Szczegóły kontaktu',exact:true}).waitFor();
+  await page.locator('#contact-send-history').getByText('Brak wiadomości do tego kontaktu.',{exact:true}).waitFor();
+  await page.locator('#modal > button.close').click();
+  const savedContactRow=page.locator('#contacts-body tr').filter({hasText:'Second Contact'});
+  await savedContactRow.getByRole('button',{name:'Blokuj',exact:true}).click();
+  await savedContactRow.getByText('Zablokowany',{exact:true}).waitFor();
+  await savedContactRow.getByRole('button',{name:'Odblokuj',exact:true}).click();
+  await savedContactRow.getByText('Aktywna',{exact:true}).waitFor();
+  await page.locator('nav [data-view=reports]').click();
+  const errorReport=page.locator('.reports-errors');
+  await errorReport.locator('.reports-error-bar').waitFor();
+  assert.equal(await errorReport.locator('[data-log-error-total]').innerText(),'1');
+  assert.equal(await errorReport.locator('.reports-error-bar').evaluate(bar=>getComputedStyle(bar).fill),'rgb(180, 71, 48)');
+  const completedCampaign=await page.evaluate(async()=>{
+   await api('campaigns',{name:'Completed queue',offer:'Services',audience_mode:'all',
+    steps:[{delay_days:0,subject:'Prepared subject',body:'Prepared body'}]});
+   await refresh();
+   const id=state.campaigns.find(campaign=>campaign.name==='Completed queue').id;
+   await api('campaign/prepare',{id});
+   return id;
+  });
+  const markSent=spawnSync('python',['-c',`
+import sqlite3, sys, time
+with sqlite3.connect(sys.argv[1]) as connection:
+    connection.execute("UPDATE campaigns SET status='paused' WHERE id=?", (int(sys.argv[2]),))
+    connection.execute("UPDATE messages SET status='sent',sent_at=? WHERE campaign_id=?", (time.time(),int(sys.argv[2])))
+  `,path.join(data,'katie.sqlite3'),String(completedCampaign)]);
+  assert.equal(markSent.status,0,markSent.stderr.toString());
+  await page.locator('nav [data-view=contacts]').click();
+  await savedContactRow.getByRole('button',{name:'Szczegóły kontaktu',exact:true}).click();
+  const historyCampaign=page.locator('#contact-send-history').getByRole('link',{name:'Completed queue',exact:true});
+  assert.equal(await historyCampaign.getAttribute('href'),`#campaigns/${completedCampaign}`);
+  await historyCampaign.click();
+  await page.locator('#modal').waitFor({state:'hidden'});
+  await page.locator('#campaign-workspace-header').getByRole('heading',{name:'Completed queue',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Uruchom ponownie',exact:true}).click();
+  await page.getByRole('button',{name:'Przygotuj ponowne uruchomienie',exact:true}).click();
+  await page.locator('#modal').getByRole('heading',{name:'Sprawdź przed wysyłką'}).waitFor();
+  await page.locator('#campaign-workspace-header').getByRole('heading',{name:'Ponownie: Completed queue'}).waitFor();
+  assert.equal(await page.locator('[data-confirm-send]').isDisabled(),true);
   assert.deepEqual(errors,[]);
   console.log('Progress browser QA passed: real counters, indeterminate requests, cross-view display, form preservation, completion, failure and mobile.');
  }finally{if(browser)await browser.close();server.kill()}
