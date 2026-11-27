@@ -118,7 +118,7 @@ with sqlite3.connect(sys.argv[1]) as db:
   await bellBadge.waitFor({state:'hidden'});
   // Dashboard progress follows the selected search, including the request that creates it.
   const projectId=await page.evaluate(()=>state.seller_project.id);
-  const search={id:1,query:'Fixture companies',live:true,stopped:0,saved:false,criteria:[],company_limit:5};
+  const search={id:1,query:'Fixture companies',live:true,stopped:0,saved:false,criteria:[],company_limit:30};
   const first={domain:'first.example',name:'First',origin:'agent',status:'qualified',evidence:[]};
   const second={domain:'second.example',name:'Second',origin:'agent',status:'pending',evidence:[]};
   let dashboard={project_id:projectId,notifications:[],searches:[],search:null,companies:[],jobs:[],active_agent_jobs:0};
@@ -140,8 +140,12 @@ with sqlite3.connect(sys.argv[1]) as db:
   dashboard={...dashboard,search,searches:[search],active_agent_jobs:1,jobs:[{kind:'discover',status:'running'}]};
   beginSearch();
   await searchBar.getByText('Wyszukiwanie nowych firm',{exact:true}).waitFor();
-  await searchBar.getByText('0 / 1 · 0%',{exact:true}).waitFor();
+  await searchBar.getByText('0 / 30 firm · 0%',{exact:true}).waitFor();
   assert.equal(await bar.getAttribute('value'),'0');
+  dashboard={...dashboard,companies:[first,second],jobs:[...Array.from({length:4},()=>({kind:'discover',status:'done'})),
+   {kind:'discover',status:'running'}]};
+  await searchBar.getByText('2 / 30 firm · 7%',{exact:true}).waitFor();
+  assert.equal(await bar.getAttribute('max'),'30');
   dashboard={...dashboard,companies:[first,second],jobs:[{kind:'evaluate',status:'running',domain:second.domain}]};
   await searchBar.getByText('Analiza firm',{exact:true}).waitFor();
   const completion=searchBar.getByText('1 / 2 · 50%',{exact:true});
@@ -353,9 +357,9 @@ with sqlite3.connect(sys.argv[1]) as db:
   providers=[];
   await page.locator('#openai-cost-bell.billable-active').waitFor({state:'detached'});
   await page.goto('http://localhost:8792/#prospecting/okazje');
-  const discoverCard=page.locator('[data-discover-company]').filter({hasText:'FIRST'});
-  await discoverCard.getByText('W kontaktach',{exact:true}).waitFor();
-  assert.equal(await background(discoverCard),'rgb(237, 249, 242)');
+  await page.waitForURL('**/#discover');
+  await page.locator('#lead-discover-feed').waitFor();
+  assert.equal(await page.locator('#discover-opportunities').count(),0);
   await page.locator('nav [data-view=companies]').click();
   await page.getByRole('button',{name:'Second Decorations',exact:true}).click();
   const savedPerson=page.locator('#modal details').filter({hasText:'Second Contact'});

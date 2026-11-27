@@ -3,7 +3,6 @@ const contactBulkSelected=new Set();
 const leadWorkspaceRoutes = {
  'lead-discover': 'discover',
  prospecting: 'prospecting/kontakty',
- discover: 'prospecting/okazje',
 };
 let state, view=viewFromHash(location.hash)||'dashboard', selectedCampaign=campaignIdFromHash(location.hash);
 let pendingContactId=contactIdFromHash(location.hash);
@@ -41,7 +40,7 @@ async function refresh(){
  if(epoch!==simulationEpoch)return;
  if(state&&state.simulation_generation!==snapshot.simulation_generation){
   simulationEpoch++;
-  campaignWorkspaces.clear();campaignMessagePages.clear();leadSearchSelection.clear();discoverContactPanels.clear();
+  campaignWorkspaces.clear();campaignMessagePages.clear();leadSearchSelection.clear();
   leadNotificationSelection=null;
   prospectSelected.clear();prospectRunId=null;prospectDraftPending=null;contactBulkSelected.clear();
   if(view==='builder'&&$('#phone-campaign-form')){view='campaigns';selectedCampaign=null}
@@ -150,42 +149,24 @@ function renderLeadWorkspace(){
  const projectId=sellerProject().id;
  let root=$('#lead-workspace');
  if(!root){
-  $('#content').innerHTML=renderTop('Narzędzia pozyskiwania','Wyszukuj kontakty i sprawdzaj okazje sprzedażowe.',
+  $('#content').innerHTML=renderTop('Narzędzia pozyskiwania','Wyszukuj firmy i kontakty.',
     '<button type="button" class="secondary" data-view="dashboard">Wróć do Dashboardu</button>')+`
     <section id="lead-workspace">
-      <div class="lead-workspace-modes" role="group" aria-label="Tryb wyszukiwania">
-        <button type="button" class="secondary" data-view="prospecting">Firmy i kontakty</button>
-        <button type="button" class="secondary" data-view="discover">Okazje sprzedażowe</button>
-      </div>
       <section class="panel lead-search-panel" id="lead-workspace-search"></section>
       <div id="lead-workspace-body"></div>
     </section>`;
   root=$('#lead-workspace');
  }
  $('#breadcrumb').innerHTML='Przestrzeń robocza / <span>Narzędzia pozyskiwania</span>';
- if(root.dataset.mode!==view||root.dataset.project!==String(projectId)){
-  root.dataset.mode=view;
+ if(root.dataset.project!==String(projectId)){
   root.dataset.project=projectId;
-  root.querySelectorAll('.lead-workspace-modes button').forEach(button=>{
-   button.setAttribute('aria-pressed',String(button.dataset.view===view));
-  });
   $('#lead-workspace-body').replaceChildren();
-  $('#lead-workspace-search').innerHTML=leadWorkspaceSearch(view);
+  $('#lead-workspace-search').innerHTML=`
+   <div class="panel-head"><div class="lead-search-heading"><img src="/assets/kaska.png" alt="" width="44" height="44" class="welcome-avatar"><h2>Znajdź firmy i osoby</h2></div>
+    <button type="button" class="link" data-view="project">Zmień kryteria projektu</button></div>
+   ${leadSearchForm(true)}`;
  }
- if(view==='prospecting')renderProspecting();
- if(view==='discover')renderDiscover();
-}
-
-function leadWorkspaceSearch(mode){
- const project=sellerProject();
- const heading=title=>`<div class="lead-search-heading"><img src="/assets/kaska.png" alt="" width="44" height="44" class="welcome-avatar"><h2>${title}</h2></div>`;
- if(mode==='prospecting')return `
-  <div class="panel-head">${heading('Znajdź firmy i osoby')}<button type="button" class="link" data-view="project">Zmień kryteria projektu</button></div>
-  ${leadSearchForm(true)}`;
- return `
-  <div class="panel-head">${heading('Znajdź sygnały sprzedażowe')}<button type="button" class="link" data-open-project-catalog>Wybierz sygnały</button></div>
-  <p class="hint">Sprawdź publiczne zdarzenia pasujące do oferty projektu <strong data-no-translate>${esc(project.name)}</strong>.</p>
-  <button type="button" class="primary" data-find-opportunities disabled>Znajdź okazje <span aria-hidden="true">↗</span></button>`;
+ renderProspecting();
 }
 
 function bindProspectingSearch(){
@@ -205,7 +186,7 @@ function bindProspectingSearch(){
   }
  };
 }
-function render(){renderSimulationControl();renderBackgroundProgress();if(state)renderProjectPicker();if(!state||view==='builder')return;history.replaceState(null,'',view==='campaigns'&&selectedCampaign?campaignHash(selectedCampaign):view==='contacts'&&contactIdFromHash(location.hash)?location.hash:'#'+(leadWorkspaceRoutes[view]||view));document.querySelectorAll('aside [data-view]').forEach(b=>b.classList.toggle('selected',b.dataset.view===(['prospecting','discover'].includes(view)?'dashboard':view)));$('#breadcrumb').textContent='Przestrzeń robocza / '+({dashboard:'Dashboard',reports:'Raporty',administration:'Administracja',project:'Projekt',companies:'Firmy',contacts:'Kontakty',campaigns:'Kampanie',inbox:'Odpowiedzi',settings:'Integracje',signals:'Sygnały sprzedażowe'}[view]);const el=$('#content');if(view==='lead-discover'){$('#breadcrumb').textContent='Przestrze\u0144 robocza / Discover';renderLeadDiscoverPage();return}if(leadWorkspaceRoutes[view]){renderLeadWorkspace();return}if(view==='companies'){void renderCompanies();return}if(view==='library'){renderLibrary();return}if(view==='project'){renderSellerProject();return}if(view==='reports'){renderReports();return}
+function render(){renderSimulationControl();renderBackgroundProgress();if(state)renderProjectPicker();if(!state||view==='builder')return;history.replaceState(null,'',view==='campaigns'&&selectedCampaign?campaignHash(selectedCampaign):view==='contacts'&&contactIdFromHash(location.hash)?location.hash:'#'+(leadWorkspaceRoutes[view]||view));document.querySelectorAll('aside [data-view]').forEach(b=>b.classList.toggle('selected',b.dataset.view===(view==='prospecting'?'dashboard':view)));$('#breadcrumb').textContent='Przestrzeń robocza / '+({dashboard:'Dashboard',reports:'Raporty',administration:'Administracja',project:'Projekt',companies:'Firmy',contacts:'Kontakty',campaigns:'Kampanie',inbox:'Odpowiedzi',settings:'Integracje',signals:'Sygnały sprzedażowe'}[view]);const el=$('#content');if(view==='lead-discover'){$('#breadcrumb').textContent='Przestrze\u0144 robocza / Discover';renderLeadDiscoverPage();return}if(leadWorkspaceRoutes[view]){renderLeadWorkspace();return}if(view==='companies'){void renderCompanies();return}if(view==='library'){renderLibrary();return}if(view==='project'){renderSellerProject();return}if(view==='reports'){renderReports();return}
 if(view==='dashboard'){renderDashboard();return}
 if(view==='contacts'){renderContactsView()}
 if(view==='campaigns'){if(selectedCampaign){renderCampaign();return}el.innerHTML=renderTop('Kampanie','Od pierwszego kontaktu do następnej rozmowy.',`<button class="primary" data-action="new-campaign">+ Nowa kampania</button>`)+`<section class="panel">${campaignTable()}</section>`}
@@ -504,6 +485,7 @@ function viewFromHash(hash) {
  if(campaignIdFromHash(hash))return 'campaigns';
  if(contactIdFromHash(hash))return 'contacts';
  const route = hash.slice(1);
+ if(route==='prospecting/okazje')return 'lead-discover';
  if (['prospecting','lead-search','discovery-pilot','prospecting/discovery-b2b'].includes(route))return 'dashboard';
  return Object.keys(leadWorkspaceRoutes).find(view => leadWorkspaceRoutes[view] === route) ||
   (Object.hasOwn(leadWorkspaceRoutes,route) ? route : null) ||

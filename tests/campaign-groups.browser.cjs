@@ -14,8 +14,8 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto('http://localhost:8799');await page.waitForFunction(()=>state?.seller_project);
   await page.evaluate(async()=>{
-   await api('contacts',{name:'Retail Anna',email:'anna@retail.example',tags:'Retail; ERP'});
-   await api('contacts',{name:'Other Bob',email:'bob@other.example',tags:'Other; ERP'});
+   await api('contacts',{name:'Example Company',email:'anna@retail.example',company:'Example Company',tags:'Retail; ERP'});
+   await api('contacts',{name:'Example Company',email:'bob@other.example',company:'Example Company',tags:'Other; ERP'});
    await api('contacts',{name:'Paused Person',email:'paused@retail.example',target_group:'Retail'});await refresh();
    await api('contact/status',{id:state.contacts.find(c=>c.email==='paused@retail.example').id,status:'paused'});await refresh();
   });
@@ -27,9 +27,11 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('[name=audience_tags][value=Retail]').check();
   assert.ok((await page.locator('#builder-recipient-hint').innerText()).endsWith('1'));
   assert.equal(await page.locator('#preview-contact option').count(),1);
-  assert.ok((await page.locator('#preview-contact').innerText()).includes('Retail Anna'));
+  assert.deepEqual(await page.locator('#preview-contact option').allTextContents(),['Example Company']);
   await page.locator('[name=audience_tags][value=ERP]').check();
   assert.ok((await page.locator('#builder-recipient-hint').innerText()).endsWith('2'));
+  assert.deepEqual((await page.locator('#preview-contact option').allTextContents()).sort(),
+   ['Example Company · anna@retail.example','Example Company · bob@other.example']);
   await page.locator('#build-tag-match').selectOption('all');
   assert.ok((await page.locator('#builder-recipient-hint').innerText()).endsWith('1'));
   await page.locator('[data-builder=save-draft]').click();

@@ -167,6 +167,10 @@ def clone(db, item, *, restart=False):
             SELECT ?,'draft',?,{columns} FROM campaigns WHERE id=?""",(name,now,campaign_id)).lastrowid
         c.execute("""INSERT INTO steps(campaign_id,position,delay_days,subject,body,phone_time_variant)
             SELECT ?,position,delay_days,subject,body,phone_time_variant FROM steps WHERE campaign_id=? ORDER BY position""",(copy_id,campaign_id))
+        if source['channel']=='phone':
+            c.execute("""INSERT INTO phone_campaign_flows(campaign_id,definition)
+                SELECT ?,definition FROM phone_campaign_flows WHERE campaign_id=? ORDER BY id DESC LIMIT 1""",
+                (copy_id,campaign_id))
         if restart:
             contacts = sorted({row[0] for row in prepared})
             c.execute("UPDATE campaigns SET audience_mode='selected',contact_ids=? WHERE id=?",

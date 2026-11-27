@@ -2,6 +2,7 @@ import csv
 import contact_groups
 import contact_tags
 import contact_intake
+import contact_identity
 import campaign_messages
 import campaign_edit
 import campaign_workspace
@@ -786,7 +787,7 @@ def capture_contact(c, item, simulated=False):
         if not isinstance(value, str) or len(value) > limit or any(ord(char) < 32 for char in value):
             raise ValueError('Dane kontaktu zawierają nieprawidłowe pole.')
         fields[key] = value.strip()
-    email = fields['email'].lower()
+    email = contact_email(fields['email'])
     phone = contact_phone(item.get('phone', ''))
     tag = item.get('tag', '')
     tags = contact_tags.normalize(c, [tag], project_id)
@@ -797,7 +798,7 @@ def capture_contact(c, item, simulated=False):
         raise ValueError('Nieprawidłowy adres strony źródłowej.')
     source_url = urlunsplit((source.scheme, source.netloc, source.path, '', ''))
     pool = project_scope.contact_pool(c, project_id)
-    existing = c.execute('SELECT id, research_data FROM contacts WHERE email=? AND contact_pool=?', (email, pool)).fetchone()
+    existing = contact_identity.find(c, pool, email, source_url)
     if existing:
         contact_id = existing['id']
         contact_tags.set_tags(c, contact_id, tags, merge=True, project_id=project_id)
@@ -811,7 +812,7 @@ def capture_contact(c, item, simulated=False):
     evidence = {'sources': [{'url': source_url, 'last_seen': datetime.now(timezone.utc).date().isoformat()}]}
     if phone:
         evidence['work_phone'] = phone
-    if source.hostname in ('linkedin.com', 'www.linkedin.com') and source.path.startswith('/in/'):
+    if contact_identity.linkedin_profile(source_url):
         evidence['linkedin'] = source_url
     research = discover_contacts.merge_attributes(previous, evidence)
     c.execute('UPDATE contacts SET research_data=? WHERE id=?', (json.dumps(research, ensure_ascii=False), contact_id))
@@ -1077,6 +1078,7 @@ class Handler(BaseHTTPRequestHandler):
             '/style.css': ('style.css', 'text/css'),
             '/campaign-workspace.js': ('campaign-workspace.js', 'text/javascript'),
             '/phone-campaigns.js': ('phone-campaigns.js', 'text/javascript'),
+            '/phone-flow-editor.js': ('phone-flow-editor.js', 'text/javascript'),
             '/reports.js': ('reports.js', 'text/javascript'),
             '/dashboard-chart.js': ('dashboard-chart.js', 'text/javascript'),
             '/project-migration.js': ('project-migration.js', 'text/javascript'),

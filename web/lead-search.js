@@ -574,10 +574,8 @@ function dashboardSearchProgress(data, active) {
   if (monitoringSimulation) return null;
   const otherWork = data.active_agent_jobs ? {label:'Praca agentów'} : null;
   if (!data.search?.live || data.search.stopped) return otherWork;
-  const pendingDiscovery = active.filter(job => job.kind === 'discover').length;
-  if (pendingDiscovery) {
-    const completed = data.jobs.filter(job => job.kind === 'discover' && ['done','failed'].includes(job.status)).length;
-    return {label:'Wyszukiwanie nowych firm', completed, total:completed + pendingDiscovery};
+  if (active.some(job => job.kind === 'discover')) {
+    return {label:'Wyszukiwanie nowych firm', completed:data.companies.length, total:data.search.company_limit, unit:'firm'};
   }
   const remaining = new Set(active.filter(job => job.kind === 'research' || job.kind === 'evaluate').map(job => job.domain));
   if (remaining.size) {
@@ -604,7 +602,8 @@ function renderDashboardSearchProgress(root) {
   const stop = panel.querySelector('[data-lead-stop]');
   const text = translateUiText(progress.label);
   if (label.textContent !== text) label.textContent = text;
-  const counter = progress.total ? `${progress.completed} / ${progress.total} · ${progressPercent(progress.completed,progress.total)}` : translateUiText('W trakcie…');
+  const unit = progress.unit ? ' '+translateUiText(progress.unit) : '';
+  const counter = progress.total ? `${progress.completed} / ${progress.total}${unit} · ${progressPercent(progress.completed,progress.total)}` : translateUiText('W trakcie…');
   if (completion.textContent !== counter) completion.textContent = counter;
   stop.disabled = Boolean(root._stopping);
   const action = translateUiText(root._stopping ? 'Przerywanie…' : 'Przerwij');
@@ -755,7 +754,7 @@ function renderLeadDiscoverPage() {
             ${Object.entries(leadUpdateKinds).map(([kind,[label]])=>`<option value="${kind}">${label}</option>`).join('')}</select></label>
         </div>
         <div id="lead-discover-events"></div></div>
-    </section><button type="button" class="link" data-view="discover">Otwórz katalog okazji</button>`;
+    </section>`;
   const root = $('#lead-discover-feed');
   const updates = root.querySelector('[data-lead-signal-updates]');
   updates.addEventListener('change', () => {

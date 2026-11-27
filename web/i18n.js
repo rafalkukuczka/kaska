@@ -2,6 +2,22 @@
 let uiLanguage='pl';
 try{uiLanguage=localStorage.getItem('kaska-ui-language')==='en'?'en':'pl'}catch{}
 const uiEnglish={
+ 'Wyszukuj firmy i kontakty.':'Search for companies and contacts.',
+ 'Plansza':'Canvas','Plansza sekwencji':'Sequence canvas',
+ 'Skala planszy':'Board zoom','Pomniejsz planszę':'Zoom out','Przywróć 100%':'Reset to 100%',
+ 'Powiększ planszę':'Zoom in','Zamknij edycję':'Close editor',
+ 'Godzina rozmowy':'Call time','Przeczytaj z oferty':'Read from offer',
+ 'Uzupełnij opis w zakładce Oferta.':'Enter a description in the Offer tab.',
+ 'Skrypt rozmowy może mieć do 15 000 znaków.':'A call script can contain up to 15,000 characters.',
+ 'Ustaw dwie różne godziny w warunku godziny rozmowy.':'Set two different times for the call time condition.',
+ 'Nieprawidłowe położenie elementu sekwencji.':'Invalid position for a sequence element.',
+ 'Język oferty':'Offer language','Przygotuj ofertę i argumenty do rozmowy.':'Prepare the offer and talking points for the call.',
+ 'Oferta dopracowana przez AI. Sprawdź ją przed rozmową.':'AI refined the offer. Review it before the call.',
+ 'Krok 1 z 4':'Step 1 of 4','Krok 2 z 4':'Step 2 of 4','Krok 3 z 4':'Step 3 of 4','Krok 4 z 4':'Step 4 of 4',
+ 'Edytor rozgałęzień':'Branch editor','Elementy sekwencji':'Sequence elements','Usuń element':'Remove element',
+ 'Początek sekwencji':'Sequence start','Początek':'Start','Zakończ sekwencję':'End sequence','Dodaj warunek':'Add condition',
+ 'Nową strukturę zastosujesz do kontaktów, które jeszcze nie rozpoczęły rozmów.':'The new structure applies to contacts who have not started the sequence.',
+ 'Wynik rozmowy wybiera dalszą ścieżkę zapisaną w sekwencji.':'The call outcome determines the next path in the sequence.',
  'Zapisz i otwórz WhatsApp':'Save and open WhatsApp',
  'Numer kontaktu się zmienił. Otwórz kontakt ponownie.':'The contact’s phone number changed. Reopen the contact.',
  'Pora dnia':'Time of day','Godziny według czasu warszawskiego':'Times in Warsaw time',

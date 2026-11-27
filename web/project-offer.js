@@ -7,7 +7,7 @@ function projectOfferPanel(){
   ${refineControls('offer')}${sellingPointsSection('prospect')}`;
 }
 
-function offerSourceControls(campaign=false){
+function offerSourceControls(campaign=false,languageLabel='Język wiadomości'){
  return `<div data-offer-controls>
   ${campaign?`<label for="campaign-offer-website">Osobna strona oferty kampanii</label>
   <input id="campaign-offer-website" name="offer_website" type="text" inputmode="url" maxlength="2000" placeholder="Użyj strony firmy wpisanej powyżej">
@@ -24,7 +24,7 @@ function offerSourceControls(campaign=false){
   <p class="hint" id="offer-document-hint">PDF, DOCX, TXT lub MD. Do 10 plików, maksymalnie 6 MB na plik.</p>
   <ul class="project-offer-documents" data-offer-documents></ul>
   <div class="actions${campaign?' campaign-offer-actions':''}">
-    ${campaign?`<div class="campaign-offer-language"><label for="build-language">Język wiadomości</label><select id="build-language" name="language">${messageLanguageOptions(projectMessageLanguage())}</select><button type="button" class="link" id="build-language-reset">Użyj języka projektu</button></div>`:''}
+    ${campaign?`<div class="campaign-offer-language"><label for="build-language">${esc(languageLabel)}</label><select id="build-language" name="language">${messageLanguageOptions(projectMessageLanguage())}</select><button type="button" class="link" id="build-language-reset">Użyj języka projektu</button></div>`:''}
     <button type="button" class="secondary" id="${campaign?'generate-campaign-offer':'generate-project-offer'}" data-generate-offer disabled>Przygotuj ofertę</button>
   </div>
   <p class="hint">Przy podłączonej integracji OpenAI analizuje fragmenty wybranych źródeł.</p>
@@ -40,7 +40,7 @@ function bindProjectOffer(form){
  bindOfferSources(form);
 }
 
-function bindOfferSources(form,campaign=false){
+function bindOfferSources(form,campaign=false,{campaignId=campaign?builderEditing?.campaign.id:undefined,attachments=campaign}={}){
  const panel=form.querySelector('[data-offer-controls]');
  const files=panel.querySelector('#offer-document-files'), list=panel.querySelector('[data-offer-documents]');
  const attachmentFile=form.querySelector('#builder-attachment-file'), attachmentStatus=form.querySelector('#builder-attachment-status');
@@ -49,11 +49,11 @@ function bindOfferSources(form,campaign=false){
  const used=panel.querySelector('[data-offer-used-sources]'), sources=[...panel.querySelectorAll('[data-offer-source]')];
  const storage=form.elements.offer_sources, projectId=campaign?Number(form.dataset.projectId):state.seller_project.id, epoch=simulationEpoch;
  const current=()=>panel.isConnected&&epoch===simulationEpoch&&state.seller_project.id===projectId;
- const scope=()=>({project_id:projectId,...(campaign?(builderEditing?{campaign_id:builderEditing.campaign.id}:{draft_key:form.elements.offer_draft_key.value}):{})});
+ const scope=()=>({project_id:projectId,...(campaign?(campaignId?{campaign_id:campaignId}:{draft_key:form.elements.offer_draft_key.value}):{})});
  const websiteValue=()=>form.elements.offer_website?.value.trim()||form.elements.website.value.trim();
  const selected=()=>sources.filter(input=>input.checked).map(input=>input.value);
  let documents=[],busy=false,listVersion=0;
- if(campaign)form.attachmentDocuments={project:[],campaign:[]};
+ if(attachments)form.attachmentDocuments={project:[],campaign:[]};
  const controls=()=>{
   const wanted=selected();
   generate.disabled=!!busy||!wanted.length||(wanted.includes('website')&&!websiteValue())||
@@ -75,8 +75,8 @@ function bindOfferSources(form,campaign=false){
  const show=rows=>{
   listVersion++;
   documents=rows;
-  if(campaign){form.attachmentDocuments.campaign=rows;renderBuilderMaterials()}
-  else state.offer_document_count=rows.length;
+  if(attachments){form.attachmentDocuments.campaign=rows;renderBuilderMaterials()}
+  if(!campaign)state.offer_document_count=rows.length;
   list.innerHTML=rows.map(row=>`<li>${row.attachable?offerDocumentLink(row.name,{...scope(),id:row.id}):`<span data-no-translate>${esc(row.name)}</span>`}
    ${row.attachable===0?'<small class="hint">Dodaj oryginalny plik ponownie, aby użyć go jako załącznika.</small>':''}
    <button type="button" class="link" data-remove-offer-document="${row.id}">Usuń</button></li>`).join('');
@@ -84,7 +84,8 @@ function bindOfferSources(form,campaign=false){
  };
  const updateSources=()=>{
   storage.value=JSON.stringify(selected());
-  if(campaign)persistBuilder();else updateSellerProject(form);
+  if(attachments)persistBuilder();
+  if(!campaign)updateSellerProject(form);
   controls();
  };
  for(const input of sources)input.addEventListener('change',updateSources);
@@ -100,7 +101,7 @@ function bindOfferSources(form,campaign=false){
    if(current()&&version===listVersion)show(data.documents);
   }catch(error){if(current()&&version===listVersion)message(error.message)}
  })();
- if(campaign)void (async()=>{
+ if(attachments)void (async()=>{
   try{
    const response=await fetch('/api/offer/documents?'+new URLSearchParams({project_id:projectId}),{cache:'no-store'});
    const data=await response.json();
@@ -160,7 +161,7 @@ function bindOfferSources(form,campaign=false){
   draft.hidden=true;
   message('Przygotowuję ofertę z wybranych źródeł…');
   const context=campaign?{name:form.elements.name.value,audience:form.elements.audience.value,
-   audience_tags:form.elements.audience_mode.value==='tags'?selectedCampaignTags().join('; '):''}:{};
+   audience_tags:form.elements.audience_mode.value==='tags'?new FormData(form).getAll('audience_tags').join('; '):''}:{};
   const result=await api('offer/generate',{...scope(),...context,sources:selection,website,language,existing_offer:form.elements.offer.value});
   if(!current())return;
   text.value=result.offer;draft.hidden=false;

@@ -19,7 +19,7 @@ async function editCampaign(id){
   const epoch=simulationEpoch;
   const data=await fetchPhoneCampaign(id);
   if(campaign.project_id===state.seller_project.id&&epoch===simulationEpoch){
-   showPhoneCampaignForm({name:campaign.name,campaign,scripts:data.scripts,variants:data.time_variants,edit:true,locked:data.calls.length>0});
+   showPhoneCampaignForm({name:campaign.name,campaign,scripts:data.scripts,variants:data.time_variants,flow:data.flow,edit:true,locked:data.calls.length>0});
   }
   return;
  }
@@ -29,7 +29,12 @@ async function cloneCampaign(id,name){
  const projectId=state.seller_project.id,epoch=simulationEpoch;
  const data=await api('campaign/clone',{id,project_id:projectId,name});
  if(data.campaign.project_id!==state.seller_project.id||epoch!==simulationEpoch)return;
- openCampaignBuilder(data);
+ if(data.campaign.channel==='phone'){
+  const phone=await fetchPhoneCampaign(data.campaign.id);
+  if(projectId!==state.seller_project.id||epoch!==simulationEpoch)return;
+  showPhoneCampaignForm({name:data.campaign.name,campaign:data.campaign,scripts:phone.scripts,
+   variants:phone.time_variants,flow:phone.flow,edit:true});
+ }else openCampaignBuilder(data);
  await refresh();
  toast(translateUiText('Utworzono kopię kampanii.'));
 }
@@ -66,16 +71,6 @@ function showNewCampaignDialog(){
    return;
   }
   if(mode.value==='clone'){
-   const campaign=campaigns.find(row=>row.id===Number(source.value));
-   if(campaign?.channel==='phone'){
-    void run(event.submitter,async()=>{
-     const data=await fetchPhoneCampaign(campaign.id);
-     if(form.isConnected&&projectId===state.seller_project.id&&epoch===simulationEpoch){
-      showPhoneCampaignForm({name:enteredName,campaign,scripts:data.scripts,variants:data.time_variants});
-     }
-    });
-    return;
-   }
    void run(event.submitter,()=>cloneCampaign(Number(source.value),enteredName));
    return;
   }
@@ -106,7 +101,7 @@ function openCampaignBuilder(editing=null){
     <section data-stage="2" hidden><span class="section-label">03 / SEKWENCJA</span><h1>Każda wiadomość ma swój moment.</h1><p class="muted">Ustaw kroki, odstępy i treść. Odpowiedź lub rezygnacja zatrzyma dalszą wysyłkę.</p><div id="sequence-map" class="sequence-map"></div><div class="flow-start">○ Aktywny odbiorca z adresem email</div><div id="steps"></div><button type="button" class="secondary" data-builder="add-step">+ Dodaj follow-up</button><p class="hint">Dni liczone od uruchomienia kampanii. Zmienne: {{name}}, {{company}}, {{offer}}, {{signal_title}}, {{material_title}}, {{material_url}}, {{cta}}. Edycja szablonu nie wysyła wiadomości.</p></section>
     <section data-stage="3" hidden><span class="section-label">04 / USTAWIENIA</span><h1>Sprawdź, zanim ruszysz.</h1><p class="muted">Zapisz kampanię jako szkic, przygotuj wiadomości i sprawdź je przed wysyłką.</p><label for="build-channel">Kanał wysyłki</label><select id="build-channel" name="channel"><option value="email">E-mail · kolejka SMTP</option><option value="linkedin">LinkedIn · kolejka do ręcznej wysyłki</option></select><p class="hint">Wiadomości LinkedIn pojawią się w panelu rozszerzenia PKEY. Wyślij je ręcznie w LinkedIn, a potem oznacz jako wysłane.</p><div id="builder-summary"></div><div class="builder-checks"><p>✓ Zatrzymanie sekwencji po odpowiedzi i rezygnacji</p><p>✓ Sprawdzenie wiadomości przed wysyłką</p><p>${state.integrations.smtp?'✓ Poczta wychodząca jest skonfigurowana':'○ Poczta wymaga podłączenia w Integracjach'}</p></div><button class="primary" type="submit">Zapisz szkic kampanii</button></section>
     <div class="builder-footer"><button type="button" class="secondary" data-builder="prev">Wstecz</button><span id="builder-stage-count">Krok 1 z 4</span><button type="button" class="primary" data-builder="next">Zapisz i przejdź dalej →</button></div>
-  </form><section class="builder-preview"><div class="builder-pitch-visual" aria-hidden="true"><div class="cradle"><i></i><i></i><i></i><i></i><i></i></div></div><div class="preview-heading"><span class="section-label">PODGLĄD DLA ODBIORCY</span><span class="badge gray">Szkic</span></div><label for="preview-contact">Kontakt</label><select id="preview-contact">${contacts.map(c=>`<option value="${c.id}">${esc(c.name)} · ${esc(c.company)}</option>`).join('')||'<option value="">Brak aktywnych kontaktów</option>'}</select><label for="preview-step">Krok sekwencji</label><select id="preview-step"><option value="0">Pierwsza wiadomość</option></select><button class="secondary" data-builder="preview">↻ Odśwież podgląd</button><div id="builder-preview-content"><div class="preview-art"><span>✉</span></div><h2>Dobry kontekst.<br>Lepsza rozmowa.</h2><p>Uzupełnij ofertę i sekwencję, aby zobaczyć wiadomość dla konkretnej osoby.</p></div><p class="hint">Podgląd personalizuje szablon. Generowanie przez AI, jeśli podłączone, następuje podczas przygotowania wiadomości.</p></section></div>`;
+  </form><section class="builder-preview"><div class="builder-pitch-visual" aria-hidden="true"><div class="cradle"><i></i><i></i><i></i><i></i><i></i></div></div><div class="preview-heading"><span class="section-label">PODGLĄD DLA ODBIORCY</span><span class="badge gray">Szkic</span></div><label for="preview-contact">Kontakt</label><select id="preview-contact">${builderPreviewContactOptions(contacts)}</select><label for="preview-step">Krok sekwencji</label><select id="preview-step"><option value="0">Pierwsza wiadomość</option></select><button class="secondary" data-builder="preview">↻ Odśwież podgląd</button><div id="builder-preview-content"><div class="preview-art"><span>✉</span></div><h2>Dobry kontekst.<br>Lepsza rozmowa.</h2><p>Uzupełnij ofertę i sekwencję, aby zobaczyć wiadomość dla konkretnej osoby.</p></div><p class="hint">Podgląd personalizuje szablon. Generowanie przez AI, jeśli podłączone, następuje podczas przygotowania wiadomości.</p></section></div>`;
   mountManualInteractionBuilder();
   bindSellingPoints($('#campaign-form'));bindWebsiteActions($('#campaign-form'));
   addStep();decorateBuilderSteps();
@@ -251,9 +246,7 @@ async function assistantPitch(mode){
   finally{builderAssistantBusy=false;buttons.forEach(button=>button.disabled=false);if($('#campaign-form'))renderAssistantButtons()}
 }
 
-function importCampaignProject(){
- const form=$('#campaign-form'),project=sellerProject();
- if(!form.isConnected||Number(form.dataset.projectId)!==project.id)throw Error('Otwórz kreator w projekcie tej kampanii.');
+function applyProjectCampaignOffer(form,project){
  for(const field of ['website','offer','audience','pain_points','value_props','proof_points'])form.elements[field].value=project[field]||'';
  const sources=(project.offer_sources||[]).filter(source=>source==='website'?(form.elements.offer_website.value.trim()||project.website):state.offer_document_count);
  if(project.offer?.trim())sources.push('offer');
@@ -261,6 +254,12 @@ function importCampaignProject(){
  form.elements.offer_sources.value=JSON.stringify(sources);
  form.refreshOfferSources();
  restoreSellingPoints(form);
+}
+
+function importCampaignProject(){
+ const form=$('#campaign-form'),project=sellerProject();
+ if(!form.isConnected||Number(form.dataset.projectId)!==project.id)throw Error('Otwórz kreator w projekcie tej kampanii.');
+ applyProjectCampaignOffer(form,project);
  renderBuilderMaterials();updateRecipientHint();persistBuilder();
  $('#research-status').textContent=translateUiText('Dane zaimportowane z projektu. Możesz je zmienić dla tej kampanii.');
  toast(translateUiText('Dane zaimportowane z projektu. Możesz je zmienić dla tej kampanii.'));
@@ -329,6 +328,24 @@ function renderBuilderMaterials(selected){
 }
 function selectedCampaignTags(){return [...document.querySelectorAll('[name=audience_tags]:checked')].map(input=>input.value)}
 function campaignContactMatchesTags(contact,tags,match){const own=contactTags(contact).map(tag=>tag.toLocaleLowerCase()),wanted=tags.map(tag=>tag.toLocaleLowerCase());return !!wanted.length&&(match==='all'?wanted.every(tag=>own.includes(tag)):wanted.some(tag=>own.includes(tag)))}
+function builderPreviewContactOptions(contacts){
+ if(!contacts.length)return '<option value="">'+translateUiText('Brak aktywnych kontaktów')+'</option>';
+ const normalize=value=>value.trim().replace(/\s+/g,' ').toLocaleLowerCase();
+ const labels=contacts.map(contact=>{
+  const name=(contact.name||'').trim(),company=(contact.company||'').trim();
+  return name&&company&&normalize(name)!==normalize(company)?name+' · '+company:name||company||contact.email;
+ });
+ const counts=new Map();
+ for(const label of labels){
+  const key=normalize(label);
+  counts.set(key,(counts.get(key)||0)+1);
+ }
+ return contacts.map((contact,index)=>{
+  const label=labels[index];
+  const text=counts.get(normalize(label))>1&&contact.email?label+' · '+contact.email:label;
+  return `<option value="${contact.id}" data-no-translate>${esc(text)}</option>`;
+ }).join('');
+}
 function updateRecipientHint(){
  if(!$('#build-mode'))return;
  const mode=$('#build-mode').value,tags=selectedCampaignTags(),match=$('#build-tag-match').value;
@@ -341,7 +358,7 @@ function updateRecipientHint(){
  const count=$('#builder-recipient-hint [data-recipient-count]');
  if(count.textContent!==String(contacts.length))count.textContent=contacts.length;
  const preview=$('#preview-contact'),previous=preview.value;
- preview.innerHTML=contacts.map(c=>`<option value="${c.id}">${esc(c.name)} · ${esc(c.company)}</option>`).join('')||'<option value="">'+translateUiText('Brak aktywnych kontaktów')+'</option>';
+ preview.innerHTML=builderPreviewContactOptions(contacts);
  if(contacts.some(c=>String(c.id)===previous))preview.value=previous;
 }
 function decorateBuilderSteps(){

@@ -55,7 +55,6 @@ function flushSellerProject(){
    }
    sellerSaveStatus('Projekt zapisany.');
    renderProjectPicker();
-   if(view==='discover')renderDiscoverCompanies();
  })().catch(error=>{sellerSaveStatus('Nie zapisano zmian. Spróbuj ponownie.');throw error}).finally(()=>{sellerSaving=null});
  return sellerSaving;
 }
@@ -156,7 +155,7 @@ async function chooseSellerProject(path,item,signal){
 
    clearTimeout(sellerSaveTimer);sellerPending={};sellerBase=null;state.seller_project=project;
    prospectRunId=null;prospectSelected.clear();selectedCampaign=null;contactBulkSelected.clear();
-   if(view==='builder')view='discover';
+   if(view==='builder')view='lead-discover';
    $('#content').replaceChildren();await refresh();
  }catch(error){if(deleting&&sellerBase?.id===item.project_id){sellerPending={...discarded,...sellerPending};cacheSellerDraft()}throw error}
  finally{sellerSwitchBusy=false;document.querySelectorAll('[data-seller-project-id]').forEach(form=>form.inert=false);renderProjectPicker()}

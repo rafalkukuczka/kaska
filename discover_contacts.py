@@ -9,6 +9,7 @@ from datetime import date
 from urllib.parse import urlparse
 
 import contact_groups
+import contact_identity
 import contact_tags
 import languages
 import lead_sources
@@ -34,7 +35,8 @@ def contact_attributes(person, sources, domain):
         if isinstance(value, str) and value.strip():
             fields[key] = value.strip()[:250]
     linkedin = safe_link(person.get('linkedin') or person.get('linkedin_url') or '')
-    if linkedin and (urlparse(linkedin).hostname or '').lower().removeprefix('www.') == 'linkedin.com':
+    if linkedin and ((urlparse(linkedin).hostname or '').lower().removeprefix('www.') == 'linkedin.com'
+                     or contact_identity.linkedin_profile(linkedin)):
         fields['linkedin'] = linkedin
     phone = person.get('work_phone') or (person.get('phone_number') if person.get('phone_type') == 'work' else '')
     if isinstance(phone, str) and re.fullmatch(r'[+0-9(). /-]{6,45}', phone.strip()):
@@ -256,7 +258,7 @@ class DiscoverContacts:
         if not isinstance(data,dict) or not isinstance(data.get('emails',[]),list):raise ValueError('Hunter zwrócił nieprawidłową listę kontaktów.')
         found_domain=clean_domain(data['domain']) if data.get('domain') else domain
         if domain and found_domain!=domain:raise ValueError('Hunter zwrócił inną domenę. Wynik nie został zapisany.')
-        organization=str(data.get('organization') or firm['company'])[:250];contacts=[];seen=set()
+        organization=str(data.get('organization') or firm['company'])[:250];contacts=[];seen=set();profiles=set()
         for person in data.get('emails',[])[:limit]:
             if not isinstance(person,dict):continue
             email=str(person.get('value') or '').strip().lower()
@@ -270,12 +272,17 @@ class DiscoverContacts:
                       'kind':str(source.get('kind') or 'email')[:40]} for source in raw_sources[:20] if isinstance(source,dict)]
             sources=[source for source in sources if source['url']]
             if not name or not sources or email in seen:continue
+            attributes=contact_attributes(person,sources,found_domain)
+            profile=contact_identity.linkedin_profile(attributes.get('linkedin'))
+            if profile and profile in profiles:continue
             seen.add(email)
-            with self.db() as c:existing=c.execute('SELECT id,target_group,status FROM contacts WHERE email=? AND contact_pool=?',(email,project_scope.contact_pool(c,project['id']))).fetchone()
+            if profile:profiles.add(profile)
+            with self.db() as c:
+                existing=contact_identity.find(c,project_scope.contact_pool(c,project['id']),email,attributes.get('linkedin'))
             contacts.append({'id':len(contacts),'name':name,'email':email,'role':str(person.get('position') or '')[:250],
                              'sources':sources,'provider':person.get('provider','Hunter'),
-                             'attributes':contact_attributes(person, sources, found_domain),
-                             'existing':dict(existing) if existing else None})
+                             'attributes':attributes,
+                             'existing':{key:existing[key] for key in ('id','target_group','status')} if existing else None})
         with self.db() as c:
             c.execute('BEGIN IMMEDIATE')
             if not c.execute('SELECT 1 FROM seller_projects WHERE id=? AND deleted=0',(project['id'],)).fetchone():raise ValueError('Projekt został usunięty.')
@@ -360,8 +367,8 @@ class DiscoverContacts:
                 if from_dashboard and not tags:
                     raise ValueError('Dodaj co najmniej jeden tag.')
                 pool=project_scope.contact_pool(c,project['id'])
-                row=c.execute('SELECT id,research_data FROM contacts WHERE email=? AND contact_pool=?',(person['email'],pool)).fetchone()
                 attributes=person.get('attributes') or contact_attributes(person,person['sources'],search['domain'])
+                row=contact_identity.find(c,pool,person['email'],attributes.get('linkedin'))
                 if row:
                     existing+=1
                     if group:contact_tags.set_tags(c,row['id'],tags,merge='tags' in item or 'tags_by_contact' in item,project_id=project['id'])

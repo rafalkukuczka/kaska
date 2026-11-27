@@ -123,7 +123,8 @@ class Library:
         if not rows or (mode=='auto' and rows[0]['match_score']==0):return None
         return rows[0]
 
-    def validate_campaign(self,c,item):
+    @staticmethod
+    def validate_campaign(c,item):
         mode=item.get('audience_mode','all'); material_mode=item.get('material_mode','none')
         ids=item.get('contact_ids',[]);materials=item.get('material_ids',[])
         if mode not in ('all','selected','group','tags') or material_mode not in ('none','auto','manual','document'):raise ValueError('Nieprawidłowy tryb odbiorców lub materiałów')

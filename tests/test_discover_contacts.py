@@ -41,6 +41,33 @@ class DiscoverContactTests(unittest.TestCase):
             self.assertIn('acme.example',contact['notes'])
             self.assertEqual(c.execute('SELECT COUNT(*) FROM messages').fetchone()[0],0)
 
+    def test_same_linkedin_profile_is_reused_with_a_different_email(self):
+        data=self.seed()
+        person={**data['emails'][0],'linkedin':'https://www.linkedin.com/in/test-profile'}
+        data['emails']=[person]
+        result,_=self.search(data)
+        with app.db() as c:
+            payload={'confirmed':True,'project_id':app.project_scope.active(c),'name':'New Person',
+                     'email':'current@acme.example','company':'Acme','tag':'Captured',
+                     'source':'https://pl.linkedin.com/in/Test-Profile/?trk=example'}
+            saved=app.capture_contact(c,payload)
+            c.execute("UPDATE contacts SET status='unsubscribed' WHERE id=?",(saved['id'],))
+            self.assertEqual(app.capture_contact(c,{**payload,'email':'another@acme.example'}),
+                             {'id':saved['id'],'existing':True})
+        added=app.discover_contact_finder.add({'id':result['id'],'selected':[0],'tags':['Research'],
+                                              'confirm_company':True},from_dashboard=True)
+        self.assertEqual((added['added'],added['existing']),(0,1))
+        data['emails'].append({**person,'value':'alternate@acme.example'})
+        repeat,_=self.search(data)
+        self.assertEqual(len(repeat['contacts']),1)
+        self.assertEqual(repeat['contacts'][0]['existing']['id'],saved['id'])
+        with app.db() as c:
+            row=c.execute('SELECT email,status,tags FROM contacts WHERE id=?',(saved['id'],)).fetchone()
+            self.assertEqual((row['email'],row['status']),('current@acme.example','unsubscribed'))
+            self.assertEqual(json.loads(row['tags']),['Captured','Research'])
+            self.assertFalse(c.execute('SELECT 1 FROM contacts WHERE email=?',(person['value'],)).fetchone())
+            self.assertTrue(c.execute("SELECT 1 FROM contacts WHERE email='info@acme.example'").fetchone())
+
     def test_dashboard_adds_tag_and_persists_professional_attributes_and_sources(self):
         search = app.lead_finder.create({'query':'Acme'})['search']['id']
         data = {'domain':'example.com','emails':[{

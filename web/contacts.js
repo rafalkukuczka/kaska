@@ -50,7 +50,6 @@ function applyTagAdministrationChange(result){
  if(!result.old_name)return;
  const key=result.old_name.toLocaleLowerCase(),replace=value=>contactTags(contactTags(value).flatMap(tag=>tag.toLocaleLowerCase()===key?(result.name?[result.name]:[]):[tag]));
  for(const project of Object.values(simulationResults))for(const contact of project.contacts||[]){contact.tags=replace(contact);contact.target_group=contact.tags.join('; ')}
- for(const panel of discoverContactPanels.values())for(const email of Object.keys(panel.contactTags))panel.contactTags[email]=replace(panel.contactTags[email]);
  try{const draft=JSON.parse(localStorage.getItem(builderDraftKey())||'null');if(draft){draft.audience_tags=replace(draft.audience_tags||draft.target_group||'');localStorage.setItem(builderDraftKey(),JSON.stringify(draft))}}catch{}
  if(contactGroupFilter==='group:'+result.old_name)contactGroupFilter=result.name?'group:'+result.name:'all';
  saveSimulationResults();
